@@ -1,0 +1,43 @@
+pkgname=hayhooks
+pkgver=1.17.0
+pkgrel=1
+pkgdesc="Serve Haystack pipelines as REST endpoints"
+arch=('any')
+url="https://docs.haystack.deepset.ai/docs/hayhooks"
+license=('Apache-2.0')
+backup=('etc/hayhooks/hayhooks.env')
+depends=('python' 'python-docstring-parser' 'python-fastapi' 'python-fastapi-openai-compat' 'python-haystack-ai' 'python-loguru' 'python-pydantic-settings' 'python-dotenv' 'python-python-multipart' 'python-requests' 'python-rich' 'python-typer' 'uvicorn')
+makedepends=('python-build' 'python-hatch-vcs' 'python-hatchling' 'python-installer' 'python-wheel')
+source=(
+  "https://files.pythonhosted.org/packages/29/51/02af41f089c16d5c59c85784e2ead4755e18e5e4109d6d0a03270d62dc68/hayhooks-${pkgver}.tar.gz"
+  'hayhooks.env'
+  'hayhooks.service'
+  'hayhooks.sysusers'
+  'hayhooks.tmpfiles'
+)
+sha256sums=('a7060bf23ae020b2ada8e3aee62ff22a6ee9f1c12335c7479aeb6f3cefcb6ab2'
+            '9661219339ba2abaa582ae481a168e590ac19e5aab29e9ea3a33110dcf3f37bd'
+            '21f1f73b1c05613f9276ede4e69f34d9415b47964bce9a9bdc648bd6594c64ac'
+            '457ea692b071070e2eb00b75cbc9704304bfb092d46e67dcaffc5a70bf32a9aa'
+            'f954b5d61f4f8b5664da4bb3594427b16f5bb17f9d0014efa8770205f8001a14')
+prepare() {
+  cd "hayhooks-${pkgver}"
+  # The source distribution omits this empty hidden directory, but the wheel
+  # build force-includes it.
+  mkdir -p src/hayhooks/server/chainlit_app/.chainlit
+}
+
+build() {
+  cd "hayhooks-${pkgver}"
+  python -m build --wheel --no-isolation
+}
+
+package() {
+  cd "hayhooks-${pkgver}"
+  python -m installer --destdir="$pkgdir" dist/*.whl
+
+  install -Dm644 "${srcdir}/hayhooks.env" "${pkgdir}/etc/hayhooks/hayhooks.env"
+  install -Dm644 "${srcdir}/hayhooks.service" "${pkgdir}/usr/lib/systemd/system/hayhooks.service"
+  install -Dm644 "${srcdir}/hayhooks.sysusers" "${pkgdir}/usr/lib/sysusers.d/hayhooks.conf"
+  install -Dm644 "${srcdir}/hayhooks.tmpfiles" "${pkgdir}/usr/lib/tmpfiles.d/hayhooks.conf"
+}

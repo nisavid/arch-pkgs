@@ -1,0 +1,21 @@
+pkgname=python-lazy-imports
+pkgver=1.2.0
+pkgrel=1
+pkgdesc="Tool to support lazy imports"
+arch=('any')
+url="https://pypi.org/project/lazy-imports/"
+license=('Apache-2.0')
+depends=('python')
+makedepends=('python-build' 'python-installer' 'python-setuptools' 'python-wheel')
+source=("https://files.pythonhosted.org/packages/25/67/04432aae0c1e2729bff14e1841f4a3fb63a9e354318e66622251487760c3/lazy_imports-${pkgver}.tar.gz")
+sha256sums=('3c546b3c1e7c4bf62a07f897f6179d9feda6118e71ef6ecc47a339cab3d2e2d9')
+
+build() {
+  cd "lazy_imports-${pkgver}"
+  python -m build --wheel --no-isolation
+}
+
+package() {
+  cd "lazy_imports-${pkgver}"
+  python -m installer --destdir="$pkgdir" dist/*.whl
+}

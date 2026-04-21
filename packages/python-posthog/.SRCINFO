@@ -1,0 +1,21 @@
+pkgbase = python-posthog
+	pkgdesc = Integrate PostHog into Python applications
+	pkgver = 7.13.0
+	pkgrel = 1
+	url = https://pypi.org/project/posthog/
+	arch = any
+	license = MIT
+	makedepends = python-build
+	makedepends = python-installer
+	makedepends = python-setuptools
+	makedepends = python-wheel
+	depends = python
+	depends = python-backoff
+	depends = python-dateutil
+	depends = python-distro
+	depends = python-requests
+	depends = python-typing_extensions
+	source = https://files.pythonhosted.org/packages/e2/e8/e7890dcdacb7297b3f981b86a26b9538a505a0d0a4aa213a038aa1963561/posthog-7.13.0.tar.gz
+	sha256sums = 471295afc144972401b02cf96f635bc43f9527e1cde809b30c48a588e326e86a
+
+pkgname = python-posthog

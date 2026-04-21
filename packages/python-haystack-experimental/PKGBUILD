@@ -1,0 +1,21 @@
+pkgname=python-haystack-experimental
+pkgver=0.19.0
+pkgrel=1
+pkgdesc="Experimental components for the Haystack LLM framework"
+arch=('any')
+url="https://pypi.org/project/haystack-experimental/"
+license=('Apache-2.0')
+depends=('python' 'python-haystack-ai')
+makedepends=('python-build' 'python-hatchling' 'python-installer' 'python-wheel')
+source=("https://files.pythonhosted.org/packages/71/a3/02eb86716f4856072feb852555f2d23855bb20c993264dcf4e83dfe87a8a/haystack_experimental-${pkgver}.tar.gz")
+sha256sums=('194f9074f9184a20d2f4efa7b5082dd33118bc886f87937d13e33616cd549067')
+
+build() {
+  cd "haystack_experimental-${pkgver}"
+  python -m build --wheel --no-isolation
+}
+
+package() {
+  cd "haystack_experimental-${pkgver}"
+  python -m installer --destdir="$pkgdir" dist/*.whl
+}

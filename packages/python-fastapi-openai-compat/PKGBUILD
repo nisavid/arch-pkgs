@@ -1,0 +1,21 @@
+pkgname=python-fastapi-openai-compat
+pkgver=1.2.0
+pkgrel=1
+pkgdesc="FastAPI router factory for OpenAI-compatible endpoints"
+arch=('any')
+url="https://pypi.org/project/fastapi-openai-compat/"
+license=('Apache-2.0')
+depends=('python' 'python-fastapi' 'python-pydantic' 'python-python-multipart')
+makedepends=('python-build' 'python-hatch-vcs' 'python-hatchling' 'python-installer' 'python-wheel')
+source=("https://files.pythonhosted.org/packages/51/1d/529d4ed39cc4b3936d7ad24161a614b420f784cf2109c137937184eeca98/fastapi_openai_compat-${pkgver}.tar.gz")
+sha256sums=('0cb5a545e6e65c67172c0b98531cac9949dd5ff614893007789470f3dc096956')
+
+build() {
+  cd "fastapi_openai_compat-${pkgver}"
+  python -m build --wheel --no-isolation
+}
+
+package() {
+  cd "fastapi_openai_compat-${pkgver}"
+  python -m installer --destdir="$pkgdir" dist/*.whl
+}

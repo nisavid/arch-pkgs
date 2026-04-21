@@ -1,0 +1,16 @@
+pkgbase = python-backoff
+	pkgdesc = Function decoration for backoff and retry
+	pkgver = 2.2.1
+	pkgrel = 1
+	url = https://pypi.org/project/backoff/
+	arch = any
+	license = MIT
+	makedepends = python-build
+	makedepends = python-installer
+	makedepends = python-setuptools
+	makedepends = python-wheel
+	depends = python
+	source = https://files.pythonhosted.org/packages/47/d7/5bbeb12c44d7c4f2fb5b56abce497eb5ed9f34d85701de869acedd602619/backoff-2.2.1.tar.gz
+	sha256sums = 03f829f5bb1923180821643f8753b0502c3b682293992485b0eef2807afa5cba
+
+pkgname = python-backoff

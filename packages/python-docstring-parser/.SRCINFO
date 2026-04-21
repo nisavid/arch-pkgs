@@ -1,0 +1,16 @@
+pkgbase = python-docstring-parser
+	pkgdesc = Parse Python docstrings in reST, Google, and Numpydoc formats
+	pkgver = 0.18.0
+	pkgrel = 1
+	url = https://pypi.org/project/docstring-parser/
+	arch = any
+	license = MIT
+	makedepends = python-build
+	makedepends = python-hatchling
+	makedepends = python-installer
+	makedepends = python-wheel
+	depends = python
+	source = https://files.pythonhosted.org/packages/e0/4d/f332313098c1de1b2d2ff91cf2674415cc7cddab2ca1b01ae29774bd5fdf/docstring_parser-0.18.0.tar.gz
+	sha256sums = 292510982205c12b1248696f44959db3cdd1740237a968ea1e2e7a900eeb2015
+
+pkgname = python-docstring-parser

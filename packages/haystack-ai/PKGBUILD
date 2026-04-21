@@ -1,0 +1,21 @@
+pkgname=python-haystack-ai
+pkgver=2.28.0
+pkgrel=1
+pkgdesc="LLM framework for production-ready applications"
+arch=('any')
+url="https://docs.haystack.deepset.ai/"
+license=('Apache-2.0')
+depends=('python' 'python-docstring-parser' 'python-filetype' 'python-haystack-experimental' 'python-httpx' 'python-jinja' 'python-jsonschema' 'python-lazy-imports' 'python-markupsafe' 'python-more-itertools' 'python-networkx' 'python-numpy' 'python-openai' 'python-posthog' 'python-pydantic' 'python-dateutil' 'python-yaml' 'python-tenacity' 'python-tqdm' 'python-typing_extensions')
+makedepends=('python-build' 'python-hatchling' 'python-installer' 'python-wheel')
+source=("https://files.pythonhosted.org/packages/4b/1c/0d117fd368718eda2cfbfbbf5b31390e230152cd7bfe703661df5fcd929c/haystack_ai-${pkgver}.tar.gz")
+sha256sums=('723d8e1ba06b214d5dcba8712d2dd7f9134b949b1d3e91dc92a14af33c893823')
+
+build() {
+  cd "haystack_ai-${pkgver}"
+  python -m build --wheel --no-isolation
+}
+
+package() {
+  cd "haystack_ai-${pkgver}"
+  python -m installer --destdir="$pkgdir" dist/*.whl
+}

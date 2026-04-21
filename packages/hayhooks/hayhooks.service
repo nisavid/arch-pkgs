@@ -1,0 +1,35 @@
+[Unit]
+Description=Hayhooks pipeline service
+Documentation=https://docs.haystack.deepset.ai/docs/hayhooks
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=hayhooks
+Group=hayhooks
+StateDirectory=hayhooks
+StateDirectoryMode=0750
+WorkingDirectory=/var/lib/hayhooks
+EnvironmentFile=-/etc/hayhooks/hayhooks.env
+ExecStart=/usr/bin/hayhooks run --host ${HAYHOOKS_HOST} --port ${HAYHOOKS_PORT} --pipelines-dir ${HAYHOOKS_PIPELINES_DIR}
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictRealtime=true
+RestrictSUIDSGID=true
+SystemCallArchitectures=native
+UMask=0027
+ReadWritePaths=/var/lib/hayhooks
+
+[Install]
+WantedBy=multi-user.target

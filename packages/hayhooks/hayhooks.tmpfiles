@@ -1,0 +1,2 @@
+d /var/lib/hayhooks 0750 hayhooks hayhooks -
+d /var/lib/hayhooks/pipelines 0750 hayhooks hayhooks -
