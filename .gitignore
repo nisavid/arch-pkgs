@@ -6,3 +6,5 @@
 /packages/*/*.tar.bz2
 /packages/*/*.tar.xz
 /packages/*/*.zip
+/repo/x86_64/*
+!/repo/x86_64/.gitignore
