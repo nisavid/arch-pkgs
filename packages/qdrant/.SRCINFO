@@ -1,0 +1,27 @@
+pkgbase = qdrant
+	pkgdesc = Vector Database for the next generation of AI applications
+	pkgver = 1.17.1
+	pkgrel = 1
+	url = https://qdrant.tech
+	arch = x86_64
+	license = Apache-2.0
+	makedepends = cargo
+	makedepends = cmake
+	makedepends = mold
+	makedepends = clang
+	makedepends = protobuf
+	depends = gcc-libs
+	depends = glibc
+	backup = etc/qdrant/config.yaml
+	source = https://github.com/qdrant/qdrant/archive/v1.17.1.tar.gz
+	source = qdrant.config.yaml
+	source = qdrant.service
+	source = qdrant.sysusers
+	source = qdrant.tmpfiles
+	sha256sums = 32012fab5334b10f20fec5b41a9e9907f9b232cb78d55faa8c1fe6c8f8535629
+	sha256sums = 23f9b7628f8886edf1d6dbd45216a3755eb28bcf00c1e38d391087de58c81bde
+	sha256sums = 00dcd88bbbe5a6087c7af4f857590e27a190fdd7a2a6ce6bf6c13b7d151ab5c7
+	sha256sums = 963c4954011a2b074d265f51e292289e004876be80228f60b0b9f2d98151d143
+	sha256sums = e4514aea2a195b54d7f915d6cbd72cc06de16c76b63ce91ce36b3c4978b062ce
+
+pkgname = qdrant

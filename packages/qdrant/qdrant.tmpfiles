@@ -1,0 +1,5 @@
+d /var/lib/qdrant 0750 qdrant qdrant -
+d /var/lib/qdrant/storage 0750 qdrant qdrant -
+d /var/lib/qdrant/snapshots 0750 qdrant qdrant -
+d /var/lib/qdrant/tmp 0750 qdrant qdrant -
+d /var/lib/qdrant/static 0750 qdrant qdrant -

@@ -1,0 +1,8 @@
+/packages/*/pkg/
+/packages/*/src/
+/packages/*/*.pkg.tar.*
+/packages/*/*.src.tar.*
+/packages/*/*.tar.gz
+/packages/*/*.tar.bz2
+/packages/*/*.tar.xz
+/packages/*/*.zip

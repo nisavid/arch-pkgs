@@ -1,0 +1,51 @@
+# Contributor: haxibami <contact at haxibami dot net>
+# Contributor: tee < teeaur at duck dot com >
+
+pkgname=qdrant
+pkgver=1.17.1
+pkgrel=1
+pkgdesc="Vector Database for the next generation of AI applications"
+arch=('x86_64')
+url="https://qdrant.tech"
+license=('Apache-2.0')
+depends=('gcc-libs' 'glibc')
+makedepends=('cargo' 'cmake' 'mold' 'clang' 'protobuf')
+backup=('etc/qdrant/config.yaml')
+source=(
+  "https://github.com/qdrant/qdrant/archive/v${pkgver}.tar.gz"
+  'qdrant.config.yaml'
+  'qdrant.service'
+  'qdrant.sysusers'
+  'qdrant.tmpfiles'
+)
+sha256sums=('32012fab5334b10f20fec5b41a9e9907f9b232cb78d55faa8c1fe6c8f8535629'
+            '23f9b7628f8886edf1d6dbd45216a3755eb28bcf00c1e38d391087de58c81bde'
+            '00dcd88bbbe5a6087c7af4f857590e27a190fdd7a2a6ce6bf6c13b7d151ab5c7'
+            '963c4954011a2b074d265f51e292289e004876be80228f60b0b9f2d98151d143'
+            'e4514aea2a195b54d7f915d6cbd72cc06de16c76b63ce91ce36b3c4978b062ce')
+
+prepare() {
+  cd "${srcdir}/${pkgname}-${pkgver}"
+  cargo fetch
+}
+
+build() {
+  cd "${srcdir}/${pkgname}-${pkgver}"
+  # note: (GCC +) mold or (Clang +) lld are required to build with LTO
+  # aws-lc-sys preserves Arch optimization flags from CFLAGS, but its bundled
+  # jitter entropy code rejects optimized builds unless explicitly disabled.
+  export AWS_LC_SYS_NO_JITTER_ENTROPY=1
+  export RUSTFLAGS="${RUSTFLAGS} -Clink-arg=-fuse-ld=mold"
+  # export CC=clang CXX=clang++ RUSTFLAGS="${RUSTFLAGS} -Clink-arg=-fuse-ld=lld"
+  export CXXFLAGS="$CXXFLAGS -include cstdint"
+  cargo build --release --locked --bin qdrant
+}
+
+package() {
+  cd "${srcdir}/${pkgname}-${pkgver}"
+  install -Dm755 "target/release/${pkgname}" "${pkgdir}/usr/bin/${pkgname}"
+  install -Dm644 "${srcdir}/qdrant.config.yaml" "${pkgdir}/etc/qdrant/config.yaml"
+  install -Dm644 "${srcdir}/qdrant.service" "${pkgdir}/usr/lib/systemd/system/qdrant.service"
+  install -Dm644 "${srcdir}/qdrant.sysusers" "${pkgdir}/usr/lib/sysusers.d/qdrant.conf"
+  install -Dm644 "${srcdir}/qdrant.tmpfiles" "${pkgdir}/usr/lib/tmpfiles.d/qdrant.conf"
+}
