@@ -5,7 +5,8 @@ pacman repository.
 
 It collects a small set of packages and service defaults that are useful for a
 local AI application stack: Qdrant for vector storage, Haystack for pipeline
-code, and Hayhooks for serving those pipelines.
+code, Hayhooks for serving those pipelines, and an experimental `utilyze`
+package for NVIDIA GPU utilization inspection.
 
 ## What Lives Here
 
@@ -13,6 +14,7 @@ code, and Hayhooks for serving those pipelines.
 | --- | ---: | --- |
 | `qdrant` | `1.17.1` | Vector database with packaged config and `systemd` service assets. |
 | `hayhooks` | `1.17.0` | Haystack pipeline server with local service defaults. |
+| `utilyze` | `0.1.1` | Experimental NVIDIA GPU utilization TUI package with Arch-specific runtime and packaging patches. |
 | `python-haystack-ai` | `2.28.0` | Haystack framework package used by `hayhooks`. |
 | `python-haystack-experimental` | `0.19.0` | Experimental Haystack components. |
 | `python-fastapi-openai-compat` | `1.2.0` | OpenAI-compatible FastAPI router dependency. |
