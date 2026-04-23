@@ -1,0 +1,71 @@
+--- a/cmd/main.go
++++ b/cmd/main.go
+@@ -144,13 +144,15 @@
+ 
+ 	showWarning := os.Getenv("UTLZ_DISABLE_PROFILING_WARNING") != "1"
+ 	if hasCaps, _ := sampler.HasProfilingCapabilities(); !hasCaps && showWarning {
+-		fmt.Fprintln(os.Stderr, "Warning: GPU profiling requires CAP_SYS_ADMIN. You will likely need to run with sudo:")
++		fmt.Fprintln(os.Stderr, "Warning: GPU profiling is currently restricted to administrators on this host.")
++		fmt.Fprintln(os.Stderr, "Run with sudo, grant CAP_SYS_ADMIN to the binary, or relax the NVIDIA profiling policy:")
+ 		fmt.Fprintln(os.Stderr, "  sudo utlz")
+ 		fmt.Fprintln(os.Stderr, "")
+-		fmt.Fprintln(os.Stderr, "If you've disabled the NVIDIA profiling restriction on the host you can ignore this warning. To do so, run:")
++		fmt.Fprintln(os.Stderr, "To allow non-root profiling for all local users, run:")
+ 		fmt.Fprintln(os.Stderr, "  echo 'options nvidia NVreg_RestrictProfilingToAdminUsers=0' | sudo tee /etc/modprobe.d/nvidia-profiling.conf")
+ 		fmt.Fprintln(os.Stderr, "Then either reboot, or reload the driver (stops all GPU processes):")
+ 		fmt.Fprintln(os.Stderr, "  sudo modprobe -rf nvidia_uvm nvidia_drm nvidia_modeset nvidia && sudo modprobe nvidia")
++		fmt.Fprintln(os.Stderr, "A narrower alternative is: sudo setcap cap_sys_admin+ep /usr/bin/utlz")
+ 		fmt.Fprintln(os.Stderr, "")
+ 		fmt.Fprintln(os.Stderr, "To disable this warning and proceed anyway, set UTLZ_DISABLE_PROFILING_WARNING=1")
+ 		return nil
+--- a/internal/ffi/sampler/sampler_linux.go
++++ b/internal/ffi/sampler/sampler_linux.go
+@@ -4,8 +4,11 @@
+ 
+ import (
+ 	_ "embed"
++	"bufio"
+ 	"errors"
+ 	"fmt"
++	"os"
++	"strings"
+ 	"sync"
+ 
+ 	"github.com/ebitengine/purego"
+@@ -75,6 +78,36 @@
+ }
+ 
+ func HasProfilingCapabilities() (bool, error) {
++	if hasCaps, err := hasCapSysAdmin(); err != nil || hasCaps {
++		return hasCaps, err
++	}
++
++	allowed, err := profilingAllowedForAllUsers()
++	if err != nil {
++		// Keep the warning when the current driver policy cannot be confirmed.
++		return false, nil
++	}
++	return allowed, nil
++}
++
++func profilingAllowedForAllUsers() (bool, error) {
++	file, err := os.Open("/proc/driver/nvidia/params")
++	if err != nil {
++		return false, err
++	}
++	defer file.Close()
++
++	scanner := bufio.NewScanner(file)
++	for scanner.Scan() {
++		key, value, ok := strings.Cut(scanner.Text(), ":")
++		if ok && strings.TrimSpace(key) == "RmProfilingAdminOnly" {
++			return strings.TrimSpace(value) == "0", nil
++		}
++	}
++	return false, scanner.Err()
++}
++
++func hasCapSysAdmin() (bool, error) {
+ 	// version 3 capabilities are 64 bit and need to twice-wide for lower/higher bits
+ 	hdr := unix.CapUserHeader{Version: unix.LINUX_CAPABILITY_VERSION_3}
+ 	data := [2]unix.CapUserData{}

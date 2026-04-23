@@ -1,0 +1,27 @@
+pkgbase = utilyze
+	pkgdesc = Measure how efficiently NVIDIA GPUs are doing useful work
+	pkgver = 0.1.1
+	pkgrel = 1
+	url = https://github.com/systalyze/utilyze
+	install = utilyze.install
+	arch = x86_64
+	license = Apache-2.0
+	makedepends = go
+	depends = glibc
+	depends = cuda
+	depends = nvidia-utils
+	optdepends = libcap: setcap(8) for optional capability-based non-root execution
+	source = https://github.com/systalyze/utilyze/archive/refs/tags/v0.1.1.tar.gz
+	source = 0001-use-arch-cuda-paths.patch
+	source = 0002-respect-nvidia-profiling-policy.patch
+	source = 0003-disable-upstream-self-update.patch
+	source = 0004-metrics-opt-in.patch
+	source = README.Arch.md
+	sha256sums = 5d1469193cc2c3385762551c30241bc883d27567d929afc8c9394c205ff4629c
+	sha256sums = d6df39fd75d0072d8c907f0e3fbaac41973320f37d2a50c24a7a690fd98944cf
+	sha256sums = afcdc3fc96af4d9085649499c75c120564e3267812d6e4c105e6faddfc21fe68
+	sha256sums = 0120243d6ce46b422ff23f38387e479d82c8dd09f7f7017e65793fcaa2aa82b2
+	sha256sums = a8a1a4d9c1828e810600e8a2ebc06b8227ddf00dadc7f18a014537ebfd49bfab
+	sha256sums = 25d5bf89894bc11d0671996ad17d902a89064fb5c83f93c5bbf6fe3586b0c80c
+
+pkgname = utilyze

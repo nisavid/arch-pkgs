@@ -1,0 +1,30 @@
+diff --git a/Makefile b/Makefile
+index a65404b..d504d00 100644
+--- a/Makefile
++++ b/Makefile
+@@ -27,10 +27,11 @@ else ifeq ($(PLATFORM), aarch64)
+ endif
+ 
+ CUDA_VERSION ?= 13.1
++CUDA_ROOT ?= /opt/cuda
+ CUDA_PKG_SUFFIX ?= $(subst .,-,$(CUDA_VERSION))
+-CUDA_INCLUDE ?= /usr/local/cuda-$(CUDA_VERSION)/targets/$(CUDA_TARGET)/include
+-CUDA_LIB ?= /usr/local/cuda-$(CUDA_VERSION)/targets/$(CUDA_TARGET)/lib
+-CUDA_CUPTI_LIB ?= /usr/local/cuda-$(CUDA_VERSION)/extras/CUPTI/lib64
++CUDA_INCLUDE ?= $(CUDA_ROOT)/targets/$(CUDA_TARGET)/include
++CUDA_LIB ?= $(CUDA_ROOT)/targets/$(CUDA_TARGET)/lib
++CUDA_CUPTI_LIB ?= $(CUDA_LIB)
+ CUDA_RUNTIME_LIB_PATH := $(CUDA_LIB):$(CUDA_CUPTI_LIB)
+ DOCKER ?= docker
+ DOCKERFILE ?= docker/Dockerfile
+diff --git a/internal/ffi/cupti/cupti_linux.go b/internal/ffi/cupti/cupti_linux.go
+index 876c801..1e2cb1f 100644
+--- a/internal/ffi/cupti/cupti_linux.go
++++ b/internal/ffi/cupti/cupti_linux.go
+@@ -129,6 +129,7 @@ func searchDirs() []string {
+ 	dirs := []string{
+ 		"/usr/local/cuda*/targets/*/lib",
++		"/opt/cuda/targets/*/lib",
+ 		"/opt/nvidia/nsight-compute/*/target/linux-desktop-glibc_2_11_3-x64",
+ 		"/usr/lib/python*/dist-packages/nvidia/cuda_cupti/lib",
+ 		"/usr/local/lib/python*/dist-packages/nvidia/cuda_cupti/lib",

@@ -1,0 +1,29 @@
+--- a/internal/version/update.go
++++ b/internal/version/update.go
+@@ -7,8 +7,6 @@
+ 	"net/http"
+ 	"os"
+ 	"strings"
+-
+-	"golang.org/x/mod/semver"
+ )
+ 
+ var REPO = "systalyze/utilyze"
+@@ -44,17 +42,6 @@
+ }
+ 
+ func CheckForUpdates(ctx context.Context, current string) error {
+-	latestTag, err := GetLatestReleaseTag(ctx)
+-	if err != nil {
+-		return err
+-	}
+-
+-	current = normalizeVersion(current)
+-	latestTag = normalizeVersion(latestTag)
+-	if semver.Compare(latestTag, current) > 0 {
+-		fmt.Fprintf(os.Stderr, "A new version of utlz is available: %s (current: %s)\n", latestTag, current)
+-		fmt.Fprintf(os.Stderr, "Run `curl -sSfL https://systalyze.com/utilyze/install.sh | sh` to update\n")
+-	}
+ 	return nil
+ }
+ 

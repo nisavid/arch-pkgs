@@ -1,0 +1,37 @@
+post_install() {
+  cat <<'EOF'
+utilyze: installed.
+
+This is an experimental first release. Read:
+  /usr/share/doc/utilyze/README.Arch.md
+for the verified/not-verified boundary before first use.
+
+Default first run:
+  sudo utlz
+
+Optional admin choices:
+  sudo setcap cap_sys_admin+ep /usr/bin/utlz
+  For broader NVIDIA driver-policy changes, read the Arch doc first.
+
+Arch doc:
+  /usr/share/doc/utilyze/README.Arch.md
+EOF
+}
+
+post_upgrade() {
+  cat <<'EOF'
+utilyze: upgraded.
+
+If you use setcap-based access, reapply setcap to the replaced binary.
+
+This is an experimental first release. Read:
+  /usr/share/doc/utilyze/README.Arch.md
+for the verified/not-verified boundary before first use.
+
+Default first run:
+  sudo utlz
+
+Arch doc:
+  /usr/share/doc/utilyze/README.Arch.md
+EOF
+}
