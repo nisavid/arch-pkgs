@@ -21,10 +21,12 @@ Your job is not to make a package build once. Your job is to leave behind packag
 
 ## Package maintenance expectations
 
+- For the package-change workflow and discovery sequence, use `.agents/skills/maintaining-arch-packages/`.
 - Review upstream release notes and installation docs before changing package behavior.
 - Follow Arch naming and layout conventions where practical, especially for Python packages and `systemd` assets.
 - Keep one-off installation guidance simple for now: build and install directly from the package directory with `makepkg -si`.
 - When a package change also changes install or service behavior, document the operator command needed to use it.
+- When packaging software with telemetry or other outbound reporting, prefer privacy-respecting defaults that remain easy for users to understand and choose in the normal UX. Favor discoverable, reversible consent flows that fit upstream architecture and could plausibly be upstreamed, rather than packaging-only opt-ins hidden in docs, patches, or environment variables.
 
 ## Verification
 
