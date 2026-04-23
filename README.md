@@ -12,16 +12,16 @@ package for NVIDIA GPU utilization inspection.
 
 | Package | Version | Purpose |
 | --- | ---: | --- |
-| `qdrant` | `1.17.1` | Vector database with packaged config and `systemd` service assets. |
-| `hayhooks` | `1.17.0` | Haystack pipeline server with local service defaults. |
-| `utilyze` | `0.1.1` | Experimental NVIDIA GPU utilization TUI package with Arch-specific runtime and packaging patches. |
-| `python-haystack-ai` | `2.28.0` | Haystack framework package used by `hayhooks`. |
-| `python-haystack-experimental` | `0.19.0` | Experimental Haystack components. |
-| `python-fastapi-openai-compat` | `1.2.0` | OpenAI-compatible FastAPI router dependency. |
-| `python-posthog` | `7.13.0` | Python PostHog client dependency. |
-| `python-docstring-parser` | `0.18.0` | Python docstring parser dependency. |
-| `python-lazy-imports` | `1.2.0` | Lazy import helper dependency. |
-| `python-backoff` | `2.2.1` | Retry/backoff helper dependency. |
+| [`qdrant`](packages/qdrant/) | `1.17.1` | Vector database with packaged config and `systemd` service assets. |
+| [`hayhooks`](packages/hayhooks/) | `1.17.0` | Haystack pipeline server with local service defaults. |
+| [`utilyze`](packages/utilyze/) | `0.1.1` | Experimental NVIDIA GPU utilization TUI package with Arch-specific runtime and packaging patches. |
+| [`python-haystack-ai`](packages/haystack-ai/) | `2.28.0` | Haystack framework package used by `hayhooks`. |
+| [`python-haystack-experimental`](packages/python-haystack-experimental/) | `0.19.0` | Experimental Haystack components. |
+| [`python-fastapi-openai-compat`](packages/python-fastapi-openai-compat/) | `1.2.0` | OpenAI-compatible FastAPI router dependency. |
+| [`python-posthog`](packages/python-posthog/) | `7.13.0` | Python PostHog client dependency. |
+| [`python-docstring-parser`](packages/python-docstring-parser/) | `0.18.0` | Python docstring parser dependency. |
+| [`python-lazy-imports`](packages/python-lazy-imports/) | `1.2.0` | Lazy import helper dependency. |
+| [`python-backoff`](packages/python-backoff/) | `2.2.1` | Retry/backoff helper dependency. |
 
 Package-local notes live under `packages/<name>/README.md` when a package has
 extra usage details.
