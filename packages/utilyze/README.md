@@ -10,4 +10,7 @@ This directory should stay focused on package context and install-time assets:
 
 The installed doc is the source of truth for the experimental first-release status and the verified/not-verified boundary.
 
+Active follow-up work for this package is tracked in
+[docs/backlog.md](../../docs/backlog.md).
+
 Keep host-specific guidance out of tracked docs and prefer package-local defaults.
