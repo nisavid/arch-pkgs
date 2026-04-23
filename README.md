@@ -23,8 +23,9 @@ package for NVIDIA GPU utilization inspection.
 | [`python-lazy-imports`](packages/python-lazy-imports/) | `1.2.0` | Lazy import helper dependency. |
 | [`python-backoff`](packages/python-backoff/) | `2.2.1` | Retry/backoff helper dependency. |
 
-Package-local notes live under `packages/<name>/README.md` when a package has
-extra usage details.
+Package-local docs live under `packages/<name>/`. Many packages use
+`README.md` for repo-local notes, and some also ship an installed user-facing
+doc such as `README.Arch.md`.
 
 ## Repository Layout
 
