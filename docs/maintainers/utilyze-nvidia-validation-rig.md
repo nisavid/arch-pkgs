@@ -3,7 +3,9 @@
 Retrieved: 2026-04-24
 
 This note records the selected first validation rig for the experimental
-`utilyze` package and the option survey behind it.
+`utilyze` package and the option survey behind it. It is a maintainer decision
+note, not first-run user guidance. For the installed package behavior, read
+[`packages/utilyze/README.Arch.md`](../../packages/utilyze/README.Arch.md).
 
 ## Decision
 
@@ -29,9 +31,9 @@ Target shape:
   confirm no stopped VM, reserved GPU, snapshot, persistent disk, or storage-only
   billing remains.
 
-This selects the cheapest practical path that still gives normal Linux control,
+This is the cheapest practical path that still gives normal Linux control,
 interactive SSH, and direct enough NVIDIA access for TUI validation. It does not
-try to validate the upstream high-end attainable-SOL path.
+attempt to validate the upstream high-end attainable-SOL path.
 
 ## Why A100 Is Not The First Target
 

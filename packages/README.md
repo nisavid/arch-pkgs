@@ -1,18 +1,43 @@
-# Packages
+# Package Catalog
 
-Hand-maintained Arch packages live under `packages/<name>/`.
+Each directory under `packages/` is a self-contained Arch package. Open a package
+directory when you want its build recipe, service assets, patches, and local
+notes.
 
-Each package directory should contain the build recipe and any supporting assets required to reproduce the package, such as:
+## Primary Packages
 
-- `PKGBUILD`
-- `.SRCINFO`
-- patches
-- `systemd` unit files
-- config defaults
-- package-specific notes when the recipe needs extra context
+| Directory | Package | Use it when |
+| --- | --- | --- |
+| [`qdrant`](qdrant/) | `qdrant` | You need a local vector database with packaged service defaults. |
+| [`hayhooks`](hayhooks/) | `hayhooks` | You want to serve Haystack pipelines over HTTP from a system-managed service. |
+| [`haystack-ai`](haystack-ai/) | `python-haystack-ai` | You need the Haystack Python framework installed from pacman. |
+| [`utilyze`](utilyze/) | `utilyze` | You want to inspect NVIDIA GPU utilization with the experimental Arch-patched TUI. |
 
-Build package archives from these directories with normal `makepkg` usage.
+## Supporting Python Packages
 
-Use `tools/update_pacman_repo.zsh` to publish built outputs into the local repo
-staging area under `repo/x86_64/`, then install them through pacman once the
-published repo is enabled.
+These packages exist because the primary stack depends on versions that are not
+available locally in the desired shape:
+
+- [`python-backoff`](python-backoff/)
+- [`python-docstring-parser`](python-docstring-parser/)
+- [`python-fastapi-openai-compat`](python-fastapi-openai-compat/)
+- [`python-haystack-experimental`](python-haystack-experimental/)
+- [`python-lazy-imports`](python-lazy-imports/)
+- [`python-posthog`](python-posthog/)
+
+## Build And Publish
+
+Build a package archive from its package directory:
+
+```bash
+(cd packages/<name> && makepkg --verifysource && makepkg -f)
+```
+
+Publish one or more built package outputs into the local repo staging area:
+
+```bash
+tools/update_pacman_repo.zsh packages/<name>
+```
+
+For the complete install workflow, including the pacman repo stanza, see
+[`docs/usage/local-repo.md`](../docs/usage/local-repo.md).

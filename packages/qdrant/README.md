@@ -2,24 +2,36 @@
 
 Native Arch package for the Qdrant vector database.
 
-## Package contents
+Use this package when you want a local vector store managed by pacman and
+`systemd`, with conservative localhost defaults.
+
+## Package Contents
 
 - `qdrant` binary
-- packaged config at `/etc/qdrant/config.yaml`
-- `systemd` service
+- `/etc/qdrant/config.yaml`
+- `qdrant.service`
 - `sysusers.d` entry for the `qdrant` service user
 - `tmpfiles.d` entry for `/var/lib/qdrant`
 
 ## Defaults
 
-- HTTP bind: `127.0.0.1:6333`
-- gRPC bind: `127.0.0.1:6334`
-- storage: `/var/lib/qdrant/storage`
-- snapshots: `/var/lib/qdrant/snapshots`
+| Setting | Value |
+| --- | --- |
+| HTTP bind | `127.0.0.1:6333` |
+| gRPC bind | `127.0.0.1:6334` |
+| Storage | `/var/lib/qdrant/storage` |
+| Snapshots | `/var/lib/qdrant/snapshots` |
 
-## Local install
+## Install And Run
 
-```sh
+For a one-off local install:
+
+```bash
+makepkg --verifysource
 makepkg -si
 sudo systemctl enable --now qdrant.service
 ```
+
+For the repeatable local-repo workflow, build this package, refresh the `nisavid`
+repo, and install `qdrant` through pacman. See
+[`docs/usage/local-repo.md`](../../docs/usage/local-repo.md).

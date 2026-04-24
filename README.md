@@ -1,109 +1,102 @@
 # arch-pkgs
 
-Personal Arch Linux packaging workspace for packages I install through a local
-pacman repository.
+Personal Arch Linux packages for a local AI application stack.
 
-It collects a small set of packages and service defaults that are useful for a
-local AI application stack: Qdrant for vector storage, Haystack for pipeline
-code, Hayhooks for serving those pipelines, and an experimental `utilyze`
-package for NVIDIA GPU utilization inspection.
+This repository collects packages that are useful enough to keep close, patched,
+and installable through a local pacman repository. It is not a public distro or a
+general AUR mirror. It is a small workspace for reproducible local packages:
+vector storage, Haystack services, their Python dependencies, and an
+experimental GPU inspection tool.
 
-## What Lives Here
+## What You Can Install
 
-| Package | Version | Purpose |
+| Package | Packaged version | Why it is here |
 | --- | ---: | --- |
-| [`qdrant`](packages/qdrant/) | `1.17.1` | Vector database with packaged config and `systemd` service assets. |
-| [`hayhooks`](packages/hayhooks/) | `1.17.0` | Haystack pipeline server with local service defaults. |
-| [`utilyze`](packages/utilyze/) | `0.1.1` | Experimental NVIDIA GPU utilization TUI package with Arch-specific runtime and packaging patches. |
-| [`python-haystack-ai`](packages/haystack-ai/) | `2.28.0` | Haystack framework package used by `hayhooks`. |
-| [`python-haystack-experimental`](packages/python-haystack-experimental/) | `0.19.0` | Experimental Haystack components. |
-| [`python-fastapi-openai-compat`](packages/python-fastapi-openai-compat/) | `1.2.0` | OpenAI-compatible FastAPI router dependency. |
-| [`python-posthog`](packages/python-posthog/) | `7.13.0` | Python PostHog client dependency. |
-| [`python-docstring-parser`](packages/python-docstring-parser/) | `0.18.0` | Python docstring parser dependency. |
-| [`python-lazy-imports`](packages/python-lazy-imports/) | `1.2.0` | Lazy import helper dependency. |
-| [`python-backoff`](packages/python-backoff/) | `2.2.1` | Retry/backoff helper dependency. |
+| [`qdrant`](packages/qdrant/) | `1.17.1-1` | Vector database with local-only defaults and a packaged `systemd` service. |
+| [`hayhooks`](packages/hayhooks/) | `1.17.0-1` | Haystack pipeline server with a local service account, env file, and pipeline directory. |
+| [`utilyze`](packages/utilyze/) | `0.1.1-2` | Experimental NVIDIA GPU utilization TUI with Arch runtime, config, update, and telemetry-consent patches. |
+| [`python-haystack-ai`](packages/haystack-ai/) | `2.28.0-1` | Haystack framework package used by `hayhooks` and local pipeline work. |
+| [`python-haystack-experimental`](packages/python-haystack-experimental/) | `0.19.0-1` | Experimental Haystack components. |
+| [`python-fastapi-openai-compat`](packages/python-fastapi-openai-compat/) | `1.2.0-1` | OpenAI-compatible FastAPI router dependency. |
+| [`python-posthog`](packages/python-posthog/) | `7.13.0-1` | Python PostHog client dependency. |
+| [`python-docstring-parser`](packages/python-docstring-parser/) | `0.18.0-1` | Python docstring parser dependency. |
+| [`python-lazy-imports`](packages/python-lazy-imports/) | `1.2.0-1` | Lazy import helper dependency. |
+| [`python-backoff`](packages/python-backoff/) | `2.2.1-1` | Retry/backoff helper dependency. |
 
-Package-local docs live under `packages/<name>/`. Many packages use
-`README.md` for repo-local notes, and some also ship an installed user-facing
-doc such as `README.Arch.md`.
+> [!NOTE]
+> `utilyze` is packaged and partially verified, but it still needs runtime
+> validation on supported NVIDIA hardware. Read
+> [`packages/utilyze/README.Arch.md`](packages/utilyze/README.Arch.md) before
+> first use.
 
-## Repository Layout
+## Start Here
 
-- `packages/<name>/` contains each package's build recipe and supporting files.
-- `repo/x86_64/` is an ignored, rebuildable working tree for local pacman repo
-  metadata.
-- `tools/update_pacman_repo.zsh` stages built package archives into
-  `repo/x86_64/` and refreshes the `nisavid` repo database.
-- `docs/usage/local-repo.md` documents the repeatable local-repo workflow.
+If you want one package quickly, build and install it from its package directory:
 
-## Quick Start
+```bash
+(cd packages/qdrant && makepkg --verifysource && makepkg -si)
+```
 
-Build a package from its package directory:
+If you want the normal workflow, build a package, refresh the local repo staging
+area, publish it to a pacman-visible path, and install through pacman:
 
 ```bash
 (cd packages/qdrant && makepkg --verifysource && makepkg -f)
-```
-
-Install a single package directly when you just need a one-off result:
-
-```bash
-(cd packages/qdrant && makepkg -si)
-```
-
-For the repeatable workflow, publish built archives into the local repo staging
-area and install through pacman:
-
-```bash
-tools/update_pacman_repo.zsh packages/qdrant packages/hayhooks
+tools/update_pacman_repo.zsh packages/qdrant
 sudo rsync -a --delete repo/x86_64/ /srv/pacman/nisavid/x86_64/
 sudo pacman -Sy
-sudo pacman -S qdrant hayhooks
+sudo pacman -S qdrant
 ```
 
-See [Local Repo Usage](docs/usage/local-repo.md) for the full setup, including
-the pacman repo stanza.
+The full local-repo setup, including the pacman stanza, is in
+[`docs/usage/local-repo.md`](docs/usage/local-repo.md).
 
-## Local Repo Workflow
+## Choose Your Path
 
-The intended install path is a pacman repo named `nisavid`, published from the
-ignored working tree in `repo/x86_64/`.
+- **I want to browse packages.** Start with the
+  [`packages/`](packages/) catalog, then open the package directory you care
+  about.
+- **I want to install from a local repo.** Follow
+  [`docs/usage/local-repo.md`](docs/usage/local-repo.md).
+- **I want to run services.** Read the package docs for
+  [`qdrant`](packages/qdrant/) and [`hayhooks`](packages/hayhooks/); their units
+  install disabled and must be enabled explicitly.
+- **I want to try `utilyze`.** Read
+  [`packages/utilyze/README.Arch.md`](packages/utilyze/README.Arch.md), then
+  check the active validation work in [`docs/backlog.md`](docs/backlog.md).
+- **I am maintaining the repo.** Read `AGENTS.md` and the repo-local skills in
+  `.agents/skills/`.
 
-The helper is authoritative for the package names you pass to it: it removes the
-old archives and repo entries for those package names, stages the current
-archives reported by `makepkg --packagelist`, and refreshes the repo database.
-Unrelated packages already present in the repo are left alone.
+## Repository Map
 
-```bash
-tools/update_pacman_repo.zsh packages/<pkgname>
-```
+- `packages/<name>/` contains each Arch package: `PKGBUILD`, `.SRCINFO`, patches,
+  service files, config defaults, and package-local notes.
+- `repo/x86_64/` is ignored, rebuildable local-repo staging output.
+- `tools/update_pacman_repo.zsh` refreshes `repo/x86_64/` from the current
+  package archives reported by `makepkg --packagelist`.
+- `docs/usage/` contains user and operator how-to guides.
+- `docs/maintainers/` contains decision notes for package-maintenance work.
 
-The published repo path is intentionally outside the checkout:
+## Services
 
-```bash
-sudo install -d /srv/pacman/nisavid/x86_64
-sudo rsync -a --delete repo/x86_64/ /srv/pacman/nisavid/x86_64/
-```
-
-## Using Services
-
-The service packages install their `systemd` units and default config files, but
-they do not start automatically.
-
-- `qdrant` installs `/etc/qdrant/config.yaml` and `qdrant.service`. See
-  [packages/qdrant](packages/qdrant/).
-- `hayhooks` installs `/etc/hayhooks/hayhooks.env` and `hayhooks.service`. See
-  [packages/hayhooks](packages/hayhooks/).
-
-Enable services explicitly after install:
+Service packages install their units and default config files, but they do not
+start automatically.
 
 ```bash
 sudo systemctl enable --now qdrant.service
 sudo systemctl enable --now hayhooks.service
 ```
 
+Defaults are intentionally local:
+
+- `qdrant`: `/etc/qdrant/config.yaml`, `127.0.0.1:6333`, storage under
+  `/var/lib/qdrant/`.
+- `hayhooks`: `/etc/hayhooks/hayhooks.env`, `127.0.0.1:1416`, pipelines under
+  `/var/lib/hayhooks/pipelines/`.
+
 ## How This Repo Is Operated
 
 This is a personal packaging repo maintained mostly through agent-assisted
-workflows. The user-facing setup lives here and in `docs/usage/`; the maintainer
-instructions live in `AGENTS.md` and the repo-local skills under
-`.agents/skills/`.
+workflows. Human-facing usage docs stay in this README, `docs/usage/`, and
+package READMEs. Maintainer policy and agent instructions live in `AGENTS.md`
+and `.agents/skills/`.

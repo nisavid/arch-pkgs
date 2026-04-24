@@ -1,10 +1,15 @@
 # Backlog
 
-This doc tracks active follow-up work for this repo.
+This doc tracks active follow-up work for this repo. It is for maintainers and
+for users who want to understand what has been packaged but not fully accepted
+yet.
 
 The current focus is the experimental `utilyze` package. The package is built,
 documented, and partially verified. The remaining work is to validate it on a
 supported NVIDIA host and to build a maintainable acceptance story for its TUI.
+
+See [`packages/utilyze/README.Arch.md`](../packages/utilyze/README.Arch.md) for
+the installed user-facing status and first-run guidance.
 
 ## utilyze
 
@@ -29,7 +34,7 @@ Exit criteria:
 - The selected approach is specified well enough that another maintainer can
   provision the same environment without chat history.
 
-### 2. Materialize the chosen NVIDIA test fixture
+### 2. Materialize the selected NVIDIA test fixture
 
 Provision the selected environment and turn it into a repeatable package-test
 fixture.
@@ -134,7 +139,7 @@ Exit criteria:
 - The suite covers the primary interactive behaviors of the current package.
 - The stories are concrete enough to run without additional interpretation.
 
-### 8. Drive the harness and the `utilyze` suite to a first comprehensive release
+### 8. Bring the harness and `utilyze` suite to a first comprehensive release
 
 Iterate on both the harness and the package-specific suite until they are ready
 for regular use.
@@ -150,3 +155,21 @@ Exit criteria:
 - The harness is usable for repeated package-maintenance work.
 - The `utilyze` suite is comprehensive enough to support future package updates
   and validation passes.
+
+## Repo workflow tooling
+
+### Package `amerge` for shared local-repo management
+
+`amerge` is not part of this repo workflow yet. The current install path is the
+explicit build, refresh, publish, and install sequence in
+[`docs/usage/local-repo.md`](usage/local-repo.md).
+
+Future work may extract `amerge` from `arch-strix-halo-pkgs` into its own
+package, then use that shared tool as the local-repo package manager for both
+repos.
+
+Exit criteria:
+
+- `amerge` is available as a package outside `arch-strix-halo-pkgs`.
+- This repo's local-repo usage docs either adopt it or explicitly keep the
+  manual workflow as the preferred path.

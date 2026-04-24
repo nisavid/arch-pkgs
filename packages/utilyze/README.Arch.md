@@ -1,80 +1,114 @@
 # utilyze on Arch
 
 > [!WARNING]
-> Experimental first release. This package is intentionally documented as a narrow, partially verified first cut. The sections below separate what has been verified for the package itself from what still needs supported-host runtime validation.
+> This is an experimental first release. The package builds and the Arch-specific
+> patches have targeted tests, but a supported NVIDIA host has not completed the
+> full runtime validation pass yet.
 
-This Arch build packages `utilyze` for local use on NVIDIA systems.
+This package installs `utilyze`, an NVIDIA GPU utilization TUI, for local Arch
+systems. It also carries Arch-specific patches for CUDA paths, startup behavior,
+configuration, upstream update messaging, and telemetry consent.
 
-## Current state
+## Who Should Use It
 
-### Implemented and verified
+Use this package if you have:
+
+- Linux `x86_64`
+- An NVIDIA Ampere-or-newer GPU
+- A working CUDA/NVIDIA runtime stack
+- Permission to run the TUI with `sudo` or an explicit host capability policy
+
+Do not treat this release as fully accepted for unattended monitoring yet. In
+the source repository, the remaining validation work is tracked in
+`docs/backlog.md`.
+
+## Current Status
+
+Verified for this package release:
 
 - Source verification completed.
 - Package build completed.
 - Package payload shape checked.
 - `utlz --version` works.
-- Startup reached the patched runtime checks in a sanitized environment without relying on `/usr/local/cuda*` fallbacks.
-- XDG-style system and user config loading/saving is covered by package `check()` tests.
-- Telemetry consent state, reporter gating, and consent-row key handling are covered by package `check()` tests.
+- Startup reaches the patched runtime checks in a sanitized environment without
+  relying on `/usr/local/cuda*` fallbacks.
+- XDG-style system and user config loading/saving is covered by package
+  `check()` tests.
+- Telemetry consent state, reporter gating, and consent-row key handling are
+  covered by package `check()` tests.
 
-### Implemented but not fully verified
+Still pending:
 
-- No supported NVIDIA host has completed a dependency-satisfied sampling session for this package release yet.
-- No real workload validation has been completed for this package release yet.
-- No supported-host interactive validation has been completed for the live telemetry consent row yet.
-- No long-running host validation has been completed for telemetry consent persistence across root and non-root sessions yet.
+- Dependency-satisfied sampling on a supported NVIDIA host.
+- Runtime validation under representative GPU workloads.
+- Interactive validation of the live telemetry consent row.
+- Long-running validation of telemetry consent persistence across root and
+  non-root sessions.
+- Repeatable TUI acceptance coverage.
 
-### Planned but not implemented
+## First Run
 
-- Supported NVIDIA-host validation for the packaged runtime.
-- Repeatable interactive acceptance coverage for the TUI.
-- Richer runtime validation against representative workloads.
+The safe default is:
 
-## Floor
+```bash
+sudo utlz
+```
 
-- Linux `x86_64`
-- NVIDIA Ampere or newer
-- CUDA / NVIDIA runtime stack available on the host
+Package installation does not relax NVIDIA profiling permissions or grant Linux
+capabilities. Those choices belong to the local administrator.
 
-## Safe default
+If you intentionally want to run without `sudo`, you may grant the binary
+`CAP_SYS_ADMIN`:
 
-Use the packaged binary through `sudo utlz` unless you have explicitly chosen another privilege model.
-
-## Optional admin choices
-
-This package does not auto-configure NVIDIA profiling permissions.
-
-If you want to avoid `sudo`, an admin may choose to grant the binary capabilities with `setcap`.
-That is a deliberate host policy choice, not a package default.
-
-```sh
+```bash
 sudo setcap cap_sys_admin+ep /usr/bin/utlz
 ```
 
-If your host needs driver-side profiling permissions, an admin may also choose to add a matching `modprobe.d` override.
-That is separate from package installation and should be reviewed against local policy.
+Package upgrades replace the binary, so reapply `setcap` after each upgrade.
 
-```sh
+If your host also needs driver-side profiling permissions, review local policy
+before adding an NVIDIA module override:
+
+```bash
 echo 'options nvidia NVreg_RestrictProfilingToAdminUsers=0' | sudo tee /etc/modprobe.d/nvidia-profiling.conf
 ```
 
-That module setting may require a reboot to take effect. NVIDIA also documents a no-reboot path, but it is disruptive because it unloads and reloads the driver stack:
+That module setting usually needs a reboot. NVIDIA also documents a no-reboot
+path, but it unloads and reloads the driver stack:
 
-```sh
+```bash
 sudo modprobe -rf nvidia_uvm nvidia_drm nvidia_modeset nvidia && sudo modprobe nvidia
 ```
 
-Package upgrades replace the binary, so capability-based setups may need `setcap` to be applied again after each upgrade.
-
-## Arch-specific behavior
+## Arch-Specific Behavior
 
 - Upstream self-update messaging is disabled in the Arch build.
-- Outbound telemetry is disabled until the effective user explicitly accepts it in the Utilyze TUI.
-- `UTLZ_DISABLE_METRICS=1` is still a hard disable for that session and suppresses the consent row.
-- `UTLZ_BACKEND_URL` remains a backend override only. It never enables telemetry by itself.
+- Outbound telemetry is disabled until the effective user explicitly accepts it
+  in the TUI.
+- `UTLZ_DISABLE_METRICS=1` remains a hard disable for the current session and
+  suppresses the consent row.
+- `UTLZ_BACKEND_URL` only overrides the backend URL. It never enables telemetry
+  by itself.
 - Utilyze reads system and user config from XDG-style config locations.
 
-## Config files
+## Telemetry Consent
+
+On the first undecided run, Utilyze shows a one-line consent row in the second
+SOL header row:
+
+- `a` accepts telemetry and persists `telemetry.enabled = true`
+- `x` rejects telemetry and persists `telemetry.enabled = false`
+- `esc` dismisses the prompt for the current session only
+
+If saving the choice fails, Utilyze applies the choice for the current session
+and shows a timed inline warning. The next launch falls back to the last
+persisted state.
+
+The current flow does not include an in-app reversal control. To change or clear
+the stored preference, edit or remove the effective user's config file, then
+start `utlz` again.
+
+## Config Files
 
 Utilyze reads config from:
 
@@ -83,47 +117,20 @@ Utilyze reads config from:
 ${XDG_CONFIG_HOME:-~/.config}/utilyze/config.toml
 ```
 
-If `XDG_CONFIG_DIRS` is set, Utilyze reads `utilyze/config.toml` under each listed system config directory instead of only `/etc/xdg`.
+If `XDG_CONFIG_DIRS` is set, Utilyze reads `utilyze/config.toml` under each
+listed system config directory instead of only `/etc/xdg`.
 
-System config sets host-wide defaults. User config overrides system config. Utilyze writes only the effective user's config file.
+System config sets host-wide defaults. User config overrides system config.
+Utilyze writes only the effective user's config file. If you launch `utlz` with
+`sudo`, the consent file is usually stored under root's config directory.
 
-## First run
-
-Start with:
-
-```sh
-sudo utlz
-```
-
-On the first undecided run, Utilyze shows a one-line inline consent row in the second SOL header row:
-
-- `a` accepts telemetry and persists `telemetry.enabled = true`
-- `x` rejects telemetry and persists `telemetry.enabled = false`
-- `esc` dismisses the prompt for the current session only
-
-If saving the choice fails, Utilyze still applies that choice for the current session and shows a timed inline warning. The next launch falls back to the last persisted state.
-
-If you have chosen capability-based access, reapply your `setcap` command after upgrades before running `utlz` without `sudo`.
-
-## Telemetry preference storage
-
-The Arch patch stores telemetry consent per effective user in:
-
-```text
-${XDG_CONFIG_HOME:-~/.config}/utilyze/config.toml
-```
-
-If you launch `utlz` with `sudo`, the consent file is stored for the effective user running the process, which is usually `root`.
-
-Admins can set a default in `/etc/xdg/utilyze/config.toml`:
+Admins can set a host-wide default in `/etc/xdg/utilyze/config.toml`:
 
 ```toml
 [telemetry]
 enabled = false
 ```
 
-The current v1 flow does not provide an in-app reversal control. To change or clear the stored preference, edit or remove the user's config file above, then start `utlz` again.
-
 ## Reference
 
-This doc is installed to `/usr/share/doc/utilyze/README.Arch.md`.
+This document is installed to `/usr/share/doc/utilyze/README.Arch.md`.
