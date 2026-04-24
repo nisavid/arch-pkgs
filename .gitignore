@@ -7,5 +7,6 @@
 /packages/*/*.tar.xz
 /packages/*/*.zip
 /.codex
+/.firecrawl/
 /repo/x86_64/*
 !/repo/x86_64/.gitignore
