@@ -1,0 +1,1079 @@
+diff -ruN '--exclude=build' '--exclude=dist' '--exclude=embedded' utilyze-0.1.1.orig/cmd/main.go utilyze-0.1.1/cmd/main.go
+--- utilyze-0.1.1.orig/cmd/main.go	2026-04-23 21:25:04.799963973 -0400
++++ utilyze-0.1.1/cmd/main.go	2026-04-23 21:32:36.622419544 -0400
+@@ -16,12 +16,14 @@
+ 	"syscall"
+ 	"time"
+ 
++	"github.com/systalyze/utilyze/internal/config"
+ 	"github.com/systalyze/utilyze/internal/ffi/cupti"
+ 	"github.com/systalyze/utilyze/internal/ffi/nvml"
+ 	"github.com/systalyze/utilyze/internal/ffi/sampler"
+ 	"github.com/systalyze/utilyze/internal/inference"
+ 	"github.com/systalyze/utilyze/internal/inference/vllm"
+ 	"github.com/systalyze/utilyze/internal/metrics"
++	"github.com/systalyze/utilyze/internal/telemetry"
+ 	"github.com/systalyze/utilyze/internal/tui/screens/top"
+ 	"github.com/systalyze/utilyze/internal/version"
+ 
+@@ -167,10 +169,18 @@
+ 	}
+ 
+ 	highContrast := os.Getenv("UTLZ_HIGH_CONTRAST") != "0"
++	telemetryController := telemetry.NewController(config.NewManager(), nil)
+ 	screen := top.New(w, h,
+ 		top.WithRefreshInterval(refreshInterval),
+ 		top.WithResolution(resolution),
+ 		top.WithHighContrast(highContrast),
++		top.WithTelemetryConsentHandler(func(action top.TelemetryConsentAction) top.TelemetryConsentResult {
++			result := telemetryController.Apply(action)
++			return top.TelemetryConsentResult{
++				ConsentVisible: result.Resolution.Prompt,
++				Notice:         result.Notice,
++			}
++		}),
+ 	)
+ 	p := tea.NewProgram(screen, tea.WithContext(ctx))
+ 
+@@ -202,9 +212,16 @@
+ 				}
+ 			}
+ 			p.Send(top.RooflineCeilingMsg{PerGPU: gpuCeilings})
+-		})
++		}, telemetryController.Resolution().Decision == config.TelemetryDecisionEnabled)
++		if reporter != nil {
++			telemetryController.BindReporter(reporter)
++		}
+ 
+ 		p.Send(top.InitMsg{DeviceIDs: collector.MonitoredDeviceIDs()})
++		p.Send(top.TelemetryConsentStateMsg{Visible: telemetryController.Resolution().Prompt})
++		if notice := telemetryController.InitialNotice(); notice != nil {
++			p.Send(*notice)
++		}
+ 
+ 		if reporter != nil {
+ 			go reporter.Start(ctx)
+@@ -251,6 +268,7 @@
+ 	nvmlClient *nvml.Client,
+ 	monitoredDeviceIDs []int,
+ 	onCeiling func(perGPU map[int]metrics.GpuCeiling),
++	enabled bool,
+ ) *metrics.Reporter {
+ 	totalGpuCount, err := nvmlClient.GetDeviceCount()
+ 	if err != nil || totalGpuCount <= 0 {
+@@ -269,6 +287,7 @@
+ 	}
+ 
+ 	return metrics.New(metrics.ReporterConfig{
++		Enabled:            enabled,
+ 		HostID:             metrics.GenerateHostID(allUUIDs),
+ 		GpuIDs:             gpuIDs,
+ 		GpuNames:           allNames,
+diff -ruN '--exclude=build' '--exclude=dist' '--exclude=embedded' utilyze-0.1.1.orig/internal/config/config.go utilyze-0.1.1/internal/config/config.go
+--- utilyze-0.1.1.orig/internal/config/config.go	2026-04-23 21:28:40.319346028 -0400
++++ utilyze-0.1.1/internal/config/config.go	2026-04-23 21:29:59.725118805 -0400
+@@ -15,7 +15,13 @@
+ 	ConfigFileName = "config.toml"
+ )
+ 
+-type Config struct{}
++type Config struct {
++	Telemetry TelemetryConfig `toml:"telemetry,omitempty"`
++}
++
++type TelemetryConfig struct {
++	Enabled *bool `toml:"enabled,omitempty"`
++}
+ 
+ type NoticeCode string
+ 
+@@ -175,8 +181,9 @@
+ }
+ 
+ func Merge(dst *Config, src Config) {
+-	_ = dst
+-	_ = src
++	if src.Telemetry.Enabled != nil {
++		dst.Telemetry.Enabled = src.Telemetry.Enabled
++	}
+ }
+ 
+ func (m *Manager) loadFile(path string) (Config, *Notice, bool) {
+diff -ruN '--exclude=build' '--exclude=dist' '--exclude=embedded' utilyze-0.1.1.orig/internal/config/telemetry.go utilyze-0.1.1/internal/config/telemetry.go
+--- utilyze-0.1.1.orig/internal/config/telemetry.go	1969-12-31 19:00:00.000000000 -0500
++++ utilyze-0.1.1/internal/config/telemetry.go	2026-04-23 21:29:59.754579086 -0400
+@@ -0,0 +1,93 @@
++package config
++
++import "os"
++
++const telemetryDisableEnvVar = "UTLZ_DISABLE_METRICS"
++
++type TelemetryDecision string
++
++const (
++	TelemetryDecisionEnabled   TelemetryDecision = "enabled"
++	TelemetryDecisionDisabled  TelemetryDecision = "disabled"
++	TelemetryDecisionUndecided TelemetryDecision = "undecided"
++)
++
++type TelemetrySource string
++
++const (
++	TelemetrySourceNone             TelemetrySource = ""
++	TelemetrySourceDisabledByEnv    TelemetrySource = "disabled-by-env"
++	TelemetrySourceSession          TelemetrySource = "session"
++	TelemetrySourceSessionDismissed TelemetrySource = "session-dismissed"
++	TelemetrySourceConfigEnabled    TelemetrySource = "config-enabled"
++	TelemetrySourceConfigDisabled   TelemetrySource = "config-disabled"
++)
++
++type TelemetrySessionState struct {
++	Decision  *bool
++	Dismissed bool
++}
++
++type TelemetryResolution struct {
++	Decision TelemetryDecision
++	Source   TelemetrySource
++	Prompt   bool
++	Notices  []Notice
++}
++
++func (m *Manager) ResolveTelemetry(session TelemetrySessionState) TelemetryResolution {
++	if os.Getenv(telemetryDisableEnvVar) == "1" {
++		return TelemetryResolution{
++			Decision: TelemetryDecisionDisabled,
++			Source:   TelemetrySourceDisabledByEnv,
++		}
++	}
++
++	if session.Decision != nil {
++		if *session.Decision {
++			return TelemetryResolution{
++				Decision: TelemetryDecisionEnabled,
++				Source:   TelemetrySourceSession,
++			}
++		}
++		return TelemetryResolution{
++			Decision: TelemetryDecisionDisabled,
++			Source:   TelemetrySourceSession,
++		}
++	}
++
++	if session.Dismissed {
++		return TelemetryResolution{
++			Decision: TelemetryDecisionDisabled,
++			Source:   TelemetrySourceSessionDismissed,
++		}
++	}
++
++	load := m.Load()
++	if load.Config.Telemetry.Enabled == nil {
++		return TelemetryResolution{
++			Decision: TelemetryDecisionUndecided,
++			Prompt:   true,
++			Notices:  load.Notices,
++		}
++	}
++	if *load.Config.Telemetry.Enabled {
++		return TelemetryResolution{
++			Decision: TelemetryDecisionEnabled,
++			Source:   TelemetrySourceConfigEnabled,
++			Notices:  load.Notices,
++		}
++	}
++	return TelemetryResolution{
++		Decision: TelemetryDecisionDisabled,
++		Source:   TelemetrySourceConfigDisabled,
++		Notices:  load.Notices,
++	}
++}
++
++func (m *Manager) SaveTelemetry(enabled bool) (SaveResult, error) {
++	load := m.LoadUser()
++	config := load.Config
++	config.Telemetry.Enabled = &enabled
++	return m.SaveUser(config)
++}
+diff -ruN '--exclude=build' '--exclude=dist' '--exclude=embedded' utilyze-0.1.1.orig/internal/config/telemetry_test.go utilyze-0.1.1/internal/config/telemetry_test.go
+--- utilyze-0.1.1.orig/internal/config/telemetry_test.go	1969-12-31 19:00:00.000000000 -0500
++++ utilyze-0.1.1/internal/config/telemetry_test.go	2026-04-23 21:29:59.783577712 -0400
+@@ -0,0 +1,133 @@
++package config
++
++import (
++	"os"
++	"path/filepath"
++	"testing"
++)
++
++func TestTelemetryResolutionMergesSystemAndUserConfig(t *testing.T) {
++	t.Parallel()
++
++	base := t.TempDir()
++	systemDir := filepath.Join(base, "system")
++	userDir := filepath.Join(base, "user")
++	writeConfig(t, systemDir, "[telemetry]\nenabled = true\n")
++	writeConfig(t, userDir, "[telemetry]\nenabled = false\n")
++
++	manager := &Manager{
++		userConfigDir:    func() (string, error) { return userDir, nil },
++		systemConfigDirs: func() []string { return []string{systemDir} },
++	}
++
++	got := manager.ResolveTelemetry(TelemetrySessionState{})
++	assertTelemetryResolution(t, got, TelemetryDecisionDisabled, TelemetrySourceConfigDisabled, false)
++}
++
++func TestTelemetryResolutionUsesSystemConfigWhenUserConfigIsMissing(t *testing.T) {
++	t.Parallel()
++
++	base := t.TempDir()
++	systemDir := filepath.Join(base, "system")
++	writeConfig(t, systemDir, "[telemetry]\nenabled = true\n")
++
++	manager := &Manager{
++		userConfigDir:    func() (string, error) { return filepath.Join(base, "user"), nil },
++		systemConfigDirs: func() []string { return []string{systemDir} },
++	}
++
++	got := manager.ResolveTelemetry(TelemetrySessionState{})
++	assertTelemetryResolution(t, got, TelemetryDecisionEnabled, TelemetrySourceConfigEnabled, false)
++}
++
++func TestTelemetryResolutionPromptsWhenNoConfigExists(t *testing.T) {
++	t.Parallel()
++
++	manager := testManager(t.TempDir(), nil)
++	got := manager.ResolveTelemetry(TelemetrySessionState{})
++	assertTelemetryResolution(t, got, TelemetryDecisionUndecided, TelemetrySourceNone, true)
++}
++
++func TestTelemetryResolutionHardDisableSuppressesPrompt(t *testing.T) {
++	t.Setenv("UTLZ_DISABLE_METRICS", "1")
++
++	manager := testManager(t.TempDir(), nil)
++	yes := true
++	got := manager.ResolveTelemetry(TelemetrySessionState{Decision: &yes})
++	assertTelemetryResolution(t, got, TelemetryDecisionDisabled, TelemetrySourceDisabledByEnv, false)
++}
++
++func TestTelemetryResolutionSessionAndDismissPrecedence(t *testing.T) {
++	t.Parallel()
++
++	manager := testManager(t.TempDir(), nil)
++
++	yes := true
++	got := manager.ResolveTelemetry(TelemetrySessionState{Decision: &yes})
++	assertTelemetryResolution(t, got, TelemetryDecisionEnabled, TelemetrySourceSession, false)
++
++	no := false
++	got = manager.ResolveTelemetry(TelemetrySessionState{Decision: &no})
++	assertTelemetryResolution(t, got, TelemetryDecisionDisabled, TelemetrySourceSession, false)
++
++	got = manager.ResolveTelemetry(TelemetrySessionState{Dismissed: true})
++	assertTelemetryResolution(t, got, TelemetryDecisionDisabled, TelemetrySourceSessionDismissed, false)
++}
++
++func TestTelemetryResolutionInvalidConfigReturnsNoticeAndPrompts(t *testing.T) {
++	t.Parallel()
++
++	base := t.TempDir()
++	userDir := filepath.Join(base, "user")
++	writeConfig(t, userDir, "[telemetry]\nenabled = nope\n")
++	manager := &Manager{
++		userConfigDir:    func() (string, error) { return userDir, nil },
++		systemConfigDirs: func() []string { return nil },
++	}
++
++	got := manager.ResolveTelemetry(TelemetrySessionState{})
++	assertTelemetryResolution(t, got, TelemetryDecisionUndecided, TelemetrySourceNone, true)
++	if len(got.Notices) != 1 || got.Notices[0].Code != NoticeLoadFailed {
++		t.Fatalf("Resolution.Notices = %#v, want one load-failed notice", got.Notices)
++	}
++}
++
++func TestSaveTelemetryWritesUserConfigOnly(t *testing.T) {
++	t.Parallel()
++
++	base := t.TempDir()
++	systemDir := filepath.Join(base, "system")
++	userDir := filepath.Join(base, "user")
++	writeConfig(t, systemDir, "[telemetry]\nenabled = false\n")
++
++	manager := &Manager{
++		userConfigDir:    func() (string, error) { return userDir, nil },
++		systemConfigDirs: func() []string { return []string{systemDir} },
++	}
++	if _, err := manager.SaveTelemetry(true); err != nil {
++		t.Fatalf("SaveTelemetry(true) error = %v", err)
++	}
++
++	userConfig, err := os.ReadFile(filepath.Join(userDir, "utilyze", "config.toml"))
++	if err != nil {
++		t.Fatalf("ReadFile(user config) error = %v", err)
++	}
++	if got := string(userConfig); got != "[telemetry]\n  enabled = true\n" {
++		t.Fatalf("user config = %q, want telemetry enabled", got)
++	}
++
++	systemConfig, err := os.ReadFile(filepath.Join(systemDir, "utilyze", "config.toml"))
++	if err != nil {
++		t.Fatalf("ReadFile(system config) error = %v", err)
++	}
++	if got := string(systemConfig); got != "[telemetry]\nenabled = false\n" {
++		t.Fatalf("system config = %q, want unchanged", got)
++	}
++}
++
++func assertTelemetryResolution(t *testing.T, got TelemetryResolution, wantDecision TelemetryDecision, wantSource TelemetrySource, wantPrompt bool) {
++	t.Helper()
++	if got.Decision != wantDecision || got.Source != wantSource || got.Prompt != wantPrompt {
++		t.Fatalf("Resolution = %#v, want decision=%q source=%q prompt=%v", got, wantDecision, wantSource, wantPrompt)
++	}
++}
+diff -ruN '--exclude=build' '--exclude=dist' '--exclude=embedded' utilyze-0.1.1.orig/internal/metrics/reporter.go utilyze-0.1.1/internal/metrics/reporter.go
+--- utilyze-0.1.1.orig/internal/metrics/reporter.go	2026-04-23 12:32:50.000000000 -0400
++++ utilyze-0.1.1/internal/metrics/reporter.go	2026-04-23 21:30:20.619759823 -0400
+@@ -18,7 +18,6 @@
+ const (
+ 	DefaultBackendURL = "https://api.systalyze.com/v1/utilyze"
+ 	backendURLEnvVar  = "UTLZ_BACKEND_URL"
+-	disableEnvVar     = "UTLZ_DISABLE_METRICS"
+ )
+ 
+ type GpuCeiling struct {
+@@ -30,6 +29,7 @@
+ type CeilingCallback func(perGPU map[int]GpuCeiling)
+ 
+ type ReporterConfig struct {
++	Enabled            bool
+ 	BackendURL         string
+ 	HostID             string
+ 	GpuIDs             []string // indexed by physical device ID
+@@ -46,14 +46,11 @@
+ 	mu         sync.Mutex
+ 	windowBuf  []MetricsSnapshot
+ 	inflight   bool
++	enabled    bool
+ 	cancelFunc context.CancelFunc
+ }
+ 
+ func New(config ReporterConfig) *Reporter {
+-	if os.Getenv(disableEnvVar) == "1" {
+-		return nil
+-	}
+-
+ 	backendURL := config.BackendURL
+ 	if backendURL == "" {
+ 		backendURL = os.Getenv(backendURLEnvVar)
+@@ -63,11 +60,19 @@
+ 	}
+ 	config.BackendURL = backendURL
+ 
+-	return &Reporter{config: config, scanner: config.Inference}
++	return &Reporter{
++		config:  config,
++		scanner: config.Inference,
++		enabled: config.Enabled,
++	}
+ }
+ 
+ func (r *Reporter) Observe(snapshot MetricsSnapshot) {
+ 	r.mu.Lock()
++	if !r.enabled {
++		r.mu.Unlock()
++		return
++	}
+ 	r.windowBuf = append(r.windowBuf, snapshot)
+ 	r.mu.Unlock()
+ }
+@@ -101,17 +106,33 @@
+ 	}
+ }
+ 
++func (r *Reporter) SetEnabled(enabled bool) {
++	r.mu.Lock()
++	r.enabled = enabled
++	if !enabled {
++		r.windowBuf = nil
++	}
++	r.mu.Unlock()
++}
++
++func (r *Reporter) Enabled() bool {
++	r.mu.Lock()
++	defer r.mu.Unlock()
++	return r.enabled
++}
++
+ func (r *Reporter) tick(ctx context.Context) {
+ 	r.mu.Lock()
++	enabled := r.enabled
+ 	skip := r.inflight
+ 	window := r.windowBuf
+ 	r.windowBuf = nil
+-	if !skip {
++	if enabled && !skip {
+ 		r.inflight = true
+ 	}
+ 	r.mu.Unlock()
+ 
+-	if skip {
++	if !enabled || skip {
+ 		return
+ 	}
+ 
+diff -ruN '--exclude=build' '--exclude=dist' '--exclude=embedded' utilyze-0.1.1.orig/internal/metrics/reporter_telemetry_test.go utilyze-0.1.1/internal/metrics/reporter_telemetry_test.go
+--- utilyze-0.1.1.orig/internal/metrics/reporter_telemetry_test.go	1969-12-31 19:00:00.000000000 -0500
++++ utilyze-0.1.1/internal/metrics/reporter_telemetry_test.go	2026-04-23 21:30:20.648589115 -0400
+@@ -0,0 +1,34 @@
++package metrics
++
++import "testing"
++
++func TestReporterUsesExplicitEnabledFlag(t *testing.T) {
++	t.Parallel()
++
++	reporter := New(ReporterConfig{
++		Enabled: false,
++	})
++	if reporter == nil {
++		t.Fatal("New() = nil, want reporter instance")
++	}
++	if reporter.Enabled() {
++		t.Fatal("Enabled() = true, want false")
++	}
++}
++
++func TestBackendOverrideDoesNotEnableReporter(t *testing.T) {
++	t.Setenv("UTLZ_BACKEND_URL", "https://metrics.example.test")
++
++	reporter := New(ReporterConfig{
++		Enabled: false,
++	})
++	if reporter == nil {
++		t.Fatal("New() = nil, want reporter instance")
++	}
++	if reporter.Enabled() {
++		t.Fatal("Enabled() = true, want false")
++	}
++	if reporter.config.BackendURL != "https://metrics.example.test" {
++		t.Fatalf("BackendURL = %q, want env override", reporter.config.BackendURL)
++	}
++}
+diff -ruN '--exclude=build' '--exclude=dist' '--exclude=embedded' utilyze-0.1.1.orig/internal/telemetry/controller.go utilyze-0.1.1/internal/telemetry/controller.go
+--- utilyze-0.1.1.orig/internal/telemetry/controller.go	1969-12-31 19:00:00.000000000 -0500
++++ utilyze-0.1.1/internal/telemetry/controller.go	2026-04-23 21:31:21.043729365 -0400
+@@ -0,0 +1,104 @@
++package telemetry
++
++import (
++	"github.com/systalyze/utilyze/internal/config"
++	"github.com/systalyze/utilyze/internal/tui/screens/top"
++)
++
++const (
++	ConfigLoadFailedNoticeCode = "telemetry-config-load-failed"
++	SaveFailedNoticeCode       = "telemetry-save-failed"
++)
++
++type ConfigManager interface {
++	ResolveTelemetry(config.TelemetrySessionState) config.TelemetryResolution
++	SaveTelemetry(bool) (config.SaveResult, error)
++	UserPath() (string, error)
++}
++
++type Reporter interface {
++	SetEnabled(bool)
++}
++
++type ApplyResult struct {
++	Resolution config.TelemetryResolution
++	Notice     *top.StatusNoticeMsg
++}
++
++type Controller struct {
++	manager    ConfigManager
++	reporter   Reporter
++	session    config.TelemetrySessionState
++	resolution config.TelemetryResolution
++}
++
++func NewController(manager ConfigManager, reporter Reporter) *Controller {
++	c := &Controller{
++		manager:  manager,
++		reporter: reporter,
++	}
++	c.refresh()
++	return c
++}
++
++func (c *Controller) Resolution() config.TelemetryResolution {
++	return c.resolution
++}
++
++func (c *Controller) BindReporter(reporter Reporter) {
++	c.reporter = reporter
++	c.applyReporterState()
++}
++
++func (c *Controller) InitialNotice() *top.StatusNoticeMsg {
++	for _, notice := range c.resolution.Notices {
++		if notice.Code == config.NoticeLoadFailed {
++			return &top.StatusNoticeMsg{
++				Code: ConfigLoadFailedNoticeCode,
++				Text: "Config could not be loaded; telemetry preference was not applied.",
++			}
++		}
++	}
++	return nil
++}
++
++func (c *Controller) Apply(action top.TelemetryConsentAction) ApplyResult {
++	switch action {
++	case top.TelemetryConsentAccept:
++		return c.applyDecision(true)
++	case top.TelemetryConsentReject:
++		return c.applyDecision(false)
++	case top.TelemetryConsentDismiss:
++		c.session.Dismissed = true
++		c.session.Decision = nil
++		c.refresh()
++	}
++	return ApplyResult{Resolution: c.resolution}
++}
++
++func (c *Controller) applyDecision(enabled bool) ApplyResult {
++	c.session.Decision = &enabled
++	c.session.Dismissed = false
++
++	var notice *top.StatusNoticeMsg
++	if _, err := c.manager.SaveTelemetry(enabled); err != nil {
++		notice = &top.StatusNoticeMsg{
++			Code: SaveFailedNoticeCode,
++			Text: "Telemetry preference could not be saved; this choice applies to this session only.",
++		}
++	}
++	c.refresh()
++	return ApplyResult{Resolution: c.resolution, Notice: notice}
++}
++
++func (c *Controller) refresh() {
++	c.resolution = c.manager.ResolveTelemetry(c.session)
++	c.applyReporterState()
++}
++
++func (c *Controller) applyReporterState() {
++	if c.reporter == nil {
++		return
++	}
++	c.reporter.SetEnabled(c.resolution.Decision == config.TelemetryDecisionEnabled)
++}
+diff -ruN '--exclude=build' '--exclude=dist' '--exclude=embedded' utilyze-0.1.1.orig/internal/telemetry/controller_test.go utilyze-0.1.1/internal/telemetry/controller_test.go
+--- utilyze-0.1.1.orig/internal/telemetry/controller_test.go	1969-12-31 19:00:00.000000000 -0500
++++ utilyze-0.1.1/internal/telemetry/controller_test.go	2026-04-23 21:32:48.082612257 -0400
+@@ -0,0 +1,208 @@
++package telemetry
++
++import (
++	"testing"
++
++	"github.com/systalyze/utilyze/internal/config"
++	"github.com/systalyze/utilyze/internal/tui/screens/top"
++)
++
++func TestSaveFailureAppliesChoiceForCurrentSessionOnly(t *testing.T) {
++	t.Parallel()
++
++	manager := &stubManager{
++		resolveFunc: func(session config.TelemetrySessionState) config.TelemetryResolution {
++			if session.Decision != nil && *session.Decision {
++				return config.TelemetryResolution{
++					Decision: config.TelemetryDecisionEnabled,
++					Source:   config.TelemetrySourceSession,
++				}
++			}
++			return config.TelemetryResolution{
++				Decision: config.TelemetryDecisionUndecided,
++				Prompt:   true,
++			}
++		},
++		saveFunc: func(bool) (config.SaveResult, error) {
++			return config.SaveResult{Notice: &config.Notice{Code: config.NoticeSaveFailed}}, assertErr("save failed")
++		},
++	}
++	reporter := &stubReporter{}
++
++	controller := NewController(manager, reporter)
++	result := controller.Apply(top.TelemetryConsentAccept)
++
++	if !reporter.enabled {
++		t.Fatal("reporter enabled = false, want true")
++	}
++	if result.Notice == nil || result.Notice.Code != SaveFailedNoticeCode {
++		t.Fatalf("Apply().Notice = %#v, want save-failed notice", result.Notice)
++	}
++	if result.Resolution.Decision != config.TelemetryDecisionEnabled || result.Resolution.Prompt {
++		t.Fatalf("Apply().Resolution = %#v, want session-enabled with prompt suppressed", result.Resolution)
++	}
++
++	fresh := NewController(manager, &stubReporter{})
++	if got := fresh.Resolution(); got.Decision != config.TelemetryDecisionUndecided || !got.Prompt {
++		t.Fatalf("fresh Resolution() = %#v, want undecided prompt after failed save", got)
++	}
++}
++
++func TestPersistedChoicesSuppressBannerOnLaterLaunches(t *testing.T) {
++	t.Parallel()
++
++	manager := &persistentManager{}
++	accepted := NewController(manager, &stubReporter{})
++	if result := accepted.Apply(top.TelemetryConsentAccept); result.Notice != nil {
++		t.Fatalf("accept notice = %#v, want nil", result.Notice)
++	}
++
++	laterAccepted := NewController(manager, &stubReporter{})
++	if got := laterAccepted.Resolution(); got.Decision != config.TelemetryDecisionEnabled || got.Prompt {
++		t.Fatalf("later accepted Resolution() = %#v, want config enabled without prompt", got)
++	}
++
++	rejectedManager := &persistentManager{}
++	rejected := NewController(rejectedManager, &stubReporter{})
++	if result := rejected.Apply(top.TelemetryConsentReject); result.Notice != nil {
++		t.Fatalf("reject notice = %#v, want nil", result.Notice)
++	}
++
++	laterRejected := NewController(rejectedManager, &stubReporter{})
++	if got := laterRejected.Resolution(); got.Decision != config.TelemetryDecisionDisabled || got.Prompt {
++		t.Fatalf("later rejected Resolution() = %#v, want config disabled without prompt", got)
++	}
++}
++
++func TestDismissAppliesSessionOnlyDecisionAndFallsBackOnNextLaunch(t *testing.T) {
++	t.Parallel()
++
++	t.Run("undecided fallback", func(t *testing.T) {
++		t.Parallel()
++
++		manager := &persistentManager{}
++		reporter := &stubReporter{enabled: true}
++		controller := NewController(manager, reporter)
++
++		result := controller.Apply(top.TelemetryConsentDismiss)
++		if result.Notice != nil {
++			t.Fatalf("dismiss notice = %#v, want nil", result.Notice)
++		}
++		if got := result.Resolution; got.Decision != config.TelemetryDecisionDisabled || got.Source != config.TelemetrySourceSessionDismissed || got.Prompt {
++			t.Fatalf("dismiss Resolution() = %#v, want session-dismissed without prompt", got)
++		}
++		if reporter.enabled {
++			t.Fatal("reporter enabled = true, want false")
++		}
++
++		fresh := NewController(manager, &stubReporter{})
++		if got := fresh.Resolution(); got.Decision != config.TelemetryDecisionUndecided || !got.Prompt {
++			t.Fatalf("fresh Resolution() = %#v, want undecided prompt after session-only dismiss", got)
++		}
++	})
++
++	t.Run("config fallback", func(t *testing.T) {
++		t.Parallel()
++
++		persisted := true
++		manager := &persistentManager{persisted: &persisted}
++		controller := NewController(manager, &stubReporter{enabled: true})
++
++		result := controller.Apply(top.TelemetryConsentDismiss)
++		if result.Notice != nil {
++			t.Fatalf("dismiss notice = %#v, want nil", result.Notice)
++		}
++		if got := result.Resolution; got.Decision != config.TelemetryDecisionDisabled || got.Source != config.TelemetrySourceSessionDismissed || got.Prompt {
++			t.Fatalf("dismiss Resolution() = %#v, want session-dismissed without prompt", got)
++		}
++
++		fresh := NewController(manager, &stubReporter{})
++		if got := fresh.Resolution(); got.Decision != config.TelemetryDecisionEnabled || got.Source != config.TelemetrySourceConfigEnabled || got.Prompt {
++			t.Fatalf("fresh Resolution() = %#v, want config enabled without prompt after dismiss", got)
++		}
++	})
++}
++
++type stubManager struct {
++	resolveFunc  func(config.TelemetrySessionState) config.TelemetryResolution
++	saveFunc     func(bool) (config.SaveResult, error)
++	userPathFunc func() (string, error)
++}
++
++func (s *stubManager) ResolveTelemetry(session config.TelemetrySessionState) config.TelemetryResolution {
++	return s.resolveFunc(session)
++}
++
++func (s *stubManager) SaveTelemetry(enabled bool) (config.SaveResult, error) {
++	return s.saveFunc(enabled)
++}
++
++func (s *stubManager) UserPath() (string, error) {
++	if s.userPathFunc != nil {
++		return s.userPathFunc()
++	}
++	return "", nil
++}
++
++type stubReporter struct {
++	enabled bool
++}
++
++func (s *stubReporter) SetEnabled(enabled bool) {
++	s.enabled = enabled
++}
++
++type assertErr string
++
++func (e assertErr) Error() string { return string(e) }
++
++type persistentManager struct {
++	persisted *bool
++}
++
++func (p *persistentManager) ResolveTelemetry(session config.TelemetrySessionState) config.TelemetryResolution {
++	if session.Decision != nil {
++		if *session.Decision {
++			return config.TelemetryResolution{
++				Decision: config.TelemetryDecisionEnabled,
++				Source:   config.TelemetrySourceSession,
++			}
++		}
++		return config.TelemetryResolution{
++			Decision: config.TelemetryDecisionDisabled,
++			Source:   config.TelemetrySourceSession,
++		}
++	}
++	if session.Dismissed {
++		return config.TelemetryResolution{
++			Decision: config.TelemetryDecisionDisabled,
++			Source:   config.TelemetrySourceSessionDismissed,
++		}
++	}
++	if p.persisted == nil {
++		return config.TelemetryResolution{
++			Decision: config.TelemetryDecisionUndecided,
++			Prompt:   true,
++		}
++	}
++	if *p.persisted {
++		return config.TelemetryResolution{
++			Decision: config.TelemetryDecisionEnabled,
++			Source:   config.TelemetrySourceConfigEnabled,
++		}
++	}
++	return config.TelemetryResolution{
++		Decision: config.TelemetryDecisionDisabled,
++		Source:   config.TelemetrySourceConfigDisabled,
++	}
++}
++
++func (p *persistentManager) SaveTelemetry(enabled bool) (config.SaveResult, error) {
++	p.persisted = new(bool)
++	*p.persisted = enabled
++	return config.SaveResult{}, nil
++}
++
++func (p *persistentManager) UserPath() (string, error) {
++	return "", nil
++}
+diff -ruN '--exclude=build' '--exclude=dist' '--exclude=embedded' utilyze-0.1.1.orig/internal/tui/screens/top/message.go utilyze-0.1.1/internal/tui/screens/top/message.go
+--- utilyze-0.1.1.orig/internal/tui/screens/top/message.go	2026-04-23 21:28:04.706036697 -0400
++++ utilyze-0.1.1/internal/tui/screens/top/message.go	2026-04-23 21:32:13.046268985 -0400
+@@ -33,3 +33,22 @@
+ 	Code string
+ 	Text string
+ }
++
++type TelemetryConsentAction string
++
++const (
++	TelemetryConsentAccept  TelemetryConsentAction = "accept"
++	TelemetryConsentReject  TelemetryConsentAction = "reject"
++	TelemetryConsentDismiss TelemetryConsentAction = "dismiss"
++)
++
++type TelemetryConsentStateMsg struct {
++	Visible bool
++}
++
++type TelemetryConsentResult struct {
++	ConsentVisible bool
++	Notice         *StatusNoticeMsg
++}
++
++type TelemetryConsentHandler func(action TelemetryConsentAction) TelemetryConsentResult
+diff -ruN '--exclude=build' '--exclude=dist' '--exclude=embedded' utilyze-0.1.1.orig/internal/tui/screens/top/model.go utilyze-0.1.1/internal/tui/screens/top/model.go
+--- utilyze-0.1.1.orig/internal/tui/screens/top/model.go	2026-04-23 21:28:04.767033800 -0400
++++ utilyze-0.1.1/internal/tui/screens/top/model.go	2026-04-23 21:32:13.106266147 -0400
+@@ -52,6 +52,9 @@
+ 	statusNoticeDuration time.Duration
+ 	now                  func() time.Time
+ 
++	telemetryConsentVisible bool
++	telemetryConsentHandler TelemetryConsentHandler
++
+ 	highContrast bool
+ 	dark         bool
+ 	styles       theme.Styles
+@@ -197,6 +200,18 @@
+ 	}
+ }
+ 
++func (m *model) applyTelemetryConsent(action TelemetryConsentAction) tea.Cmd {
++	if m.telemetryConsentHandler == nil {
++		return nil
++	}
++	result := m.telemetryConsentHandler(action)
++	m.telemetryConsentVisible = result.ConsentVisible
++	if result.Notice != nil {
++		m.addStatusNotice(*result.Notice)
++	}
++	return m.beginDraw()
++}
++
+ func (m *model) resetCharts() {
+ 	for _, chart := range m.solCharts {
+ 		chart.Reset()
+diff -ruN '--exclude=build' '--exclude=dist' '--exclude=embedded' utilyze-0.1.1.orig/internal/tui/screens/top/option.go utilyze-0.1.1/internal/tui/screens/top/option.go
+--- utilyze-0.1.1.orig/internal/tui/screens/top/option.go	2026-04-23 21:28:04.829030856 -0400
++++ utilyze-0.1.1/internal/tui/screens/top/option.go	2026-04-23 21:32:13.164263404 -0400
+@@ -33,3 +33,9 @@
+ 		m.statusNoticeDuration = duration
+ 	}
+ }
++
++func WithTelemetryConsentHandler(handler TelemetryConsentHandler) Option {
++	return func(m *model) {
++		m.telemetryConsentHandler = handler
++	}
++}
+diff -ruN '--exclude=build' '--exclude=dist' '--exclude=embedded' utilyze-0.1.1.orig/internal/tui/screens/top/telemetry_test.go utilyze-0.1.1/internal/tui/screens/top/telemetry_test.go
+--- utilyze-0.1.1.orig/internal/tui/screens/top/telemetry_test.go	1969-12-31 19:00:00.000000000 -0500
++++ utilyze-0.1.1/internal/tui/screens/top/telemetry_test.go	2026-04-23 21:33:43.527991868 -0400
+@@ -0,0 +1,129 @@
++package top
++
++import (
++	"strings"
++	"testing"
++
++	tea "charm.land/bubbletea/v2"
++)
++
++func TestConsentRowVisibleOnlyWhenEnabledByState(t *testing.T) {
++	t.Parallel()
++
++	visible := initTelemetryModel(t, New(96, 24,
++		WithTelemetryConsentHandler(func(TelemetryConsentAction) TelemetryConsentResult {
++			return TelemetryConsentResult{}
++		}),
++	))
++	visible = updateTelemetryModel(t, visible, TelemetryConsentStateMsg{Visible: true})
++	if view := visible.View().Content; !strings.Contains(view, "a=Accept") {
++		t.Fatalf("View() missing consent hints:\n%s", view)
++	}
++
++	hidden := initTelemetryModel(t, New(96, 24,
++		WithTelemetryConsentHandler(func(TelemetryConsentAction) TelemetryConsentResult {
++			return TelemetryConsentResult{}
++		}),
++	))
++	if view := hidden.View().Content; strings.Contains(view, "a=Accept") {
++		t.Fatalf("View() unexpectedly contains consent hints:\n%s", view)
++	}
++}
++
++func TestConsentKeysTriggerExpectedActions(t *testing.T) {
++	t.Parallel()
++
++	cases := []struct {
++		name   string
++		key    tea.KeyPressMsg
++		action TelemetryConsentAction
++	}{
++		{name: "accept", key: tea.KeyPressMsg(tea.Key{Text: "a", Code: 'a'}), action: TelemetryConsentAccept},
++		{name: "reject", key: tea.KeyPressMsg(tea.Key{Text: "x", Code: 'x'}), action: TelemetryConsentReject},
++		{name: "dismiss", key: tea.KeyPressMsg(tea.Key{Code: tea.KeyEscape}), action: TelemetryConsentDismiss},
++	}
++
++	for _, tc := range cases {
++		tc := tc
++		t.Run(tc.name, func(t *testing.T) {
++			t.Parallel()
++
++			var gotAction TelemetryConsentAction
++			m := initTelemetryModel(t, New(96, 24,
++				WithTelemetryConsentHandler(func(action TelemetryConsentAction) TelemetryConsentResult {
++					gotAction = action
++					return TelemetryConsentResult{ConsentVisible: false}
++				}),
++			))
++			m = updateTelemetryModel(t, m, TelemetryConsentStateMsg{Visible: true})
++			m = updateTelemetryModel(t, m, tc.key)
++
++			if gotAction != tc.action {
++				t.Fatalf("got action %q, want %q", gotAction, tc.action)
++			}
++			if view := m.View().Content; strings.Contains(view, "a=Accept") {
++				t.Fatalf("View() still contains consent hints after %s:\n%s", tc.name, view)
++			}
++		})
++	}
++}
++
++func TestStatusNoticeTakesPrecedenceOverConsentRow(t *testing.T) {
++	t.Parallel()
++
++	m := initTelemetryModel(t, New(96, 24,
++		WithTelemetryConsentHandler(func(TelemetryConsentAction) TelemetryConsentResult {
++			return TelemetryConsentResult{}
++		}),
++	))
++	m = updateTelemetryModel(t, m, TelemetryConsentStateMsg{Visible: true})
++	m = updateTelemetryModel(t, m, StatusNoticeMsg{Code: "load-failed", Text: "config unreadable"})
++
++	view := m.View().Content
++	if !strings.Contains(view, "config unreadable") {
++		t.Fatalf("View() missing active notice:\n%s", view)
++	}
++	if strings.Contains(view, "a=Accept") {
++		t.Fatalf("View() shows consent while notice is active:\n%s", view)
++	}
++}
++
++func TestNarrowConsentRowPreservesKeyHints(t *testing.T) {
++	t.Parallel()
++
++	m := initTelemetryModel(t, New(80, 24,
++		WithTelemetryConsentHandler(func(TelemetryConsentAction) TelemetryConsentResult {
++			return TelemetryConsentResult{}
++		}),
++	))
++	m = updateTelemetryModel(t, m, TelemetryConsentStateMsg{Visible: true})
++
++	view := m.View().Content
++	for _, hint := range []string{"a=Accept", "x=Reject", "esc=Dismiss"} {
++		if !strings.Contains(view, hint) {
++			t.Fatalf("View() missing key hint %q:\n%s", hint, view)
++		}
++	}
++	if telemetryConsentCopy != "Share anonymous telemetry to improve Attainable SOL for this effective user." {
++		t.Fatalf("telemetryConsentCopy = %q, want current consent copy", telemetryConsentCopy)
++	}
++	if strings.Contains(view, telemetryConsentCopy) {
++		t.Fatalf("View() did not truncate the full consent copy on a narrow layout:\n%s", view)
++	}
++}
++
++func initTelemetryModel(t *testing.T, m model) model {
++	t.Helper()
++	return updateTelemetryModel(t, m, InitMsg{DeviceIDs: []int{0}})
++}
++
++func updateTelemetryModel(t *testing.T, m model, msg tea.Msg) model {
++	t.Helper()
++
++	next, _ := m.Update(msg)
++	typed, ok := next.(model)
++	if !ok {
++		t.Fatalf("Update(%T) returned %T, want model", msg, next)
++	}
++	return typed
++}
+diff -ruN '--exclude=build' '--exclude=dist' '--exclude=embedded' utilyze-0.1.1.orig/internal/tui/screens/top/update.go utilyze-0.1.1/internal/tui/screens/top/update.go
+--- utilyze-0.1.1.orig/internal/tui/screens/top/update.go	2026-04-23 21:28:04.892107036 -0400
++++ utilyze-0.1.1/internal/tui/screens/top/update.go	2026-04-23 21:32:13.224260567 -0400
+@@ -69,6 +69,21 @@
+ 			m.highContrast = !m.highContrast
+ 			m.applyTheme()
+ 			return m, m.beginDraw()
++		case "a":
++			if m.telemetryConsentVisible {
++				return m, m.applyTelemetryConsent(TelemetryConsentAccept)
++			}
++			return m, nil
++		case "x":
++			if m.telemetryConsentVisible {
++				return m, m.applyTelemetryConsent(TelemetryConsentReject)
++			}
++			return m, nil
++		case "esc":
++			if m.telemetryConsentVisible {
++				return m, m.applyTelemetryConsent(TelemetryConsentDismiss)
++			}
++			return m, nil
+ 		default:
+ 			return m, nil
+ 		}
+@@ -133,6 +148,9 @@
+ 	case StatusNoticeMsg:
+ 		m.addStatusNotice(typedMsg)
+ 		return m, nil
++	case TelemetryConsentStateMsg:
++		m.telemetryConsentVisible = typedMsg.Visible
++		return m, nil
+ 	case ErrorMsg:
+ 		m.err = typedMsg.Error
+ 		return m, nil
+diff -ruN '--exclude=build' '--exclude=dist' '--exclude=embedded' utilyze-0.1.1.orig/internal/tui/screens/top/view.go utilyze-0.1.1/internal/tui/screens/top/view.go
+--- utilyze-0.1.1.orig/internal/tui/screens/top/view.go	2026-04-23 21:28:04.951025062 -0400
++++ utilyze-0.1.1/internal/tui/screens/top/view.go	2026-04-23 21:33:43.466994750 -0400
+@@ -28,6 +28,11 @@
+ 
+ const bytesSIWidth = 5
+ 
++const (
++	telemetryConsentCopy  = "Share anonymous telemetry to improve Attainable SOL for this effective user."
++	telemetryConsentHints = "a=Accept  x=Reject  esc=Dismiss"
++)
++
+ func clipFrame(width int, content string) string {
+ 	if width <= 0 {
+ 		return content
+@@ -164,10 +169,38 @@
+ }
+ 
+ func (m model) statusHeaderInner() string {
++	available := max(m.width-lipgloss.Width(m.headerLogoView()), 1)
+ 	if m.statusNotice == nil {
++		if m.telemetryConsentVisible {
++			return m.renderTelemetryConsent(available)
++		}
+ 		return ""
+ 	}
+-	return m.styles.HeaderSecondary.Render(ansi.Truncate(m.statusNotice.Text, m.width, ""))
++	return m.styles.HeaderSecondary.Render(ansi.Truncate(m.statusNotice.Text, available, ""))
++}
++
++func (m model) renderTelemetryConsent(available int) string {
++	available = max(available-1, 1)
++	hintsWidth := ansi.StringWidth(telemetryConsentHints)
++	if hintsWidth >= available {
++		return m.styles.HeaderBold.Render(ansi.Truncate(telemetryConsentHints, available, ""))
++	}
++
++	descriptionWidth := available - hintsWidth
++	if descriptionWidth > 2 {
++		descriptionWidth -= 2
++	}
++	description := ansi.Truncate(telemetryConsentCopy, descriptionWidth, "")
++	content := telemetryConsentHints
++	if description != "" {
++		content = description + "  " + telemetryConsentHints
++	}
++	prefix := ansi.Truncate(content[:max(len(content)-len(telemetryConsentHints), 0)], descriptionWidth+2, "")
++	return lipgloss.JoinHorizontal(
++		lipgloss.Top,
++		m.styles.HeaderSecondary.Render(prefix),
++		m.styles.HeaderBold.Render(telemetryConsentHints),
++	)
+ }
+ 
+ func (m model) solHeaderInner() string {
