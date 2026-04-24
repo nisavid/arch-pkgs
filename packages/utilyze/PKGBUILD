@@ -1,6 +1,6 @@
 pkgname=utilyze
 pkgver=0.1.1
-pkgrel=1
+pkgrel=2
 pkgdesc="Measure how efficiently NVIDIA GPUs are doing useful work"
 arch=('x86_64')
 url="https://github.com/systalyze/utilyze"
@@ -14,15 +14,17 @@ source=(
   '0001-use-arch-cuda-paths.patch'
   '0002-respect-nvidia-profiling-policy.patch'
   '0003-disable-upstream-self-update.patch'
-  '0004-metrics-opt-in.patch'
+  '0004-add-generic-config.patch'
+  '0005-metrics-opt-in.patch'
   'README.Arch.md'
 )
 sha256sums=('5d1469193cc2c3385762551c30241bc883d27567d929afc8c9394c205ff4629c'
             'd6df39fd75d0072d8c907f0e3fbaac41973320f37d2a50c24a7a690fd98944cf'
             'afcdc3fc96af4d9085649499c75c120564e3267812d6e4c105e6faddfc21fe68'
             '0120243d6ce46b422ff23f38387e479d82c8dd09f7f7017e65793fcaa2aa82b2'
+            '2701e61eefb202f9ec4d2e7fd516f5db42a37fdafb9c394120c5c9b25df61d56'
             'a8a1a4d9c1828e810600e8a2ebc06b8227ddf00dadc7f18a014537ebfd49bfab'
-            '25d5bf89894bc11d0671996ad17d902a89064fb5c83f93c5bbf6fe3586b0c80c')
+            '0ad0a6e15d077489525bbb6363e3a5c0dbf2049c4566bddbf0a86e2fa0107fae')
 
 prepare() {
   cd "${srcdir}/${pkgname}-${pkgver}"
@@ -32,7 +34,8 @@ prepare() {
     "${srcdir}/0001-use-arch-cuda-paths.patch" \
     "${srcdir}/0002-respect-nvidia-profiling-policy.patch" \
     "${srcdir}/0003-disable-upstream-self-update.patch" \
-    "${srcdir}/0004-metrics-opt-in.patch"; do
+    "${srcdir}/0004-add-generic-config.patch" \
+    "${srcdir}/0005-metrics-opt-in.patch"; do
     patch -Np1 -i "${patch}"
   done
 }
@@ -48,6 +51,17 @@ build() {
 
   make clean
   make utlz REPO=archlinux/packaged-utilyze
+}
+
+check() {
+  cd "${srcdir}/${pkgname}-${pkgver}"
+
+  export GOPATH="${srcdir}/gopath"
+  export GOMODCACHE="${srcdir}/gopath/pkg/mod"
+  export GOCACHE="${srcdir}/gocache"
+  export GOFLAGS="${GOFLAGS} -buildvcs=false"
+
+  go test ./internal/config ./internal/tui/screens/top
 }
 
 package() {

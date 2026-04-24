@@ -1,0 +1,697 @@
+diff -ruN '--exclude=build' '--exclude=dist' utilyze-0.1.1.orig/go.mod utilyze-0.1.1/go.mod
+--- utilyze-0.1.1.orig/go.mod	2026-04-23 12:32:50.000000000 -0400
++++ utilyze-0.1.1/go.mod	2026-04-23 21:27:03.940924331 -0400
+@@ -14,6 +14,7 @@
+ )
+ 
+ require (
++	github.com/BurntSushi/toml v1.6.0 // indirect
+ 	github.com/charmbracelet/colorprofile v0.4.2 // indirect
+ 	github.com/charmbracelet/ultraviolet v0.0.0-20260205113103-524a6607adb8 // indirect
+ 	github.com/charmbracelet/x/term v0.2.2 // indirect
+diff -ruN '--exclude=build' '--exclude=dist' utilyze-0.1.1.orig/go.sum utilyze-0.1.1/go.sum
+--- utilyze-0.1.1.orig/go.sum	2026-04-23 12:32:50.000000000 -0400
++++ utilyze-0.1.1/go.sum	2026-04-23 21:27:03.940924331 -0400
+@@ -2,6 +2,8 @@
+ charm.land/bubbletea/v2 v2.0.2/go.mod h1:3LRff2U4WIYXy7MTxfbAQ+AdfM3D8Xuvz2wbsOD9OHQ=
+ charm.land/lipgloss/v2 v2.0.2 h1:xFolbF8JdpNkM2cEPTfXEcW1p6NRzOWTSamRfYEw8cs=
+ charm.land/lipgloss/v2 v2.0.2/go.mod h1:KjPle2Qd3YmvP1KL5OMHiHysGcNwq6u83MUjYkFvEkM=
++github.com/BurntSushi/toml v1.6.0 h1:dRaEfpa2VI55EwlIW72hMRHdWouJeRF7TPYhI+AUQjk=
++github.com/BurntSushi/toml v1.6.0/go.mod h1:ukJfTF/6rtPPRCnwkur4qwRxa8vTRFBF0uk2lLoLwho=
+ github.com/aymanbagabas/go-udiff v0.4.1 h1:OEIrQ8maEeDBXQDoGCbbTTXYJMYRCRO1fnodZ12Gv5o=
+ github.com/aymanbagabas/go-udiff v0.4.1/go.mod h1:0L9PGwj20lrtmEMeyw4WKJ/TMyDtvAoK9bf2u/mNo3w=
+ github.com/charmbracelet/colorprofile v0.4.2 h1:BdSNuMjRbotnxHSfxy+PCSa4xAmz7szw70ktAtWRYrY=
+diff -ruN '--exclude=build' '--exclude=dist' utilyze-0.1.1.orig/internal/config/config.go utilyze-0.1.1/internal/config/config.go
+--- utilyze-0.1.1.orig/internal/config/config.go	1969-12-31 19:00:00.000000000 -0500
++++ utilyze-0.1.1/internal/config/config.go	2026-04-23 21:28:40.319346028 -0400
+@@ -0,0 +1,285 @@
++package config
++
++import (
++	"errors"
++	"io"
++	"os"
++	"path/filepath"
++	"strings"
++
++	"github.com/BurntSushi/toml"
++)
++
++const (
++	AppDirName     = "utilyze"
++	ConfigFileName = "config.toml"
++)
++
++type Config struct{}
++
++type NoticeCode string
++
++const (
++	NoticeLoadFailed NoticeCode = "config-load-failed"
++	NoticeSaveFailed NoticeCode = "config-save-failed"
++)
++
++type Notice struct {
++	Code NoticeCode
++	Path string
++	Err  error
++}
++
++type LoadResult struct {
++	Config      Config
++	Notices     []Notice
++	UserPath    string
++	SystemPaths []string
++}
++
++type SaveResult struct {
++	Path   string
++	Notice *Notice
++}
++
++type Manager struct {
++	userConfigDir    func() (string, error)
++	systemConfigDirs func() []string
++	fileOps          fileOps
++}
++
++func NewManager() *Manager {
++	return &Manager{
++		userConfigDir:    os.UserConfigDir,
++		systemConfigDirs: defaultSystemConfigDirs,
++		fileOps:          osFileOps{},
++	}
++}
++
++func (m *Manager) UserPath() (string, error) {
++	configHome, err := m.userDir()
++	if err != nil {
++		return "", err
++	}
++	return filepath.Join(configHome, AppDirName, ConfigFileName), nil
++}
++
++func (m *Manager) SystemPaths() []string {
++	dirs := m.systemDirs()
++	paths := make([]string, 0, len(dirs))
++	for _, dir := range dirs {
++		if dir == "" {
++			continue
++		}
++		paths = append(paths, filepath.Join(dir, AppDirName, ConfigFileName))
++	}
++	return paths
++}
++
++func (m *Manager) Load() LoadResult {
++	result := LoadResult{
++		SystemPaths: m.SystemPaths(),
++	}
++
++	for i := len(result.SystemPaths) - 1; i >= 0; i-- {
++		cfg, notice, ok := m.loadFile(result.SystemPaths[i])
++		if notice != nil {
++			result.Notices = append(result.Notices, *notice)
++		}
++		if ok {
++			Merge(&result.Config, cfg)
++		}
++	}
++
++	userPath, err := m.UserPath()
++	if err != nil {
++		result.Notices = append(result.Notices, Notice{Code: NoticeLoadFailed, Err: err})
++		return result
++	}
++	result.UserPath = userPath
++
++	cfg, notice, ok := m.loadFile(userPath)
++	if notice != nil {
++		result.Notices = append(result.Notices, *notice)
++	}
++	if ok {
++		Merge(&result.Config, cfg)
++	}
++
++	return result
++}
++
++func (m *Manager) LoadUser() LoadResult {
++	result := LoadResult{}
++	userPath, err := m.UserPath()
++	if err != nil {
++		result.Notices = append(result.Notices, Notice{Code: NoticeLoadFailed, Err: err})
++		return result
++	}
++	result.UserPath = userPath
++
++	cfg, notice, ok := m.loadFile(userPath)
++	if notice != nil {
++		result.Notices = append(result.Notices, *notice)
++	}
++	if ok {
++		result.Config = cfg
++	}
++	return result
++}
++
++func (m *Manager) SaveUser(config Config) (SaveResult, error) {
++	configPath, err := m.UserPath()
++	if err != nil {
++		return SaveResult{Notice: &Notice{Code: NoticeSaveFailed, Err: err}}, err
++	}
++
++	configDir := filepath.Dir(configPath)
++	ops := m.files()
++	if err := ops.MkdirAll(configDir, 0o700); err != nil {
++		return saveFailure(configPath, err)
++	}
++	if err := ops.Chmod(configDir, 0o700); err != nil {
++		return saveFailure(configPath, err)
++	}
++
++	tempFile, err := ops.CreateTemp(configDir, ConfigFileName+".*.tmp")
++	if err != nil {
++		return saveFailure(configPath, err)
++	}
++	tempPath := tempFile.Name()
++	keepTemp := false
++	defer func() {
++		if !keepTemp {
++			_ = ops.Remove(tempPath)
++		}
++	}()
++
++	if err := tempFile.Chmod(0o600); err != nil {
++		_ = tempFile.Close()
++		return saveFailure(configPath, err)
++	}
++	if err := toml.NewEncoder(tempFile).Encode(config); err != nil {
++		_ = tempFile.Close()
++		return saveFailure(configPath, err)
++	}
++	if err := tempFile.Close(); err != nil {
++		return saveFailure(configPath, err)
++	}
++	if err := ops.Rename(tempPath, configPath); err != nil {
++		return saveFailure(configPath, err)
++	}
++
++	keepTemp = true
++	return SaveResult{Path: configPath}, nil
++}
++
++func Merge(dst *Config, src Config) {
++	_ = dst
++	_ = src
++}
++
++func (m *Manager) loadFile(path string) (Config, *Notice, bool) {
++	file, err := m.files().Open(path)
++	if err != nil {
++		if errors.Is(err, os.ErrNotExist) {
++			return Config{}, nil, false
++		}
++		return Config{}, &Notice{Code: NoticeLoadFailed, Path: path, Err: err}, false
++	}
++	defer file.Close()
++
++	var config Config
++	if _, err := toml.NewDecoder(file).Decode(&config); err != nil {
++		return Config{}, &Notice{Code: NoticeLoadFailed, Path: path, Err: err}, false
++	}
++	return config, nil, true
++}
++
++func (m *Manager) userDir() (string, error) {
++	if m != nil && m.userConfigDir != nil {
++		return m.userConfigDir()
++	}
++	return os.UserConfigDir()
++}
++
++func (m *Manager) systemDirs() []string {
++	if m != nil && m.systemConfigDirs != nil {
++		return m.systemConfigDirs()
++	}
++	return defaultSystemConfigDirs()
++}
++
++func (m *Manager) files() fileOps {
++	if m != nil && m.fileOps != nil {
++		return m.fileOps
++	}
++	return osFileOps{}
++}
++
++func defaultSystemConfigDirs() []string {
++	value := os.Getenv("XDG_CONFIG_DIRS")
++	if value == "" {
++		return []string{"/etc/xdg"}
++	}
++	parts := strings.Split(value, string(os.PathListSeparator))
++	dirs := make([]string, 0, len(parts))
++	for _, part := range parts {
++		if part != "" {
++			dirs = append(dirs, part)
++		}
++	}
++	if len(dirs) == 0 {
++		return []string{"/etc/xdg"}
++	}
++	return dirs
++}
++
++func saveFailure(path string, err error) (SaveResult, error) {
++	return SaveResult{
++		Path:   path,
++		Notice: &Notice{Code: NoticeSaveFailed, Path: path, Err: err},
++	}, err
++}
++
++type tempFile interface {
++	io.Writer
++	Chmod(os.FileMode) error
++	Close() error
++	Name() string
++}
++
++type fileOps interface {
++	Open(string) (io.ReadCloser, error)
++	MkdirAll(string, os.FileMode) error
++	Chmod(string, os.FileMode) error
++	CreateTemp(string, string) (tempFile, error)
++	Rename(string, string) error
++	Remove(string) error
++}
++
++type osFileOps struct{}
++
++func (osFileOps) Open(name string) (io.ReadCloser, error) {
++	return os.Open(name)
++}
++
++func (osFileOps) MkdirAll(path string, perm os.FileMode) error {
++	return os.MkdirAll(path, perm)
++}
++
++func (osFileOps) Chmod(name string, mode os.FileMode) error {
++	return os.Chmod(name, mode)
++}
++
++func (osFileOps) CreateTemp(dir string, pattern string) (tempFile, error) {
++	return os.CreateTemp(dir, pattern)
++}
++
++func (osFileOps) Rename(oldpath string, newpath string) error {
++	return os.Rename(oldpath, newpath)
++}
++
++func (osFileOps) Remove(name string) error {
++	return os.Remove(name)
++}
+diff -ruN '--exclude=build' '--exclude=dist' utilyze-0.1.1.orig/internal/config/config_test.go utilyze-0.1.1/internal/config/config_test.go
+--- utilyze-0.1.1.orig/internal/config/config_test.go	1969-12-31 19:00:00.000000000 -0500
++++ utilyze-0.1.1/internal/config/config_test.go	2026-04-23 21:28:40.381343086 -0400
+@@ -0,0 +1,175 @@
++package config
++
++import (
++	"errors"
++	"os"
++	"path/filepath"
++	"testing"
++)
++
++func TestManagerPathsUseXDGLayout(t *testing.T) {
++	t.Parallel()
++
++	manager := &Manager{
++		userConfigDir:    func() (string, error) { return "/home/test/.config", nil },
++		systemConfigDirs: func() []string { return []string{"/etc/xdg", "/opt/xdg"} },
++	}
++
++	userPath, err := manager.UserPath()
++	if err != nil {
++		t.Fatalf("UserPath() error = %v", err)
++	}
++	if want := filepath.Join("/home/test/.config", "utilyze", "config.toml"); userPath != want {
++		t.Fatalf("UserPath() = %q, want %q", userPath, want)
++	}
++
++	systemPaths := manager.SystemPaths()
++	want := []string{
++		filepath.Join("/etc/xdg", "utilyze", "config.toml"),
++		filepath.Join("/opt/xdg", "utilyze", "config.toml"),
++	}
++	if len(systemPaths) != len(want) {
++		t.Fatalf("SystemPaths() = %#v, want %#v", systemPaths, want)
++	}
++	for i := range want {
++		if systemPaths[i] != want[i] {
++			t.Fatalf("SystemPaths()[%d] = %q, want %q", i, systemPaths[i], want[i])
++		}
++	}
++}
++
++func TestManagerLoadMissingFilesIsClean(t *testing.T) {
++	t.Parallel()
++
++	base := t.TempDir()
++	manager := testManager(base, []string{filepath.Join(base, "system")})
++
++	result := manager.Load()
++	if len(result.Notices) != 0 {
++		t.Fatalf("Load().Notices = %#v, want none", result.Notices)
++	}
++	if result.UserPath != filepath.Join(base, "user", "utilyze", "config.toml") {
++		t.Fatalf("Load().UserPath = %q", result.UserPath)
++	}
++}
++
++func TestManagerLoadInvalidSystemAndUserConfigReturnsNotices(t *testing.T) {
++	t.Parallel()
++
++	base := t.TempDir()
++	systemDir := filepath.Join(base, "system")
++	userDir := filepath.Join(base, "user")
++	writeConfig(t, systemDir, "not toml =")
++	writeConfig(t, userDir, "also not toml =")
++
++	manager := testManager(base, []string{systemDir})
++	result := manager.Load()
++	if len(result.Notices) != 2 {
++		t.Fatalf("Load().Notices = %#v, want two notices", result.Notices)
++	}
++	for _, notice := range result.Notices {
++		if notice.Code != NoticeLoadFailed {
++			t.Fatalf("notice.Code = %q, want %q", notice.Code, NoticeLoadFailed)
++		}
++	}
++}
++
++func TestManagerLoadUserIgnoresSystemConfig(t *testing.T) {
++	t.Parallel()
++
++	base := t.TempDir()
++	systemDir := filepath.Join(base, "system")
++	writeConfig(t, systemDir, "not toml =")
++
++	manager := testManager(base, []string{systemDir})
++	result := manager.LoadUser()
++	if len(result.Notices) != 0 {
++		t.Fatalf("LoadUser().Notices = %#v, want none", result.Notices)
++	}
++	if result.UserPath != filepath.Join(base, "user", "utilyze", "config.toml") {
++		t.Fatalf("LoadUser().UserPath = %q", result.UserPath)
++	}
++}
++
++func TestManagerSaveUserCreatesSecureConfigAtomically(t *testing.T) {
++	t.Parallel()
++
++	base := t.TempDir()
++	manager := testManager(base, nil)
++
++	result, err := manager.SaveUser(Config{})
++	if err != nil {
++		t.Fatalf("SaveUser() error = %v", err)
++	}
++	if result.Notice != nil {
++		t.Fatalf("SaveUser().Notice = %#v, want nil", result.Notice)
++	}
++
++	configDir := filepath.Join(base, "user", "utilyze")
++	configPath := filepath.Join(configDir, "config.toml")
++	if result.Path != configPath {
++		t.Fatalf("SaveUser().Path = %q, want %q", result.Path, configPath)
++	}
++
++	dirInfo, err := os.Stat(configDir)
++	if err != nil {
++		t.Fatalf("Stat(configDir) error = %v", err)
++	}
++	if got := dirInfo.Mode().Perm(); got != 0o700 {
++		t.Fatalf("config dir mode = %o, want %o", got, 0o700)
++	}
++
++	fileInfo, err := os.Stat(configPath)
++	if err != nil {
++		t.Fatalf("Stat(configPath) error = %v", err)
++	}
++	if got := fileInfo.Mode().Perm(); got != 0o600 {
++		t.Fatalf("config file mode = %o, want %o", got, 0o600)
++	}
++
++	entries, err := os.ReadDir(configDir)
++	if err != nil {
++		t.Fatalf("ReadDir(configDir) error = %v", err)
++	}
++	if len(entries) != 1 || entries[0].Name() != "config.toml" {
++		t.Fatalf("config dir entries = %#v, want only config.toml", entries)
++	}
++}
++
++func TestManagerSaveUserPathFailureReturnsNotice(t *testing.T) {
++	t.Parallel()
++
++	manager := &Manager{
++		userConfigDir: func() (string, error) { return "", errors.New("no config home") },
++	}
++
++	result, err := manager.SaveUser(Config{})
++	if err == nil {
++		t.Fatal("SaveUser() error = nil, want non-nil")
++	}
++	if result.Notice == nil || result.Notice.Code != NoticeSaveFailed {
++		t.Fatalf("SaveUser().Notice = %#v, want save-failed notice", result.Notice)
++	}
++}
++
++func testManager(base string, systemDirs []string) *Manager {
++	return &Manager{
++		userConfigDir: func() (string, error) {
++			return filepath.Join(base, "user"), nil
++		},
++		systemConfigDirs: func() []string {
++			return systemDirs
++		},
++	}
++}
++
++func writeConfig(t *testing.T, base string, body string) {
++	t.Helper()
++	path := filepath.Join(base, "utilyze", "config.toml")
++	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
++		t.Fatalf("MkdirAll() error = %v", err)
++	}
++	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
++		t.Fatalf("WriteFile() error = %v", err)
++	}
++}
+diff -ruN '--exclude=build' '--exclude=dist' utilyze-0.1.1.orig/internal/tui/screens/top/message.go utilyze-0.1.1/internal/tui/screens/top/message.go
+--- utilyze-0.1.1.orig/internal/tui/screens/top/message.go	2026-04-23 12:32:50.000000000 -0400
++++ utilyze-0.1.1/internal/tui/screens/top/message.go	2026-04-23 21:28:04.706036697 -0400
+@@ -28,3 +28,8 @@
+ type RooflineCeilingMsg struct {
+ 	PerGPU map[int]GpuCeiling
+ }
++
++type StatusNoticeMsg struct {
++	Code string
++	Text string
++}
+diff -ruN '--exclude=build' '--exclude=dist' utilyze-0.1.1.orig/internal/tui/screens/top/model.go utilyze-0.1.1/internal/tui/screens/top/model.go
+--- utilyze-0.1.1.orig/internal/tui/screens/top/model.go	2026-04-23 12:32:50.000000000 -0400
++++ utilyze-0.1.1/internal/tui/screens/top/model.go	2026-04-23 21:28:04.767033800 -0400
+@@ -47,11 +47,22 @@
+ 
+ 	gpuCeilings map[int]GpuCeiling
+ 
++	statusNotice         *activeStatusNotice
++	statusNoticeSeen     map[string]struct{}
++	statusNoticeDuration time.Duration
++	now                  func() time.Time
++
+ 	highContrast bool
+ 	dark         bool
+ 	styles       theme.Styles
+ }
+ 
++type activeStatusNotice struct {
++	Code      string
++	Text      string
++	ExpiresAt time.Time
++}
++
+ func (m model) Init() tea.Cmd {
+ 	return tea.Batch(m.spinner.Tick, tea.RequestBackgroundColor)
+ }
+@@ -155,6 +166,37 @@
+ 	}
+ }
+ 
++func (m model) currentTime() time.Time {
++	if m.now != nil {
++		return m.now()
++	}
++	return time.Now()
++}
++
++func (m *model) expireStatusNotice() {
++	if m.statusNotice == nil {
++		return
++	}
++	if !m.currentTime().Before(m.statusNotice.ExpiresAt) {
++		m.statusNotice = nil
++	}
++}
++
++func (m *model) addStatusNotice(msg StatusNoticeMsg) {
++	if msg.Code == "" || msg.Text == "" {
++		return
++	}
++	if _, seen := m.statusNoticeSeen[msg.Code]; seen {
++		return
++	}
++	m.statusNoticeSeen[msg.Code] = struct{}{}
++	m.statusNotice = &activeStatusNotice{
++		Code:      msg.Code,
++		Text:      msg.Text,
++		ExpiresAt: m.currentTime().Add(m.statusNoticeDuration),
++	}
++}
++
+ func (m *model) resetCharts() {
+ 	for _, chart := range m.solCharts {
+ 		chart.Reset()
+@@ -200,6 +242,10 @@
+ 		dark:          true,
+ 
+ 		enabledSeries: []string{computeSeries, memorySeries, nvlinkSeries, pcieSeries},
++
++		statusNoticeDuration: 6 * time.Second,
++		statusNoticeSeen:     make(map[string]struct{}),
++		now:                  time.Now,
+ 	}
+ 	for _, opt := range opts {
+ 		opt(&m)
+diff -ruN '--exclude=build' '--exclude=dist' utilyze-0.1.1.orig/internal/tui/screens/top/option.go utilyze-0.1.1/internal/tui/screens/top/option.go
+--- utilyze-0.1.1.orig/internal/tui/screens/top/option.go	2026-04-23 12:32:50.000000000 -0400
++++ utilyze-0.1.1/internal/tui/screens/top/option.go	2026-04-23 21:28:04.829030856 -0400
+@@ -21,3 +21,15 @@
+ 		m.highContrast = highContrast
+ 	}
+ }
++
++func WithNow(now func() time.Time) Option {
++	return func(m *model) {
++		m.now = now
++	}
++}
++
++func WithStatusNoticeDuration(duration time.Duration) Option {
++	return func(m *model) {
++		m.statusNoticeDuration = duration
++	}
++}
+diff -ruN '--exclude=build' '--exclude=dist' utilyze-0.1.1.orig/internal/tui/screens/top/status_notice_test.go utilyze-0.1.1/internal/tui/screens/top/status_notice_test.go
+--- utilyze-0.1.1.orig/internal/tui/screens/top/status_notice_test.go	1969-12-31 19:00:00.000000000 -0500
++++ utilyze-0.1.1/internal/tui/screens/top/status_notice_test.go	2026-04-23 21:28:04.981023638 -0400
+@@ -0,0 +1,52 @@
++package top
++
++import (
++	"strings"
++	"testing"
++	"time"
++
++	tea "charm.land/bubbletea/v2"
++)
++
++func TestStatusNoticeShowsOnceAndExpires(t *testing.T) {
++	t.Parallel()
++
++	now := time.Date(2026, 4, 23, 12, 0, 0, 0, time.UTC)
++	m := initStatusNoticeModel(t, New(96, 24,
++		WithNow(func() time.Time { return now }),
++		WithStatusNoticeDuration(6*time.Second),
++	))
++
++	m = updateStatusNoticeModel(t, m, StatusNoticeMsg{Code: "config-load-failed", Text: "config unreadable"})
++	m = updateStatusNoticeModel(t, m, StatusNoticeMsg{Code: "config-load-failed", Text: "replacement text should be ignored"})
++
++	view := m.View().Content
++	if !strings.Contains(view, "config unreadable") {
++		t.Fatalf("View() missing active notice:\n%s", view)
++	}
++	if strings.Contains(view, "replacement text should be ignored") {
++		t.Fatalf("View() used duplicate notice text:\n%s", view)
++	}
++
++	now = now.Add(7 * time.Second)
++	m = updateStatusNoticeModel(t, m, drawMsg{})
++	if view := m.View().Content; strings.Contains(view, "config unreadable") {
++		t.Fatalf("View() still shows expired notice:\n%s", view)
++	}
++}
++
++func initStatusNoticeModel(t *testing.T, m model) model {
++	t.Helper()
++	return updateStatusNoticeModel(t, m, InitMsg{DeviceIDs: []int{0}})
++}
++
++func updateStatusNoticeModel(t *testing.T, m model, msg tea.Msg) model {
++	t.Helper()
++
++	next, _ := m.Update(msg)
++	typed, ok := next.(model)
++	if !ok {
++		t.Fatalf("Update(%T) returned %T, want model", msg, next)
++	}
++	return typed
++}
+diff -ruN '--exclude=build' '--exclude=dist' utilyze-0.1.1.orig/internal/tui/screens/top/update.go utilyze-0.1.1/internal/tui/screens/top/update.go
+--- utilyze-0.1.1.orig/internal/tui/screens/top/update.go	2026-04-23 12:32:50.000000000 -0400
++++ utilyze-0.1.1/internal/tui/screens/top/update.go	2026-04-23 21:28:04.892107036 -0400
+@@ -20,6 +20,8 @@
+ )
+ 
+ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
++	m.expireStatusNotice()
++
+ 	switch typedMsg := msg.(type) {
+ 	case tea.BackgroundColorMsg:
+ 		m.dark = typedMsg.IsDark()
+@@ -128,6 +130,9 @@
+ 			m.draw()
+ 		}
+ 		return m, nil
++	case StatusNoticeMsg:
++		m.addStatusNotice(typedMsg)
++		return m, nil
+ 	case ErrorMsg:
+ 		m.err = typedMsg.Error
+ 		return m, nil
+diff -ruN '--exclude=build' '--exclude=dist' utilyze-0.1.1.orig/internal/tui/screens/top/view.go utilyze-0.1.1/internal/tui/screens/top/view.go
+--- utilyze-0.1.1.orig/internal/tui/screens/top/view.go	2026-04-23 12:32:50.000000000 -0400
++++ utilyze-0.1.1/internal/tui/screens/top/view.go	2026-04-23 21:28:04.951025062 -0400
+@@ -159,10 +159,17 @@
+ 	return lipgloss.JoinVertical(
+ 		lipgloss.Left,
+ 		m.headerBar(m.width, m.solHeaderInner()),
+-		m.headerBar(m.width, ""),
++		m.headerBar(m.width, m.statusHeaderInner()),
+ 	)
+ }
+ 
++func (m model) statusHeaderInner() string {
++	if m.statusNotice == nil {
++		return ""
++	}
++	return m.styles.HeaderSecondary.Render(ansi.Truncate(m.statusNotice.Text, m.width, ""))
++}
++
+ func (m model) solHeaderInner() string {
+ 	name, ceiling, uniform := m.uniformAttribution()
+ 

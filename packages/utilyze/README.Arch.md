@@ -73,6 +73,19 @@ Package upgrades replace the binary, so capability-based setups may need `setcap
 UTLZ_ENABLE_METRICS=1 sudo utlz
 ```
 
+## Config files
+
+Utilyze reads config from:
+
+```text
+/etc/xdg/utilyze/config.toml
+${XDG_CONFIG_HOME:-~/.config}/utilyze/config.toml
+```
+
+If `XDG_CONFIG_DIRS` is set, Utilyze reads `utilyze/config.toml` under each listed system config directory instead of only `/etc/xdg`.
+
+System config sets host-wide defaults. User config overrides system config. Utilyze writes only the effective user's config file.
+
 ## First run
 
 Start with:
