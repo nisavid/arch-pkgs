@@ -10,8 +10,11 @@ supported NVIDIA host and to build a maintainable acceptance story for its TUI.
 
 ### 1. Choose a supported NVIDIA validation rig
 
-Define and compare the realistic options for a supported test host. Treat a
-cloud GPU instance as the default direction unless a better option emerges.
+Status: selected. Use a short-lived TensorDock on-demand GPU VM with one NVIDIA
+RTX 4090 24 GB GPU, SSH/root access, and an Arch Linux package-runtime
+container or chroot. See
+[docs/maintainers/utilyze-nvidia-validation-rig.md](maintainers/utilyze-nvidia-validation-rig.md)
+for the option survey, rationale, fallback order, and cost guardrails.
 
 Deliverables:
 
