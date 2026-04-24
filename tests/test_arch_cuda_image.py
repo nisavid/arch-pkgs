@@ -139,6 +139,7 @@ class ArchCudaImageTests(unittest.TestCase):
         self.assertIn("schedule:", workflow)
         self.assertIn("context: containers/arch-cuda", workflow)
         self.assertIn("push: false", workflow)
+        self.assertIn("apt-get install -y zsh", workflow)
         self.assertIn("packages: write", workflow)
         self.assertIn("attestations: write", workflow)
         self.assertIn("id-token: write", workflow)
