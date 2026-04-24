@@ -1,0 +1,25 @@
+FROM ghcr.io/archlinux/archlinux:base-devel
+
+ENV PATH=/opt/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ENV LD_LIBRARY_PATH=/opt/cuda/lib64:/usr/local/cuda/lib64
+
+RUN pacman -Syu --noconfirm \
+      base-devel \
+      cuda \
+      git \
+      jq \
+      nvidia-utils \
+      openssh \
+      python \
+      sudo \
+      which \
+      zsh \
+    && pacman -Scc --noconfirm
+
+COPY entrypoint.zsh /usr/local/bin/entrypoint.zsh
+COPY validate.zsh /usr/local/bin/validate.zsh
+
+RUN chmod 0755 /usr/local/bin/entrypoint.zsh /usr/local/bin/validate.zsh
+
+EXPOSE 22/tcp
+ENTRYPOINT ["/usr/local/bin/entrypoint.zsh"]

@@ -1,0 +1,8 @@
+{
+  "imageName": "ghcr.io/nisavid/arch-pkgs/arch-cuda:rolling",
+  "containerDiskInGb": 50,
+  "volumeInGb": 20,
+  "volumeMountPath": "/workspace",
+  "ports": ["22/tcp"],
+  "isPublic": false
+}

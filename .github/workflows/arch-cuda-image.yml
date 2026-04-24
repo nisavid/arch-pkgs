@@ -1,0 +1,155 @@
+name: Arch CUDA Image
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/arch-cuda-image.yml"
+      - "containers/arch-cuda/**"
+      - "tools/arch_cuda_image.zsh"
+      - "docs/maintainers/arch-cuda-image.md"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/arch-cuda-image.yml"
+      - "containers/arch-cuda/**"
+      - "tools/arch_cuda_image.zsh"
+  workflow_dispatch:
+  schedule:
+    - cron: "17 9 * * 1"
+
+env:
+  IMAGE_NAME: ghcr.io/nisavid/arch-pkgs/arch-cuda
+
+jobs:
+  pr-build:
+    name: Build image for PR
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+
+      - name: Build Arch CUDA image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: containers/arch-cuda
+          file: containers/arch-cuda/Containerfile
+          push: false
+          tags: ${{ env.IMAGE_NAME }}:pr-${{ github.event.pull_request.number }}
+
+  publish:
+    name: Publish image
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
+    outputs:
+      tags: ${{ steps.tags.outputs.tags }}
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image tags
+        id: tags
+        shell: bash
+        run: |
+          tags="$(zsh tools/arch_cuda_image.zsh print-tags "${GITHUB_SHA}")"
+          {
+            echo "tags<<EOF"
+            printf '%s\n' "${tags}"
+            echo "EOF"
+          } >> "${GITHUB_OUTPUT}"
+
+      - name: Build and publish Arch CUDA image
+        id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8
+        with:
+          context: containers/arch-cuda
+          file: containers/arch-cuda/Containerfile
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+
+      - name: Attest published image
+        uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+      - name: Verify published image
+        env:
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          TAGS: ${{ steps.tags.outputs.tags }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker buildx imagetools inspect "${IMAGE_NAME}@${DIGEST}"
+          while IFS= read -r tag; do
+            if [[ -n "${tag}" ]]; then
+              docker buildx imagetools inspect "${tag}"
+            fi
+          done <<< "${TAGS}"
+
+  cleanup:
+    name: Cleanup old build tags
+    if: needs.publish.result == 'success'
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Protect release tags and prune old build tags
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: nisavid
+          PACKAGE_NAME_ENCODED: arch-pkgs%2Farch-cuda
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "cleanup: protect rolling, cuda-*, and known-good-* tags; only consider build-* tags"
+          versions_json="$(gh api "/users/${OWNER}/packages/container/${PACKAGE_NAME_ENCODED}/versions" --paginate)"
+          mapfile -t build_versions < <(
+            jq -r '
+              .[]
+              | select((.metadata.container.tags // []) | any(startswith("build-")))
+              | select((.metadata.container.tags // []) | all(. != "rolling" and (startswith("cuda-") | not) and (startswith("known-good-") | not)))
+              | [.id, .created_at, ((.metadata.container.tags // []) | map(select(startswith("build-"))) | join(","))]
+              | @tsv
+            ' <<<"${versions_json}" | sort -k2r
+          )
+
+          keep=10
+          count=0
+          for row in "${build_versions[@]}"; do
+            count=$((count + 1))
+            if (( count <= keep )); then
+              continue
+            fi
+            version_id="${row%%$'\t'*}"
+            echo "Deleting old build-* package version ${version_id}"
+            gh api \
+              --method DELETE \
+              "/users/${OWNER}/packages/container/${PACKAGE_NAME_ENCODED}/versions/${version_id}"
+          done

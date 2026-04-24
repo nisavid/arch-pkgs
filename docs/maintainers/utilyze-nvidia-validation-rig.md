@@ -12,6 +12,8 @@ note, not first-run user guidance. For the installed package behavior, read
 Use a short-lived TensorDock on-demand GPU VM with one NVIDIA RTX 4090 24 GB GPU,
 a current Ubuntu control-plane image, SSH root access, and an Arch Linux
 container or chroot as the package runtime environment.
+Use `containers/arch-cuda/` as the reusable Arch CUDA container path for RunPod
+and for any VM/provider path that supports a container runtime.
 
 Target shape:
 

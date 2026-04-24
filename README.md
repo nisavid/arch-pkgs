@@ -76,6 +76,8 @@ The full local-repo setup, including the pacman stanza, is in
   package archives reported by `makepkg --packagelist`.
 - `docs/usage/` contains user and operator how-to guides.
 - `docs/maintainers/` contains decision notes for package-maintenance work.
+  The Arch CUDA container image is documented in
+  [`docs/maintainers/arch-cuda-image.md`](docs/maintainers/arch-cuda-image.md).
 
 ## Services
 

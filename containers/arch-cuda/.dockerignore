@@ -1,0 +1,6 @@
+**
+!Containerfile
+!entrypoint.zsh
+!validate.zsh
+!runpod-template.json
+!.dockerignore
