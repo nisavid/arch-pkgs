@@ -1,0 +1,12 @@
+diff --git a/sandbox/linux/system_headers/linux_seccomp.h b/sandbox/linux/system_headers/linux_seccomp.h
+index 3f397e3f7b5a..e6d8f0e2d8b3 100644
+--- a/sandbox/linux/system_headers/linux_seccomp.h
++++ b/sandbox/linux/system_headers/linux_seccomp.h
+@@ -5,6 +5,7 @@
+ #define SANDBOX_LINUX_SYSTEM_HEADERS_LINUX_SECCOMP_H_
+
+ #include <stdint.h>
++#include <signal.h>
+ #include <sys/ioctl.h>
+
+ #include "build/build_config.h"

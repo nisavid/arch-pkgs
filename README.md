@@ -14,6 +14,7 @@ experimental GPU inspection tool.
 | --- | ---: | --- |
 | [`qdrant`](packages/qdrant/) | `1.17.1-1` | Vector database with local-only defaults and a packaged `systemd` service. |
 | [`hayhooks`](packages/hayhooks/) | `1.17.0-1` | Haystack pipeline server with a local service account, env file, and pipeline directory. |
+| [`electron41`](packages/electron41/) | `41.3.0-1` | Source-built Electron 41 runtime for packages that need this major line. |
 | [`utilyze`](packages/utilyze/) | `0.1.1-2` | Experimental NVIDIA GPU utilization TUI with Arch runtime, config, update, and telemetry-consent patches. |
 | [`python-haystack-ai`](packages/haystack-ai/) | `2.28.0-1` | Haystack framework package used by `hayhooks` and local pipeline work. |
 | [`python-haystack-experimental`](packages/python-haystack-experimental/) | `0.19.0-1` | Experimental Haystack components. |

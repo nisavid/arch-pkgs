@@ -11,6 +11,7 @@ notes.
 | [`qdrant`](qdrant/) | `qdrant` | You need a local vector database with packaged service defaults. |
 | [`hayhooks`](hayhooks/) | `hayhooks` | You want to serve Haystack pipelines over HTTP from a system-managed service. |
 | [`haystack-ai`](haystack-ai/) | `python-haystack-ai` | You need the Haystack Python framework installed from pacman. |
+| [`electron41`](electron41/) | `electron41` | You need a source-built Electron 41 runtime package. |
 | [`utilyze`](utilyze/) | `utilyze` | You want to inspect NVIDIA GPU utilization with the experimental Arch-patched TUI. |
 
 ## Supporting Python Packages
@@ -41,3 +42,7 @@ tools/update_pacman_repo.zsh packages/<name>
 
 For the complete install workflow, including the pacman repo stanza, see
 [`docs/usage/local-repo.md`](../docs/usage/local-repo.md).
+
+Some source packages are much heavier than the generic command suggests. Read a
+package's README first when it wraps a large upstream build such as Electron or
+Chromium.

@@ -1,0 +1,53 @@
+version = 1
+
+[[annotations]]
+path = [
+    "PKGBUILD",
+    "README.md",
+    "keys/**",
+    ".SRCINFO",
+    ".nvchecker.toml",
+    "*.install",
+    "*.sysusers",
+    "*.tmpfiles",
+    "*.logrotate",
+    "*.pam",
+    "*.service",
+    "*.socket",
+    "*.timer",
+    "*.desktop",
+    "*.hook",
+    "electron-launcher.sh",
+    "gclient_args.gni",
+    "makepkg-source-roller.py",
+    "prepare-electron-source-tree.sh",
+]
+SPDX-FileCopyrightText = "Arch Linux contributors"
+SPDX-License-Identifier = "0BSD"
+
+[[annotations]]
+path = [
+    "compiler-rt-adjust-paths.patch",
+    "increase-fortify-level.patch",
+    "jinja-python-3.10.patch",
+    "use-system-libraries-in-node.patch",
+    "chromium-143-glibc-sys-seccomp.patch",
+    "bytemuck-1.25-portable-simd-lanecount.patch",
+]
+SPDX-FileCopyrightText = "Electron and Chromium contributors"
+SPDX-License-Identifier = "BSD-3-Clause"
+
+[[annotations]]
+path = [
+    "chromium-138-nodejs-version-check.patch",
+    "chromium-141-cssstylesheet-iwyu.patch",
+]
+SPDX-FileCopyrightText = "Gentoo contributors"
+SPDX-License-Identifier = "BSD-3-Clause"
+
+[[annotations]]
+path = [
+    "chromium-138-rust-1.86-mismatched_lifetime_syntaxes.patch",
+]
+SPDX-FileCopyrightText = "NixOS contributors"
+SPDX-License-Identifier = "MIT"

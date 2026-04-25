@@ -1,0 +1,360 @@
+# Maintainer: Caleb Maclennan <caleb@alerque.com>
+# Contributor: loqs <bugs-archlinux@entropy-collector.net>
+# Contributor: kxxt <rsworktech@outlook.com>
+
+# https://releases.electronjs.org/
+# Note: Electron and Chromium dependency pins come from the upstream DEPS file.
+# The generated prepare script fetches those pinned repos shallowly during prepare().
+
+pkgver=41.3.0
+pkgrel=1
+_major_ver=${pkgver%%.*}
+pkgname="electron${_major_ver}"
+pkgdesc='Build cross platform desktop apps with web technologies'
+arch=(x86_64)
+url='https://electronjs.org'
+license=('MIT' 'BSD-3-Clause')
+depends=(c-ares
+         gcc-libs # libgcc_s.so
+         glibc # libc.so libm.so
+         gtk3 libgtk-3.so
+         libevent
+         libffi libffi.so
+         nghttp2 libnghttp2.so
+         libpulse libpulse.so
+         nss # libnss3.so
+         zlib libz.so)
+makedepends=(clang
+             compiler-rt
+             git
+             gn
+             gperf
+             # harfbuzz-icu # disabled because ICU current not supported yet
+             java-runtime-headless
+             libnotify
+             libva
+             lld
+             llvm
+             ninja
+             # Electron ships a vendored nodejs. Meanwhile the npm dependency pulls in nodejs which is Arch's freshest version.
+             # Pinning the closest LTS here makes the build environment more consistent with the vendored copy.
+             nodejs-lts-krypton
+             npm
+             patchutils
+             pciutils
+             pipewire
+             python
+             python-requests
+             qt5-base
+             rsync
+             rustup
+             rust-bindgen
+             wget
+             yarn)
+optdepends=('kde-cli-tools: file deletion support (kioclient5)'
+            'pipewire: WebRTC desktop sharing under Wayland'
+            'qt5-base: enable Qt5 with --enable-features=AllowQt'
+            'gtk4: for --gtk-version=4 (GTK4 IME might work better on Wayland)'
+            'trash-cli: file deletion support (trash-put)'
+            'xdg-utils: open URLs with desktop’s default (xdg-email, xdg-open)')
+options=('!lto') # Electron adds its own flags for ThinLTO
+source=("electron-v$pkgver.tar.gz::https://github.com/electron/electron/archive/refs/tags/v$pkgver.tar.gz"
+        # Chromium
+        chromium-138-nodejs-version-check.patch
+        chromium-138-rust-1.86-mismatched_lifetime_syntaxes.patch
+        compiler-rt-adjust-paths.patch
+        increase-fortify-level.patch
+        chromium-141-cssstylesheet-iwyu.patch
+        chromium-143-glibc-sys-seccomp.patch
+        # Electron
+        electron-launcher.sh
+        jinja-python-3.10.patch
+        use-system-libraries-in-node.patch
+        bytemuck-1.25-portable-simd-lanecount.patch
+        makepkg-source-roller.py
+        )
+sha256sums=('d5394172ad19b0d251ad7e370295a305c64b2974187d2acfccbcb4ffe4cb9e14'
+            '92d43d2bc995b4b4ac8900a18e81ef7930e3ae4b3ff1eb509f60615babd32084'
+            'ad30eb42af42e8bc8f0d4fc7e2e140b433e7770b5e6d46da9961855c7f1b594a'
+            'ec8e49b7114e2fa2d359155c9ef722ff1ba5fe2c518fa48e30863d71d3b82863'
+            '3570947a9b1bdf38152567ec400aee6caaf0bee10829f546c198395422e02e77'
+            '24ba99d4becded0a7e1637f8757a668329b85e1ab55eff2afd4b72341ad945a0'
+            '9f723811226501a9ce09f173fd4270b111d66cc65942f1c78a1689ff2b3f7a0b'
+            '131086fb6888ed73100ea23e23d29202c49fe5d0cff600172e71b974a7aea879'
+            'f173d92c14784c6f0523b3c4a6b9d50027e6a0dbac8cc22edf7e34d99f77f32c'
+            '0db4bc91ccce819b1877dd4e5b9b821f3dca9984479abbe0c70763b06f360380'
+            '791e759fb94baed492a8e83b31c806e9e2a9f71ffe97277b953a45c42f00a964'
+            'ff446cadcc7c6f60a3cca1b188dbebf569b32b91ac13aa3d23cb1ef7e50bb185')
+
+# Possible replacements are listed in build/linux/unbundle/replace_gn_files.py
+# Keys are the names in the above script; values are the dependencies in Arch
+# plus any so names that are provided + linked
+declare -gA _system_libs=(
+  [brotli]=brotli
+  # [dav1d]="dav1d libdav1d.so"
+  # [ffmpeg]="ffmpeg libavcodec.so libavcodec.so libavformat.so libavutil.so" # YouTube playback stopped working in Chromium 120
+  [flac]="flac libFLAC.so"
+  [fontconfig]="fontconfig libfontconfig.so"
+  [freetype]="freetype2 libfreetype.so"
+  [harfbuzz-ng]="harfbuzz libharfbuzz.so libharfbuzz-subset.so"
+  # [icu]="icu libicui18n.so libicuuc.so" # disabled because ICU current not supported yet
+  # [jsoncpp]="jsoncpp libjsoncpp.so"  # needs libstdc++
+  # [libaom]=aom
+  # [libavif]=libavif # libavif.so libavutil.so # needs -DAVIF_ENABLE_EXPERIMENTAL_GAIN_MAP=ON
+  [libdrm]=libdrm # libdrm.so
+  [libjpeg]="libjpeg-turbo libjpeg.so"
+  [libpng]="libpng libpng16.so"
+  # [libvpx]=libvpx
+  # [libwebp]="libwebp libwebpdemux.so libwebpmux.so libwebp.so" # //third_party/libavif:libavif_enc needs //third_party/libwebp:libwebp_sharpyuv
+  [libxml]="libxml2 libxml2.so"
+  [libxslt]="libxslt libxslt.so"
+  [opus]="opus libopus.so"
+  # [re2]="re2 libre2.so" # needs libstdc++
+  # [snappy]=snappy # libsnappy.so # needs libstdc++
+  # [woff2]="woff2 libwoff2dec.so" # needs libstdc++
+  [zlib]=minizip # libminizip.so
+)
+_unwanted_bundled_libs=(
+  $(printf "%s\n" ${!_system_libs[@]} | sed 's/^libjpeg$/&_turbo/')
+)
+depends+=(${_system_libs[@]})
+
+_update_sources() {
+  updpkgsums
+}
+
+prepare() {
+  export RUSTUP_HOME="$srcdir/rustup" CARGO_HOME="$srcdir/cargo"
+  rustup toolchain install 1.91.1 --profile minimal --no-self-update
+
+  sed -i "s|@ELECTRON@|${pkgname}|" electron-launcher.sh
+
+  rm -rf electron
+  mv "electron-$pkgver" electron
+
+  echo "Putting together electron sources"
+  # Generate gclient gn args and the shallow dependency fetch script. These
+  # upstream-pinned DEPS, CIPD, npm, and yarn inputs are resolved during
+  # prepare(); makepkg source verification covers the bootstrap archive and
+  # local patch/helper inputs.
+  python makepkg-source-roller.py generate electron/DEPS $pkgname
+  bash prepare-electron-source-tree.sh "$CARCH"
+  export PATH="$PWD/src/third_party/depot_tools:$PATH" DEPOT_TOOLS_UPDATE=0
+  #export VPYTHON_BYPASS='manually managed python not supported by chrome operations'
+  mv electron src/electron
+
+  echo "Running hooks..."
+  # depot_tools/gclient.py runhooks
+  src/build/landmines.py
+  src/build/util/lastchange.py -o src/build/util/LASTCHANGE
+  src/build/util/lastchange.py -m GPU_LISTS_VERSION \
+    --revision-id-only --header src/gpu/config/gpu_lists_version.h
+  src/build/util/lastchange.py -m SKIA_COMMIT_HASH \
+    -s src/third_party/skia --header src/skia/ext/skia_commit_hash.h
+  src/build/util/lastchange.py \
+    -s src/third_party/dawn --revision src/gpu/webgpu/DAWN_VERSION
+
+  # https://gitlab.archlinux.org/archlinux/packaging/packages/electron32/-/issues/1
+  src/third_party/node/update_npm_deps
+
+  src/electron/script/apply_all_patches.py \
+      src/electron/patches/config.json
+
+  # https://github.com/nodejs/node/issues/48444
+  export UV_USE_IO_URING=0
+
+  pushd src
+  pushd third_party/devtools-frontend/src
+  npm ci --no-bin-links --no-fund --ignore-scripts --include=optional
+  popd
+
+  pushd electron
+  yarn install --frozen-lockfile
+  popd
+
+  echo "Applying local patches..."
+
+  # https://crbug.com/893950
+  sed -i -e 's/\<xmlMalloc\>/malloc/' -e 's/\<xmlFree\>/free/' \
+         -e '1i #include <cstdlib>' \
+    third_party/blink/renderer/core/xml/*.cc \
+    third_party/blink/renderer/core/xml/parser/xml_document_parser.cc \
+    third_party/libxml/chromium/*.cc
+
+  # Upstream fixes
+
+  # Fixes from Gentoo
+  patch -Np1 -i ../chromium-138-nodejs-version-check.patch
+  patch -Np1 -i ../chromium-141-cssstylesheet-iwyu.patch
+  patch -Np1 -i ../chromium-143-glibc-sys-seccomp.patch
+
+  # Fixes from NixOS
+  patch -Np1 -i ../chromium-138-rust-1.86-mismatched_lifetime_syntaxes.patch
+
+  # Fix bytemuck's portable SIMD impl with Rust toolchains that require an
+  # explicit lane-count support bound.
+  patch -Np1 -i ../bytemuck-1.25-portable-simd-lanecount.patch
+
+  # Allow libclang_rt.builtins from compiler-rt >= 16 to be used
+  patch -Np1 -i ../compiler-rt-adjust-paths.patch
+
+  # Increase _FORTIFY_SOURCE level to match Arch's default flags
+  patch -Np1 -i ../increase-fortify-level.patch
+
+  # Arch clang does not yet accept Chromium's array-bounds UBSan feature
+  # suppression flag.
+  sed -i '/-fsanitize-ignore-for-ubsan-feature=array-bounds/d' \
+    build/config/compiler/BUILD.gn
+
+  # Link to system tools required by the build
+  mkdir -p third_party/node/linux/node-linux-x64/bin
+  ln -sfn /usr/bin/node third_party/node/linux/node-linux-x64/bin/
+  mkdir -p third_party/jdk/current/bin
+  ln -sfn /usr/bin/java third_party/jdk/current/bin/
+  ln -sfn /usr/bin/clang-format buildtools/linux64
+
+  # Electron specific fixes
+  patch -Np1 -i "${srcdir}/jinja-python-3.10.patch" -d "third_party/electron_node/tools/inspector_protocol/jinja2"
+  patch -Np1 -i "${srcdir}/use-system-libraries-in-node.patch"
+
+  # Allow building against system libraries in official builds
+  echo "Patching Chromium for using system libraries..."
+  sed -i 's/OFFICIAL_BUILD/GOOGLE_CHROME_BUILD/' \
+    tools/generate_shim_headers/generate_shim_headers.py
+
+  # Remove bundled libraries for which we will use the system copies; this
+  # *should* do what the remove_bundled_libraries.py script does, with the
+  # added benefit of not having to list all the remaining libraries
+  local _lib
+  for _lib in ${_unwanted_bundled_libs[@]}; do
+    find "third_party/$_lib" -type f \
+      \! -path "third_party/$_lib/chromium/*" \
+      \! -path "third_party/$_lib/google/*" \
+      \! -path "third_party/harfbuzz-ng/utils/hb_scoped.h" \
+        \! -regex '.*\.\(gn\|gni\|isolate\)' \
+        -delete
+  done
+
+  ./build/linux/unbundle/replace_gn_files.py \
+    --system-libraries "${!_system_libs[@]}"
+
+  cat >> third_party/libpng/BUILD.gn <<'EOF'
+
+source_set("libpng_for_testonly") {
+  testonly = true
+  deps = [ ":libpng" ]
+}
+EOF
+
+  # Generate missing header
+  python3 build/util/lastchange.py -m DAWN_COMMIT_HASH \
+    -s third_party/dawn --revision gpu/webgpu/DAWN_VERSION \
+    --header gpu/webgpu/dawn_commit_hash.h
+}
+
+build() {
+  cd src
+
+  export CC=clang
+  export CXX=clang++
+  export AR=ar
+  export NM=nm
+
+  local _flags=(
+    'custom_toolchain="//build/toolchain/linux/unbundle:default"'
+    'host_toolchain="//build/toolchain/linux/unbundle:default"'
+    'is_official_build=true' # implies is_cfi=true on x86_64
+    'symbol_level=0' # sufficient for backtraces on x86(_64)
+    'treat_warnings_as_errors=false'
+    'fatal_linker_warnings=false'
+    'disable_fieldtrial_testing_config=true'
+    'blink_enable_generated_code_formatting=false'
+    'ffmpeg_branding="Chrome"'
+    'proprietary_codecs=true'
+    'rtc_use_pipewire=true'
+    'link_pulseaudio=true'
+    'use_custom_libcxx=true' # https://github.com/llvm/llvm-project/issues/61705
+    'use_sysroot=false'
+    'use_system_libffi=true'
+    'enable_hangout_services_extension=true'
+    'enable_widevine=false'
+    "override_electron_version=\"$pkgver\""
+  )
+
+  if [[ -n ${_system_libs[icu]+set} ]]; then
+    _flags+=('icu_use_data_file=false')
+  fi
+
+  local _clang_version=$(
+    clang --version | grep -m1 version | sed 's/.* \([0-9]\+\).*/\1/')
+
+  _flags+=(
+    'clang_base_path="/usr"'
+    'clang_use_chrome_plugins=false'
+    "clang_version=\"$_clang_version\""
+    'chrome_pgo_phase=0' # needs newer clang to read the bundled PGO profile
+  )
+
+  # Allow the use of nightly features with stable Rust compiler
+  # https://github.com/ungoogled-software/ungoogled-chromium/pull/2696#issuecomment-1918173198
+  export RUSTC_BOOTSTRAP=1
+
+  local _rust_sysroot
+  _rust_sysroot="$(rustup run 1.91.1 rustc --print sysroot)"
+  _flags+=(
+    "rust_sysroot_absolute=\"$_rust_sysroot\""
+    'rust_bindgen_root="/usr"'
+    "rustc_version=\"$(rustup run 1.91.1 rustc --version | awk '{print $2}')\""
+  )
+
+  # Facilitate deterministic builds (taken from build/config/compiler/BUILD.gn)
+  CFLAGS+='   -Wno-builtin-macro-redefined'
+  CXXFLAGS+=' -Wno-builtin-macro-redefined'
+  CPPFLAGS+=' -D__DATE__=  -D__TIME__=  -D__TIMESTAMP__='
+
+  # Do not warn about unknown warning options
+  CFLAGS+='   -Wno-unknown-warning-option'
+  CXXFLAGS+=' -Wno-unknown-warning-option'
+
+  # Let Chromium set its own symbol level
+  CFLAGS=${CFLAGS/-g }
+  CXXFLAGS=${CXXFLAGS/-g }
+
+  # https://github.com/ungoogled-software/ungoogled-chromium-archlinux/issues/123
+  CFLAGS=${CFLAGS/-fexceptions}
+  CFLAGS=${CFLAGS/-fcf-protection}
+  CXXFLAGS=${CXXFLAGS/-fexceptions}
+  CXXFLAGS=${CXXFLAGS/-fcf-protection}
+
+  # This appears to cause random segfaults when combined with ThinLTO
+  # https://bugs.archlinux.org/task/73518
+  CFLAGS=${CFLAGS/-fstack-clash-protection}
+  CXXFLAGS=${CXXFLAGS/-fstack-clash-protection}
+
+  # https://crbug.com/957519#c122
+  CXXFLAGS=${CXXFLAGS/-Wp,-D_GLIBCXX_ASSERTIONS}
+
+  export CHROMIUM_BUILDTOOLS_PATH="${PWD}/buildtools"
+  gn gen out/Release \
+      --args="import(\"//electron/build/args/release.gn\") ${_flags[*]}"
+  ninja -C out/Release electron electron_dist_zip
+  # ninja -C out/Release third_party/electron_node:headers
+}
+
+package() {
+  install -dm755 "${pkgdir:?}/usr/lib/${pkgname}"
+  bsdtar -xf src/out/Release/dist.zip -C "${pkgdir}/usr/lib/${pkgname}"
+
+  chmod u+s "${pkgdir}/usr/lib/${pkgname}/chrome-sandbox"
+
+  install -dm755 "${pkgdir}/usr/share/licenses/${pkgname}"
+  ln -sr -t "${pkgdir}"/usr/share/licenses/${pkgname} \
+    "${pkgdir}"/usr/lib/${pkgname}/{LICENSE,LICENSES.chromium.html}
+
+  install -Dm755 "${srcdir}/electron-launcher.sh" \
+    "${pkgdir}/usr/bin/${pkgname}"
+
+  # Install icon file
+  install -Dm644 src/electron/default_app/icon.png \
+          "${pkgdir}/usr/share/pixmaps/${pkgname}.png"  # hicolor has no 1024x1024
+}
