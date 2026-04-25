@@ -1,0 +1,61 @@
+--- a/third_party/electron_node/BUILD.gn
++++ b/third_party/electron_node/BUILD.gn
+@@ -9,6 +9,17 @@
+ # Please modify the gyp files if you are making changes to build system.
+
+ import("unofficial.gni")
++if (is_linux) {
++  import("//build/config/linux/pkg_config.gni")
++
++  pkg_config("cares") {
++    packages = [ "libcares" ]
++  }
++
++  pkg_config("nghttp2") {
++    packages = [ "libnghttp2" ]
++  }
++}
+
+ node_gn_build("node") {
+ }
+--- a/third_party/electron_node/unofficial.gni
++++ b/third_party/electron_node/unofficial.gni
+@@ -143,6 +143,12 @@
+                             [ "node.gyp" ])
+
+   source_set("libnode") {
++    if (is_linux) {
++      configs += [
++        ":cares",
++        ":nghttp2",
++      ]
++    }
+     configs += [
+       ":node_internal_config",
+       "//build/config/compiler:no_exit_time_destructors"
+@@ -249,19 +255,12 @@
+      sources += node_inspector.node_inspector_sources +
+                 node_inspector.node_inspector_generated_sources
+     }
++    if (is_linux) {
++      deps -= [
++        "deps/cares",
++        "deps/nghttp2",
++      ]
++    }
+-    if (is_linux) {
+-      import("//build/config/linux/pkg_config.gni")
+-        if (use_system_cares) {
+-          pkg_config("cares") {
+-            packages = [ "libcares" ]
+-          }
+-        }
+-      if (use_system_nghttp2) {
+-        pkg_config("nghttp2") {
+-          packages = [ "libnghttp2" ]
+-        }
+-      }
+-    }
+   }
+
+   config("zstd_include_config") {

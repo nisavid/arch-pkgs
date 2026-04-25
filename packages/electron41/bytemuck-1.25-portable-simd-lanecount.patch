@@ -1,0 +1,20 @@
+diff --git a/third_party/rust/chromium_crates_io/vendor/bytemuck-v1/src/pod.rs b/third_party/rust/chromium_crates_io/vendor/bytemuck-v1/src/pod.rs
+index 1ff34c55025f..4df94d9fc431 100644
+--- a/third_party/rust/chromium_crates_io/vendor/bytemuck-v1/src/pod.rs
++++ b/third_party/rust/chromium_crates_io/vendor/bytemuck-v1/src/pod.rs
+@@ -152,5 +152,6 @@ unsafe impl<T, const N: usize> Pod for core::simd::Simd<T, N>
+ where
+   T: core::simd::SimdElement + Pod,
++  core::simd::LaneCount<N>: core::simd::SupportedLaneCount,
+ {
+ }
+diff --git a/third_party/rust/chromium_crates_io/vendor/bytemuck-v1/src/zeroable.rs b/third_party/rust/chromium_crates_io/vendor/bytemuck-v1/src/zeroable.rs
+index 40e24f76d13c..1be4f5c47e92 100644
+--- a/third_party/rust/chromium_crates_io/vendor/bytemuck-v1/src/zeroable.rs
++++ b/third_party/rust/chromium_crates_io/vendor/bytemuck-v1/src/zeroable.rs
+@@ -231,5 +231,6 @@ unsafe impl<T, const N: usize> Zeroable for core::simd::Simd<T, N>
+ where
+   T: core::simd::SimdElement + Zeroable,
++  core::simd::LaneCount<N>: core::simd::SupportedLaneCount,
+ {
+ }
