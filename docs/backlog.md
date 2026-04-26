@@ -158,6 +158,41 @@ Exit criteria:
 
 ## Repo workflow tooling
 
+### Adopt declarative package maintenance policies
+
+This repo has started to need package-specific maintenance policy beyond a
+plain `PKGBUILD` workflow. `codex-app` is the first concrete case: it is built
+by the maintained `codex-app-linux` source repo, and this repo should ingest a
+fresh package artifact when one exists instead of rebuilding it here.
+
+Adopt a generic, declarative maintenance-policy system derived from the
+`arch-strix-halo-pkgs` approach, then express the `codex-app` ingestion policy
+as the first instance. The current `tools/ingest_codex_app.zsh` helper should be
+treated as a working bridge, not the final package-policy architecture.
+
+Deliverables:
+
+- A small policy format for package maintenance rules, including source
+  checkout location, freshness window, artifact selection, build command, and
+  ingest/publish behavior.
+- A canonical ignored `upstream/` checkout area for source repos that are not
+  owned by this repo.
+- A runner that can evaluate a package's policy and perform the declared
+  action.
+- A `codex-app` policy that preserves the current rule: use a package built in
+  the past 24 hours when present; otherwise run `make pacman` in
+  `upstream/codex-app-linux`, cloning the source repo first when needed.
+- Maintainer docs that explain how to add another package with the same policy
+  mechanism.
+
+Exit criteria:
+
+- `codex-app` no longer needs a one-off ingest script for its normal update
+  path.
+- A maintainer can add a second package policy without designing new plumbing.
+- The policy runner reports clearly whether it reused a fresh artifact, built a
+  new artifact, or failed before publishing anything.
+
 ### Package `amerge` for shared local-repo management
 
 `amerge` is not part of this repo workflow yet. The current install path is the
