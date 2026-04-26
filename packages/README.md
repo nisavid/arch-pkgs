@@ -8,6 +8,7 @@ notes.
 
 | Directory | Package | Use it when |
 | --- | --- | --- |
+| [`codex-app`](codex-app/) | `codex-app` | You want to ingest the pacman package produced by the maintained Codex App Linux repo. |
 | [`qdrant`](qdrant/) | `qdrant` | You need a local vector database with packaged service defaults. |
 | [`hayhooks`](hayhooks/) | `hayhooks` | You want to serve Haystack pipelines over HTTP from a system-managed service. |
 | [`haystack-ai`](haystack-ai/) | `python-haystack-ai` | You need the Haystack Python framework installed from pacman. |
