@@ -11,6 +11,7 @@ repo_dir=${repo_root}/repo/x86_64
 repo_name=nisavid
 upstream_url=https://github.com/nisavid/codex-app-linux.git
 max_age_hours=24
+cloned_source=0
 
 usage() {
   cat <<EOF
@@ -36,7 +37,7 @@ need_command() {
 
 latest_package() {
   emulate -L zsh
-  setopt pipe_fail
+  setopt errexit nounset pipefail
 
   local dist_dir=$1
   local max_minutes=${2:-0}
@@ -44,25 +45,31 @@ latest_package() {
 
   [[ -d "$dist_dir" ]] || return 1
 
-  find_cmd=(find "$dist_dir" -maxdepth 1 -type f -name 'codex-app-*.pkg.tar.*')
+  find_cmd=(
+    find "$dist_dir" -maxdepth 1 -type f
+    '(' -name 'codex-app-*.pkg.tar.zst' -o -name 'codex-app-*.pkg.tar.xz' ')'
+  )
   if (( max_minutes > 0 )); then
     find_cmd+=(-mmin "-${max_minutes}")
   fi
+  find_cmd+=(-printf '%T@ %p\n')
 
-  "${find_cmd[@]}" -printf '%T@ %p\n' \
+  "${find_cmd[@]}" \
     | sort -nr \
     | sed -n '1{s/^[^ ]* //;p;}'
 }
 
 ensure_source_dir() {
   if [[ -e "$source_dir" ]]; then
-    [[ -d "$source_dir/.git" ]] || die "source dir is not a git checkout: $source_dir"
+    git -C "$source_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
+      || die "source dir is not a git checkout: $source_dir"
     return
   fi
 
   mkdir -p -- "${source_dir:h}"
   print -ru2 -- "Cloning codex-app-linux into $source_dir"
   git clone "$upstream_url" "$source_dir"
+  cloned_source=1
 }
 
 build_package() {
@@ -139,10 +146,15 @@ main() {
   ensure_source_dir
 
   local package_path
-  package_path=$(latest_package "${source_dir}/dist" $(( max_age_hours * 60 )) || true)
-  if [[ -z "$package_path" ]]; then
+  if (( cloned_source )); then
     build_package
     package_path=$(latest_package "${source_dir}/dist" 0 || true)
+  else
+    package_path=$(latest_package "${source_dir}/dist" $(( max_age_hours * 60 )) || true)
+    if [[ -z "$package_path" ]]; then
+      build_package
+      package_path=$(latest_package "${source_dir}/dist" 0 || true)
+    fi
   fi
 
   [[ -n "$package_path" ]] || die "no codex-app package found in ${source_dir}/dist"
