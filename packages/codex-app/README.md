@@ -1,9 +1,14 @@
 # codex-app
 
-`codex-app` is maintained in
-[`../codex-app-linux`](../../../codex-app-linux/). This repo does not rebuild it
-through a second `PKGBUILD`; it ingests the pacman package produced by that
-source repo.
+`codex-app` packages
+[Codex App for Linux](https://github.com/nisavid/codex-app-linux), an unofficial
+Linux adaptation of the OpenAI Codex desktop app. The source repo converts the
+upstream macOS `Codex.dmg` into a Linux Electron app and builds native package
+artifacts.
+
+This repo does not rebuild `codex-app` through a second `PKGBUILD`; it ingests
+the pacman package produced by
+[nisavid/codex-app-linux](https://github.com/nisavid/codex-app-linux).
 
 Use:
 
@@ -22,9 +27,10 @@ The ingestion policy is:
    the past 24 hours, run `make pacman` in that repo, then ingest the newest
    package it produced.
 3. If `upstream/codex-app-linux` is absent, clone
-   `https://github.com/nisavid/codex-app-linux.git` there, run `make pacman`,
-   then ingest the newest package it produced.
+   [nisavid/codex-app-linux](https://github.com/nisavid/codex-app-linux) there,
+   run `make pacman`, then ingest the newest package it produced.
 
-For this workspace, `upstream/codex-app-linux` is a local symlink to the sibling
-`../codex-app-linux` checkout. The contents of `upstream/` are ignored so source
-checkouts and symlinks stay local.
+For this workspace, `upstream/codex-app-linux` may be a local symlink to a
+checkout of [nisavid/codex-app-linux](https://github.com/nisavid/codex-app-linux).
+The contents of `upstream/` are ignored so source checkouts and symlinks stay
+local.

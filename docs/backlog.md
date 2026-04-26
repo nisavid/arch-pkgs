@@ -166,9 +166,10 @@ by the maintained `codex-app-linux` source repo, and this repo should ingest a
 fresh package artifact when one exists instead of rebuilding it here.
 
 Adopt a generic, declarative maintenance-policy system derived from the
-`arch-strix-halo-pkgs` approach, then express the `codex-app` ingestion policy
-as the first instance. The current `tools/ingest_codex_app.zsh` helper should be
-treated as a working bridge, not the final package-policy architecture.
+[`arch-strix-halo-pkgs`](https://github.com/nisavid/arch-strix-halo-pkgs)
+approach, then express the `codex-app` ingestion policy as the first instance.
+The current `tools/ingest_codex_app.zsh` helper should be treated as a working
+bridge, not the final package-policy architecture.
 
 Deliverables:
 
@@ -199,12 +200,14 @@ Exit criteria:
 explicit build, refresh, publish, and install sequence in
 [`docs/usage/local-repo.md`](usage/local-repo.md).
 
-Future work may extract `amerge` from `arch-strix-halo-pkgs` into its own
-package, then use that shared tool as the local-repo package manager for both
-repos.
+Future work may extract `amerge` from
+[`arch-strix-halo-pkgs`](https://github.com/nisavid/arch-strix-halo-pkgs) into
+its own package, then use that shared tool as the local-repo package manager for
+both repos.
 
 Exit criteria:
 
-- `amerge` is available as a package outside `arch-strix-halo-pkgs`.
+- `amerge` is available as a package outside
+  [`arch-strix-halo-pkgs`](https://github.com/nisavid/arch-strix-halo-pkgs).
 - This repo's local-repo usage docs either adopt it or explicitly keep the
   manual workflow as the preferred path.
