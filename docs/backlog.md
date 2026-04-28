@@ -171,6 +171,12 @@ approach, then express the `codex-app` ingestion policy as the first instance.
 The current `tools/ingest_codex_app.zsh` helper should be treated as a working
 bridge, not the final package-policy architecture.
 
+If this repo's fetch, freshness, or update-disposition workflows develop gaps,
+use the `arch-strix-halo-pkgs` refresh/update hardening stack as a reference
+pattern. In particular, review its package-maintenance skill, freshness checker,
+candidate-disposition ledger, and backlog/current-state wiring before designing
+new local policy.
+
 Deliverables:
 
 - A small policy format for package maintenance rules, including source
