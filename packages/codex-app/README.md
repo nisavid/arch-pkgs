@@ -35,15 +35,15 @@ sudo pacman -S codex-app
 
 The ingestion policy is:
 
-1. If `upstream/codex-app-linux` is present and its `dist/` directory
-   contains a `codex-app-*.pkg.tar.*` package built in the past 24 hours, ingest
-   that package.
+1. If `upstream/codex-app-linux` is present and its `dist/` directory contains
+   a `codex-app-*.pkg.tar.zst` or `codex-app-*.pkg.tar.xz` package modified in
+   the past 24 hours, ingest the newest matching file by filesystem mtime.
 2. If `upstream/codex-app-linux` is present but has no package built in
-   the past 24 hours, run `make pacman` in that repo, then ingest the newest
-   package it produced.
+   the past 24 hours, run `make pacman` in `upstream/codex-app-linux`, then
+   ingest the newest matching package in `dist/` by filesystem mtime.
 3. If `upstream/codex-app-linux` is absent, clone
    [nisavid/codex-app-linux](https://github.com/nisavid/codex-app-linux) there,
-   run `make pacman`, then ingest the newest package it produced.
+   run `make pacman`, then ingest the newest matching package in `dist/`.
 
 For this workspace, `upstream/codex-app-linux` may be a local symlink to a
 checkout of [nisavid/codex-app-linux](https://github.com/nisavid/codex-app-linux).
