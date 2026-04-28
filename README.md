@@ -5,24 +5,28 @@ Personal Arch Linux packages for a local AI application stack.
 This repository collects packages that are useful enough to keep close, patched,
 and installable through a local pacman repository. It is not a public distro or a
 general AUR mirror. It is a small workspace for reproducible local packages:
-vector storage, Haystack services, their Python dependencies, and an
-experimental GPU inspection tool.
+Codex desktop app packaging, vector storage, Haystack services, their Python
+dependencies, and an experimental GPU inspection tool.
 
 ## What You Can Install
 
-| Package | Packaged version | Why it is here |
-| --- | ---: | --- |
-| [`qdrant`](packages/qdrant/) | `1.17.1-1` | Vector database with local-only defaults and a packaged `systemd` service. |
-| [`hayhooks`](packages/hayhooks/) | `1.17.0-1` | Haystack pipeline server with a local service account, env file, and pipeline directory. |
-| [`electron41`](packages/electron41/) | `41.3.0-1` | Source-built Electron 41 runtime for packages that need this major line. |
-| [`utilyze`](packages/utilyze/) | `0.1.1-2` | Experimental NVIDIA GPU utilization TUI with Arch runtime, config, update, and telemetry-consent patches. |
-| [`python-haystack-ai`](packages/haystack-ai/) | `2.28.0-1` | Haystack framework package used by `hayhooks` and local pipeline work. |
-| [`python-haystack-experimental`](packages/python-haystack-experimental/) | `0.19.0-1` | Experimental Haystack components. |
-| [`python-fastapi-openai-compat`](packages/python-fastapi-openai-compat/) | `1.2.0-1` | OpenAI-compatible FastAPI router dependency. |
-| [`python-posthog`](packages/python-posthog/) | `7.13.0-1` | Python PostHog client dependency. |
-| [`python-docstring-parser`](packages/python-docstring-parser/) | `0.18.0-1` | Python docstring parser dependency. |
-| [`python-lazy-imports`](packages/python-lazy-imports/) | `1.2.0-1` | Lazy import helper dependency. |
-| [`python-backoff`](packages/python-backoff/) | `2.2.1-1` | Retry/backoff helper dependency. |
+The full package catalog lives in [`packages/README.md`](packages/README.md).
+Use it when you need all packages, package names, categories, and package-local
+notes.
+
+Start with the package family that matches what you want to install:
+
+- [`codex-app`](packages/codex-app/) packages the unofficial Linux build of
+  OpenAI Codex's desktop app for pacman.
+- [`qdrant`](packages/qdrant/) and [`hayhooks`](packages/hayhooks/) provide the
+  local service layer for vector storage and Haystack pipeline serving.
+- [`python-haystack-ai`](packages/haystack-ai/) and its companion Python
+  packages support local Haystack work where the desired versions are not
+  available in the right shape.
+- [`electron41`](packages/electron41/) provides a source-built Electron runtime
+  for packages that need that major line.
+- [`utilyze`](packages/utilyze/) is an experimental NVIDIA GPU utilization TUI
+  with Arch runtime, config, update, and telemetry-consent patches.
 
 > [!NOTE]
 > `utilyze` is packaged and partially verified, but it still needs runtime
