@@ -14,8 +14,8 @@ pacman rather than the prebuilt upstream zip packages.
 ## Source Policy
 
 The package tracks Electron stable `41.x` releases. The current package is
-`41.3.0-1`, prepared from the upstream `v41.3.0` tag and generated Chromium
-dependency pins for Chromium `146.0.7680.188` and Node.js `24.15.0`.
+`41.5.1-1`, prepared from the upstream `v41.5.1` tag and generated dependency
+pins from Electron's upstream `DEPS` file.
 
 The source recipe is based on the current Arch/CachyOS `electron39` package
 shape, with the generated dependency list refreshed for Electron 41. Advisory
@@ -48,7 +48,6 @@ repo, and install `electron41` through pacman. See
 
 ## Validation Status
 
-The package metadata, generated `.SRCINFO`, source verification, source build,
-and package payload inspection have been checked locally for `41.3.0-1`.
-Electron source builds download a large Chromium dependency graph and need a
-long-running build environment.
+The package metadata, generated `.SRCINFO`, and source verification have been
+checked locally for `41.5.1-1`. The source build and package payload inspection
+still need a long-running Electron build environment.

@@ -63,7 +63,7 @@ sudo install -d /srv/pacman/nisavid/x86_64
 Then publish the current staging repo whenever it changes:
 
 ```bash
-sudo rsync -a --delete repo/x86_64/ /srv/pacman/nisavid/x86_64/
+tools/publish_pacman_repo.zsh
 ```
 
 ## Enable The Repo In Pacman
@@ -113,7 +113,7 @@ package lists:
 
 ```bash
 tools/update_pacman_repo.zsh packages/<pkgname>
-sudo rsync -a --delete repo/x86_64/ /srv/pacman/nisavid/x86_64/
+tools/publish_pacman_repo.zsh
 sudo pacman -Sy
 ```
 

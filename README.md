@@ -48,7 +48,7 @@ area, publish it to a pacman-visible path, and install through pacman:
 ```bash
 (cd packages/qdrant && makepkg --verifysource && makepkg -f)
 tools/update_pacman_repo.zsh packages/qdrant
-sudo rsync -a --delete repo/x86_64/ /srv/pacman/nisavid/x86_64/
+tools/publish_pacman_repo.zsh
 sudo pacman -Sy
 sudo pacman -S qdrant
 ```

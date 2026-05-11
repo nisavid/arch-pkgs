@@ -19,10 +19,12 @@ Run the ingest helper from this repo's root:
 
 ```bash
 tools/ingest_codex_app.zsh
+tools/publish_pacman_repo.zsh
 ```
 
-The helper stages the package in `repo/x86_64/`. Publish the local repo and
-install `codex-app` with pacman using the workflow in
+The ingest helper stages the package in `repo/x86_64/`, and the publish helper
+copies that staging repo to the pacman-visible path. For the complete local
+repo workflow, see
 [`docs/usage/local-repo.md`](../../docs/usage/local-repo.md).
 
 After the local repo is published and enabled:
