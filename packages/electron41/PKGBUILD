@@ -6,7 +6,7 @@
 # Note: Electron and Chromium dependency pins come from the upstream DEPS file.
 # The generated prepare script fetches those pinned repos shallowly during prepare().
 
-pkgver=41.3.0
+pkgver=41.5.1
 pkgrel=1
 _major_ver=${pkgver%%.*}
 pkgname="electron${_major_ver}"
@@ -73,7 +73,7 @@ source=("electron-v$pkgver.tar.gz::https://github.com/electron/electron/archive/
         bytemuck-1.25-portable-simd-lanecount.patch
         makepkg-source-roller.py
         )
-sha256sums=('d5394172ad19b0d251ad7e370295a305c64b2974187d2acfccbcb4ffe4cb9e14'
+sha256sums=('8d25357916e9225d435441f8a0e51dc73ecb8745b694d6a807e01ab30dfae809'
             '92d43d2bc995b4b4ac8900a18e81ef7930e3ae4b3ff1eb509f60615babd32084'
             'ad30eb42af42e8bc8f0d4fc7e2e140b433e7770b5e6d46da9961855c7f1b594a'
             'ec8e49b7114e2fa2d359155c9ef722ff1ba5fe2c518fa48e30863d71d3b82863'
