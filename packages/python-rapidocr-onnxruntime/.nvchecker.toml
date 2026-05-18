@@ -1,0 +1,3 @@
+[python-rapidocr-onnxruntime]
+source = "pypi"
+pypi = "rapidocr-onnxruntime"

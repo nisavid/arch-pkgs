@@ -1,0 +1,202 @@
+# Contributor: diplomat
+
+pkgname=open-webui
+pkgver=0.9.5
+pkgrel=1
+pkgdesc="Self-hosted AI web interface for Ollama and OpenAI-compatible APIs"
+arch=('x86_64')
+url="https://github.com/open-webui/open-webui"
+license=('custom:Open WebUI')
+backup=('etc/open-webui/open-webui.env')
+depends=(
+  'python'
+  'ffmpeg'
+  'pandoc'
+  'curl'
+  'jq'
+  'zstd'
+  'python-accelerate'
+  'python-av'
+  'python-ctranslate2'
+  'python-faster-whisper'
+  'python-numpy'
+  'python-onnxruntime'
+  'python-opencv'
+  'python-pandas'
+  'python-pillow'
+  'python-pyarrow'
+  'python-pyclipper'
+  'python-pytorch'
+  'python-rapidocr-onnxruntime'
+  'python-scikit-learn'
+  'python-scipy'
+  'python-sentence-transformers'
+  'python-sentencepiece'
+  'python-shapely'
+  'python-tokenizers'
+  'python-transformers'
+)
+makedepends=('npm' 'nodejs-lts-jod' 'uv')
+optdepends=('ollama: local Ollama model runner'
+            'tika-server: Apache Tika content extraction backend')
+conflicts=('open-webui-git' 'open-webui-no-venv')
+options=(!strip !debug)
+_pyver=3.14
+source=(
+  "${pkgname}-${pkgver}.tar.gz::https://github.com/open-webui/open-webui/archive/refs/tags/v${pkgver}.tar.gz"
+  '0001-support-python-3.14-psycopg.patch'
+  '0002-use-system-ml-stack.patch'
+  'open-webui.env'
+  'open-webui.service'
+  'open-webui.sysusers'
+  'open-webui.tmpfiles'
+  'open-webui-wrapper'
+)
+sha256sums=('385975c2da333fede8827e3cae04ae154b2fb4d850fdc44470c9f6d25636ebfd'
+            '59ab5b67f520771dc6a776b9a6139734a3068fdfcc555ddc09705d6a55ed683f'
+            'df4913ae991576f627503f171b4f9b17c9bcc2c70e2862968dd56f267ea4f1a2'
+            '7dcae39f3e0ff967a2febd4c048c9661219f34b2b37aac15ecaa7758bc92809c'
+            '0f899797e821662b6a49a7f2671904c0bd0ed448da4a706718754dc32abd3480'
+            '546b3bfc089c314c9984424c156073636db248b0af6a06e1325b5ff6c4e2b2ba'
+            '79856d2f2dc1706658f78499230fbcbef94953b2bf01a11b229bb50a664309ff'
+            '5bc01bd6b5c6998336f949ed0c457e05f5b85efe679b1612f74f9c84eefd10ef')
+
+prepare() {
+  cd "${pkgname}-${pkgver}"
+
+  patch -Np1 -i "${srcdir}/0001-support-python-3.14-psycopg.patch"
+  patch -Np1 -i "${srcdir}/0002-use-system-ml-stack.patch"
+}
+
+build() {
+  cd "${pkgname}-${pkgver}"
+
+  unset -f module ml 2>/dev/null || true
+  unset 'BASH_FUNC_module%%' 'BASH_FUNC_ml%%' 2>/dev/null || true
+  export APP_BUILD_HASH="v${pkgver}"
+  export CCACHE_DISABLE=1
+  export CYPRESS_CACHE_FOLDER="${srcdir}/cypress-cache"
+  export CYPRESS_INSTALL_BINARY=0
+  export NODE_OPTIONS="--max_old_space_size=4096"
+  export HOME="${srcdir}/build-home"
+  export NPM_CONFIG_CACHE="${srcdir}/npm-cache"
+  export NPM_CONFIG_UPDATE_NOTIFIER=false
+  export ONNXRUNTIME_NODE_INSTALL_CUDA=skip
+  export SHARP_IGNORE_GLOBAL_LIBVIPS=1
+  export UV_CACHE_DIR="${srcdir}/uv-cache"
+  export UV_PYTHON_INSTALL_DIR="${srcdir}/uv-python"
+  install -d "${HOME}" "${NPM_CONFIG_CACHE}"
+  uv run --no-project --python /usr/bin/python --with build --with hatchling \
+    python -m build --wheel --no-isolation
+}
+
+package() {
+  cd "${pkgname}-${pkgver}"
+
+  install -Dm644 LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+  install -Dm644 LICENSE_HISTORY "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE_HISTORY"
+  install -Dm644 LICENSE_NOTICE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE_NOTICE"
+
+  install -Dm755 "${srcdir}/open-webui-wrapper" "${pkgdir}/usr/bin/open-webui"
+  install -Dm600 "${srcdir}/open-webui.env" "${pkgdir}/etc/open-webui/open-webui.env"
+  install -Dm644 "${srcdir}/open-webui.service" "${pkgdir}/usr/lib/systemd/system/open-webui.service"
+  install -Dm644 "${srcdir}/open-webui.sysusers" "${pkgdir}/usr/lib/sysusers.d/open-webui.conf"
+  install -Dm644 "${srcdir}/open-webui.tmpfiles" "${pkgdir}/usr/lib/tmpfiles.d/open-webui.conf"
+
+  install -d "${pkgdir}/opt/open-webui/lib/python${_pyver}/site-packages"
+  local _site="${pkgdir}/opt/open-webui/lib/python${_pyver}/site-packages"
+  # Keep Open WebUI's non-ML Python runtime private for now. ML/native roots
+  # are pruned below and resolved through pacman dependencies.
+  CCACHE_DISABLE=1 UV_CACHE_DIR="${srcdir}/uv-cache" UV_PYTHON_INSTALL_DIR="${srcdir}/uv-python" UV_LINK_MODE=copy uv pip install \
+    --python /usr/bin/python \
+    --target "${_site}" \
+    dist/open_webui-${pkgver}-py3-none-any.whl
+
+  local _externalized_roots=(
+    PIL
+    accelerate
+    av
+    ctranslate2
+    cuda_bindings
+    cuda_pathfinder
+    cuda_toolkit
+    cv2
+    faster_whisper
+    functorch
+    numpy
+    numpy.libs
+    nvidia
+    onnxruntime
+    opencv_python.libs
+    pandas
+    pyarrow
+    pyclipper
+    rapidocr_onnxruntime
+    scipy
+    scipy.libs
+    sentence_transformers
+    sentencepiece
+    shapely
+    sklearn
+    tokenizers
+    torch
+    torchgen
+    transformers
+    triton
+  )
+  local _root
+  for _root in "${_externalized_roots[@]}"; do
+    rm -rf "${_site}/${_root}"
+  done
+
+  find "${_site}" -maxdepth 1 -type d \
+    \( -name 'Pillow-*.dist-info' \
+    -o -name 'pillow-*.dist-info' \
+    -o -name 'accelerate-*.dist-info' \
+    -o -name 'av-*.dist-info' \
+    -o -name 'ctranslate2-*.dist-info' \
+    -o -name 'cuda_*.dist-info' \
+    -o -name 'faster_whisper-*.dist-info' \
+    -o -name 'numpy-*.dist-info' \
+    -o -name 'nvidia_*.dist-info' \
+    -o -name 'onnxruntime-*.dist-info' \
+    -o -name 'opencv_python*.dist-info' \
+    -o -name 'pandas-*.dist-info' \
+    -o -name 'pyarrow-*.dist-info' \
+    -o -name 'pyclipper-*.dist-info' \
+    -o -name 'rapidocr_onnxruntime-*.dist-info' \
+    -o -name 'scikit_learn-*.dist-info' \
+    -o -name 'scipy-*.dist-info' \
+    -o -name 'sentence_transformers-*.dist-info' \
+    -o -name 'sentencepiece-*.dist-info' \
+    -o -name 'shapely-*.dist-info' \
+    -o -name 'tokenizers-*.dist-info' \
+    -o -name 'torch-*.dist-info' \
+    -o -name 'transformers-*.dist-info' \
+    -o -name 'triton-*.dist-info' \) \
+    -exec rm -rf {} +
+  rm -f \
+    "${_site}/bin/accelerate" \
+    "${_site}/bin/accelerate-config" \
+    "${_site}/bin/accelerate-estimate-memory" \
+    "${_site}/bin/accelerate-launch" \
+    "${_site}/bin/accelerate-merge-weights" \
+    "${_site}/bin/ct2-"* \
+    "${_site}/bin/f2py" \
+    "${_site}/bin/normalizer" \
+    "${_site}/bin/numpy-config" \
+    "${_site}/bin/onnxruntime_test" \
+    "${_site}/bin/pyav" \
+    "${_site}/bin/rapidocr_onnxruntime" \
+    "${_site}/bin/torchfrtrace" \
+    "${_site}/bin/torchrun" \
+    "${_site}/bin/transformers"
+
+  rm -f "${_site}/open_webui-${pkgver}.dist-info/direct_url.json"
+  if [[ -d "${_site}/bin" ]]; then
+    find "${_site}/bin" -type f \
+      -exec sed -i '1s|^#!.*/\.venv/bin/python3$|#!/usr/bin/python|' {} +
+  fi
+  install -Dm644 package.json "${pkgdir}/opt/open-webui/lib/python${_pyver}/package.json"
+  install -Dm644 package.json "${_site}/open_webui/package.json"
+}

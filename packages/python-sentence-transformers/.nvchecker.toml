@@ -1,0 +1,4 @@
+[python-sentence-transformers]
+source = "git"
+git = "https://github.com/UKPLab/sentence-transformers.git"
+prefix = "v"
