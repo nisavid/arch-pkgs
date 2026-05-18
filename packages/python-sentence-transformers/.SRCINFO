@@ -1,0 +1,25 @@
+pkgbase = python-sentence-transformers
+	pkgdesc = Embeddings, Retrieval, and Reranking
+	pkgver = 5.5.0
+	pkgrel = 1
+	url = https://github.com/UKPLab/sentence-transformers
+	arch = any
+	license = Apache-2.0
+	makedepends = python-build
+	makedepends = python-installer
+	makedepends = python-setuptools
+	makedepends = python-wheel
+	depends = python
+	depends = python-huggingface-hub
+	depends = python-numpy
+	depends = python-pillow
+	depends = python-pytorch
+	depends = python-scikit-learn
+	depends = python-scipy
+	depends = python-tqdm
+	depends = python-transformers
+	depends = python-typing_extensions
+	source = sentence-transformers-5.5.0.tar.gz::https://github.com/UKPLab/sentence-transformers/archive/v5.5.0.tar.gz
+	sha512sums = 7426c5e3c2f92f38ad35847e75561b8126ae282c2af140eeafa3865ac4e2cf5226052edbd40cbdd3a157a2d011915c43ead8941b603ce3fdd5990636b92b5603
+
+pkgname = python-sentence-transformers

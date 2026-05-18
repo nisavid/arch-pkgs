@@ -1,0 +1,36 @@
+[Unit]
+Description=Open WebUI self-hosted AI interface
+Documentation=https://docs.openwebui.com/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=open-webui
+Group=open-webui
+StateDirectory=open-webui
+StateDirectoryMode=0750
+WorkingDirectory=/var/lib/open-webui
+Environment=HOME=/var/lib/open-webui
+Environment=OPEN_WEBUI_HOST=127.0.0.1
+Environment=OPEN_WEBUI_PORT=8080
+EnvironmentFile=-/etc/open-webui/open-webui.env
+ExecStart=/usr/bin/open-webui serve --host ${OPEN_WEBUI_HOST} --port ${OPEN_WEBUI_PORT}
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectControlGroups=true
+ProtectKernelModules=true
+ProtectKernelTunables=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictRealtime=true
+RestrictSUIDSGID=true
+SystemCallArchitectures=native
+UMask=0027
+ReadWritePaths=/var/lib/open-webui
+
+[Install]
+WantedBy=multi-user.target

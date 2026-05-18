@@ -1,0 +1,23 @@
+pkgbase = python-rapidocr-onnxruntime
+	pkgdesc = Cross-platform OCR library based on ONNX Runtime
+	pkgver = 1.4.4
+	pkgrel = 1
+	url = https://github.com/RapidAI/RapidOCR
+	arch = any
+	license = Apache-2.0
+	makedepends = python-installer
+	depends = python
+	depends = python-numpy
+	depends = python-onnxruntime
+	depends = python-opencv
+	depends = python-pillow
+	depends = python-pyclipper
+	depends = python-yaml
+	depends = python-shapely
+	depends = python-six
+	depends = python-tqdm
+	noextract = rapidocr_onnxruntime-1.4.4-py3-none-any.whl
+	source = rapidocr_onnxruntime-1.4.4-py3-none-any.whl::https://files.pythonhosted.org/packages/py3/r/rapidocr-onnxruntime/rapidocr_onnxruntime-1.4.4-py3-none-any.whl
+	sha256sums = 971d7d5f223a7a808662229df1ef69893809d8457d834e6373d3854bc1782cbf
+
+pkgname = python-rapidocr-onnxruntime

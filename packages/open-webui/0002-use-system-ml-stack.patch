@@ -1,0 +1,37 @@
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -67,10 +67,6 @@
+     "PyMySQL==1.1.2",
+     "boto3==1.42.62",
+     
+-    "transformers==5.5.4",
+-    "sentence-transformers==5.4.0",
+-    "accelerate==1.13.0",
+-    "pyarrow>=24,<25",
+     "einops==0.8.2",
+ 
+     "ftfy==6.3.1",
+@@ -84,23 +80,15 @@
+     "Markdown==3.10.2",
+     "beautifulsoup4==4.14.3",
+     "pypandoc==1.16.2",
+-    "pandas==3.0.1",
+     "openpyxl==3.1.5",
+     "pyxlsb==1.0.10",
+     "xlrd==2.0.2",
+     "validators==0.35.0",
+     "psutil==7.2.2",
+-    "sentencepiece==0.2.1",
+     "soundfile==0.13.1",
+     "azure-ai-documentintelligence==1.0.2",
+ 
+-    "pillow==12.1.1",
+-    "opencv-python-headless==4.13.0.92",
+-    "rapidocr-onnxruntime==1.4.4",
+     "rank-bm25==0.2.2",
+-
+-    "onnxruntime==1.24.3",
+-    "faster-whisper==1.2.1",
+ 
+     "black==26.3.1",
+     "youtube-transcript-api==1.2.4",

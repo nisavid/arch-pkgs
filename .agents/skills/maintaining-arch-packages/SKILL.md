@@ -15,9 +15,27 @@ For the package you are touching:
 
 1. Read the package directory contents.
 2. Read any package-local notes, `README`, or patch comments first.
-3. Review upstream installation and release documentation.
-4. Check Arch/AUR naming, dependency naming, split-package layout, and `systemd` asset placement when the package shape changed.
-5. Identify any supporting assets that need to move with the package, such as service files, config defaults, or patches.
+3. When adding a new package or changing a package baseline, follow
+   `docs/policies/reference-packages.md` before writing local package files.
+4. Review upstream installation and release documentation.
+5. Check Arch/AUR naming, dependency naming, split-package layout, and `systemd` asset placement when the package shape changed.
+6. Identify any supporting assets that need to move with the package, such as service files, config defaults, or patches.
+
+## New Package Onboarding
+
+When adding a package under `packages/<name>/`, do the reference-package work
+before implementing the local package:
+
+1. Scout Arch, CachyOS, and AUR for same-lane and nearby package recipes.
+2. Select an authoritative reference and any advisory references using
+   `docs/policies/reference-packages.md`.
+3. Inspect selected references for dependency choices, `.install` behavior,
+   service units, config defaults, conflicts, optdepends, and maintenance
+   comments.
+4. Record `authoritative_reference`, `advisory_references`,
+   `divergence_notes`, and `update_notes` in `packages/<name>/README.md`.
+5. Build the local package around normal Arch package payloads. Avoid networked
+   post-install dependency bootstraps.
 
 ## Verification workflow
 

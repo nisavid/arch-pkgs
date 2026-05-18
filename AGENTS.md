@@ -22,6 +22,8 @@ Your job is not to make a package build once. Your job is to leave behind packag
 ## Package maintenance expectations
 
 - For the package-change workflow and discovery sequence, use `.agents/skills/maintaining-arch-packages/`.
+- When adding a new maintained package or changing a package baseline, follow
+  `docs/policies/reference-packages.md` before writing local package files.
 - Review upstream release notes and installation docs before changing package behavior.
 - Follow Arch naming and layout conventions where practical, especially for Python packages and `systemd` assets.
 - Keep one-off installation guidance simple for now: build and install directly from the package directory with `makepkg -si`.

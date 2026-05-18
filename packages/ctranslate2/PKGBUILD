@@ -1,0 +1,145 @@
+# Maintainer: Lubosz Sarnecki <lubosz@gmail.com>
+# Contributor: Mark Wagie <mark dot wagie at proton dot me>
+
+pkgbase=ctranslate2
+pkgname=('ctranslate2' 'python-ctranslate2')
+pkgver=4.7.1
+pkgrel=1
+pkgdesc="A C++ and Python library for efficient inference with Transformer models"
+arch=('x86_64')
+url="https://github.com/OpenNMT/CTranslate2"
+license=('MIT')
+makedepends=(
+  'cmake'
+  'git'
+  'ninja'
+  'openblas'
+  'patchelf'
+  'pybind11'
+  'python-build'
+  'python-installer'
+  'python-setuptools'
+  'python-wheel'
+)
+source=(
+  "git+${url}.git#tag=v${pkgver}"
+  'git+https://github.com/jarro2783/cxxopts.git'
+  'git+https://github.com/NVIDIA/thrust.git'
+  'git+https://github.com/google/googletest.git'
+  'git+https://github.com/google/cpu_features.git'
+  'git+https://github.com/gabime/spdlog.git'
+  'git+https://github.com/google/ruy.git'
+  'git+https://github.com/pytorch/cpuinfo.git'
+  'git+https://github.com/NVIDIA/cutlass.git'
+  'git+https://github.com/NVIDIA/cub.git'
+)
+sha256sums=('51eb12825b676d5f0dfc73865c76ac2f763ed44eaa628b65d23aeb035bf0944e'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP'
+            'SKIP')
+
+prepare() {
+  cd CTranslate2
+
+  git submodule init
+  local submodule
+  for submodule in cxxopts thrust googletest cpu_features spdlog ruy cutlass; do
+    git config "submodule.third_party/${submodule}.url" "${srcdir}/${submodule}"
+  done
+  git -c protocol.file.allow=always submodule update
+
+  pushd third_party/ruy
+  git submodule init
+  git config submodule.cpuinfo.url "${srcdir}/cpuinfo"
+  git config submodule.googletest.url "${srcdir}/googletest"
+  git -c protocol.file.allow=always submodule update
+  popd
+
+  pushd third_party/thrust
+  git submodule init
+  git config submodule.cub.url "${srcdir}/cub"
+  git -c protocol.file.allow=always submodule update
+  popd
+
+  git clean python -dfx
+
+  # Use the packaged pybind11 module instead of downloading a pinned wheel.
+  sed -i 's/pybind11==2.11.1/pybind11/g' python/pyproject.toml
+
+  pushd third_party/cxxopts
+  git cherry-pick -X theirs -n 63d1b65a694cfceafc20863afa75df49dfbe6b2a
+  popd
+}
+
+build() {
+  unset -f module ml 2>/dev/null || true
+  unset 'BASH_FUNC_module%%' 'BASH_FUNC_ml%%' 2>/dev/null || true
+  export CCACHE_DISABLE=1
+  export CFLAGS+=" -ffile-prefix-map=${srcdir}=/usr/src/debug/${pkgbase}"
+  export CXXFLAGS+=" -ffile-prefix-map=${srcdir}=/usr/src/debug/${pkgbase}"
+  export PYTHONPYCACHEPREFIX="${srcdir}/python-cache"
+
+  local cmake_options=(
+    -B build
+    -G Ninja
+    -S CTranslate2
+    -W no-dev
+    -D CMAKE_BUILD_TYPE=RelWithDebInfo
+    -D CMAKE_INSTALL_PREFIX=/usr
+    -D OPENMP_RUNTIME=COMP
+    -D WITH_MKL=OFF
+    -D WITH_DNNL=OFF
+    -D WITH_OPENBLAS=ON
+    -D OPENBLAS_INCLUDE_DIR=/usr/include/openblas
+    -D WITH_RUY=ON
+    -D CMAKE_POLICY_VERSION_MINIMUM=3.5
+    -D ENABLE_CPU_DISPATCH=OFF
+  )
+  cmake "${cmake_options[@]}"
+  cmake --build build
+
+  pushd CTranslate2/python
+  CTRANSLATE2_ROOT=.. LIBRARY_PATH="${srcdir}/build" python -m build --wheel --no-isolation
+  popd
+}
+
+package_ctranslate2() {
+  depends=(
+    'openblas'
+    'glibc'
+    'libgcc'
+    'libgomp'
+    'libstdc++'
+  )
+
+  DESTDIR="${pkgdir}" cmake --install build
+  rm -rf "${pkgdir}/usr/include/nlohmann"
+
+  install -Dm644 CTranslate2/LICENSE -t "${pkgdir}/usr/share/licenses/${pkgname}"
+}
+
+package_python-ctranslate2() {
+  pkgdesc="Python bindings for CTranslate2"
+  depends=(
+    'ctranslate2'
+    'python'
+    'python-numpy'
+    'python-pytorch'
+    'python-yaml'
+    'glibc'
+    'libgcc'
+    'libstdc++'
+  )
+
+  cd CTranslate2/python
+
+  python -m installer --destdir="${pkgdir}" --no-compile-bytecode dist/*.whl
+  patchelf --remove-rpath "${pkgdir}"/usr/lib/python*/site-packages/ctranslate2/_ext*.so
+  install -Dm644 ../LICENSE -t "${pkgdir}/usr/share/licenses/${pkgname}"
+}

@@ -1,0 +1,6 @@
+#!/bin/sh
+export PYTHONPATH="/opt/open-webui/lib/python3.14/site-packages${PYTHONPATH:+:${PYTHONPATH}}"
+if [ "${1:-}" = "--version" ] || [ "${1:-}" = "-V" ]; then
+  exec /usr/bin/python -c 'from open_webui.env import VERSION; print(VERSION)'
+fi
+exec /usr/bin/python -c 'from open_webui import app; app()' "$@"

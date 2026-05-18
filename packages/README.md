@@ -6,11 +6,14 @@ notes.
 
 ## Inventory
 
-Freshness last checked: 2026-05-11.
+Package freshness is checked per maintenance task. Open WebUI was last checked
+against upstream releases on 2026-05-18.
 
 | Directory | Package | Packaged version | Upstream status | Use it when |
 | --- | --- | --- | --- | --- |
 | [`codex-app`](codex-app/) | `codex-app` | Ingested artifact | Source repo policy-managed | You want the unofficial Linux build of OpenAI Codex's desktop app packaged for pacman. |
+| [`open-webui`](open-webui/) | `open-webui` | 0.9.5-1 | Current | You want Open WebUI managed by pacman and `systemd` with local-only service defaults. |
+| [`ctranslate2`](ctranslate2/) | `ctranslate2`, `python-ctranslate2` | 4.7.1-1 | Current | You need a generic CPU/OpenBLAS CTranslate2 provider for Python applications. |
 | [`qdrant`](qdrant/) | `qdrant` | 1.17.1-1 | Current | You need a local vector database with packaged service defaults. |
 | [`hayhooks`](hayhooks/) | `hayhooks` | 1.19.1-1 | Current | You want to serve Haystack pipelines over HTTP from a system-managed service. |
 | [`haystack-ai`](haystack-ai/) | `python-haystack-ai` | 2.28.0-1 | Current | You need the Haystack Python framework installed from pacman. |
@@ -30,6 +33,9 @@ available locally in the desired shape:
 | [`python-haystack-experimental`](python-haystack-experimental/) | `python-haystack-experimental` | 0.19.0-1 | Current |
 | [`python-lazy-imports`](python-lazy-imports/) | `python-lazy-imports` | 1.2.0-1 | Current |
 | [`python-posthog`](python-posthog/) | `python-posthog` | 7.14.0-1 | Current |
+| [`python-faster-whisper`](python-faster-whisper/) | `python-faster-whisper` | 1.2.1-1 | Current |
+| [`python-rapidocr-onnxruntime`](python-rapidocr-onnxruntime/) | `python-rapidocr-onnxruntime` | 1.4.4-1 | Current |
+| [`python-sentence-transformers`](python-sentence-transformers/) | `python-sentence-transformers` | 5.5.0-1 | Current |
 
 ## Build And Publish
 
