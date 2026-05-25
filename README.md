@@ -23,8 +23,6 @@ Start with the package family that matches what you want to install:
 - [`python-haystack-ai`](packages/haystack-ai/) and its companion Python
   packages support local Haystack work where the desired versions are not
   available in the right shape.
-- [`electron41`](packages/electron41/) provides a source-built Electron runtime
-  for packages that need that major line.
 - [`utilyze`](packages/utilyze/) is an experimental NVIDIA GPU utilization TUI
   with Arch runtime, config, update, and telemetry-consent patches.
 
