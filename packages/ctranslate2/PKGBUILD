@@ -3,7 +3,7 @@
 
 pkgbase=ctranslate2
 pkgname=('ctranslate2' 'python-ctranslate2')
-pkgver=4.7.1
+pkgver=4.7.2
 pkgrel=1
 pkgdesc="A C++ and Python library for efficient inference with Transformer models"
 arch=('x86_64')
@@ -33,7 +33,7 @@ source=(
   'git+https://github.com/NVIDIA/cutlass.git'
   'git+https://github.com/NVIDIA/cub.git'
 )
-sha256sums=('51eb12825b676d5f0dfc73865c76ac2f763ed44eaa628b65d23aeb035bf0944e'
+sha256sums=('169cb72186ab48f705594e3a836ccf36a560d35a72e70e89be9ddb5a2209174f'
             'SKIP'
             'SKIP'
             'SKIP'
