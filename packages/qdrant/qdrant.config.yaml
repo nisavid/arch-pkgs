@@ -1,4 +1,5 @@
 log_level: INFO
+telemetry_disabled: true
 
 storage:
   storage_path: /var/lib/qdrant/storage

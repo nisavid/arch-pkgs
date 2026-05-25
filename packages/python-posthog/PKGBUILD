@@ -1,14 +1,14 @@
 pkgname=python-posthog
-pkgver=7.14.0
+pkgver=7.15.3
 pkgrel=1
 pkgdesc="Integrate PostHog into Python applications"
 arch=('any')
 url="https://pypi.org/project/posthog/"
 license=('MIT')
-depends=('python' 'python-backoff' 'python-dateutil' 'python-distro' 'python-requests' 'python-typing_extensions')
+depends=('python' 'python-backoff' 'python-distro' 'python-requests' 'python-typing_extensions')
 makedepends=('python-build' 'python-installer' 'python-setuptools' 'python-wheel')
-source=("https://files.pythonhosted.org/packages/c4/0f/0e6578feaf0d4e670bc517b6da09ec147a65421c44e0cd687eba12f08743/posthog-${pkgver}.tar.gz")
-sha256sums=('3be5e513f07e4ee5119f98b0458cb640739b49cef7c96c3e18b1d65076b18239')
+source=("https://files.pythonhosted.org/packages/c5/ad/0eedae8cc9d2878d5b52c8607bd21f76101cfe4d875e5ff77fec9da3a83c/posthog-${pkgver}.tar.gz")
+sha256sums=('809dcaf08ca2d8bc0ea8228c28419181b74a79dfd1c0687a3d459a7bbe2e2953')
 
 build() {
   cd "posthog-${pkgver}"
@@ -17,5 +17,5 @@ build() {
 
 package() {
   cd "posthog-${pkgver}"
-  python -m installer --destdir="$pkgdir" dist/*.whl
+  python -m installer --destdir="$pkgdir" --no-compile-bytecode dist/*.whl
 }

@@ -19,6 +19,7 @@ Use this package when you want a local vector store managed by pacman and
 | --- | --- |
 | HTTP bind | `127.0.0.1:6333` |
 | gRPC bind | `127.0.0.1:6334` |
+| Usage telemetry | disabled |
 | Storage | `/var/lib/qdrant/storage` |
 | Snapshots | `/var/lib/qdrant/snapshots` |
 
