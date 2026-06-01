@@ -40,6 +40,17 @@ If you want one package quickly, build and install it from its package directory
 (cd packages/qdrant && makepkg --verifysource && makepkg -si)
 ```
 
+`codex-app` is different from the normal `PKGBUILD` packages: this repo ingests
+the pacman package produced by the maintained `codex-app-linux` checkout. To
+refresh and stage the latest Codex desktop app package:
+
+```bash
+tools/ingest_codex_app.zsh
+tools/publish_pacman_repo.zsh
+sudo pacman -Sy
+sudo pacman -S codex-app
+```
+
 If you want the normal workflow, build a package, refresh the local repo staging
 area, publish it to a pacman-visible path, and install through pacman:
 
