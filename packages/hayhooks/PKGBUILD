@@ -1,5 +1,5 @@
 pkgname=hayhooks
-pkgver=1.19.1
+pkgver=1.19.2
 pkgrel=1
 pkgdesc="Serve Haystack pipelines as REST endpoints"
 arch=('any')
@@ -9,13 +9,13 @@ backup=('etc/hayhooks/hayhooks.env')
 depends=('python' 'python-docstring-parser' 'python-fastapi' 'python-fastapi-openai-compat' 'python-haystack-ai' 'python-loguru' 'python-pydantic-settings' 'python-dotenv' 'python-python-multipart' 'python-requests' 'python-rich' 'python-typer' 'uvicorn')
 makedepends=('python-build' 'python-hatch-vcs' 'python-hatchling' 'python-installer' 'python-wheel')
 source=(
-  "https://files.pythonhosted.org/packages/73/bc/7ad7a2956c76e6ce181f689504e2c9bbe9747843a05a8739e1e788cf81e4/hayhooks-${pkgver}.tar.gz"
+  "https://files.pythonhosted.org/packages/29/39/8452bcd22e3f767fa22d29d2b92d5f63de9e3fb934a274b56dfde685c7a8/hayhooks-${pkgver}.tar.gz"
   'hayhooks.env'
   'hayhooks.service'
   'hayhooks.sysusers'
   'hayhooks.tmpfiles'
 )
-sha256sums=('7a0bc0fc4dc11e08ba7c3b70656546e79ef35a7e7dbf6e0eac2f28cccd1224d0'
+sha256sums=('ac80a0d9281c8abdd7bba93fde137537680d398ff89331c9bb531c350c23b177'
             '9661219339ba2abaa582ae481a168e590ac19e5aab29e9ea3a33110dcf3f37bd'
             '21f1f73b1c05613f9276ede4e69f34d9415b47964bce9a9bdc648bd6594c64ac'
             '457ea692b071070e2eb00b75cbc9704304bfb092d46e67dcaffc5a70bf32a9aa'
@@ -34,7 +34,7 @@ build() {
 
 package() {
   cd "hayhooks-${pkgver}"
-  python -m installer --destdir="$pkgdir" dist/*.whl
+  python -m installer --destdir="$pkgdir" --no-compile-bytecode dist/*.whl
 
   install -Dm644 "${srcdir}/hayhooks.env" "${pkgdir}/etc/hayhooks/hayhooks.env"
   install -Dm644 "${srcdir}/hayhooks.service" "${pkgdir}/usr/lib/systemd/system/hayhooks.service"

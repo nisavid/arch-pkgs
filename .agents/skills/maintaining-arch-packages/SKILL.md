@@ -44,6 +44,18 @@ before implementing the local package:
 - When the install payload changes, inspect the produced package contents.
 - When install or service behavior changes, document the operator command needed to use it.
 
+## Closeout workflow
+
+- Treat an update request as including package-local README or maintainer-doc
+  updates when the update changes package behavior, source provenance, build
+  commands, install commands, service behavior, or known validation boundaries.
+- Unless the user explicitly asks for a local-only update, continue through the
+  repository's normal branch, commit, pull request, and merge flow after local
+  verification passes.
+- Stop before merge only when the repo policy, review state, CI, privileged
+  host mutation, or another concrete blocker prevents a correct merge. Report
+  the blocker and the exact next command or decision needed.
+
 ## Telemetry And Outbound Reporting
 
 When a package includes telemetry, metrics, or other outbound reporting:
