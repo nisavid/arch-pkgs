@@ -34,7 +34,7 @@ build() {
 
 package() {
   cd "hayhooks-${pkgver}"
-  python -m installer --destdir="$pkgdir" --no-compile-bytecode dist/*.whl
+  env -u PYTHONPYCACHEPREFIX /usr/bin/python -m installer --destdir="$pkgdir" dist/*.whl
 
   install -Dm644 "${srcdir}/hayhooks.env" "${pkgdir}/etc/hayhooks/hayhooks.env"
   install -Dm644 "${srcdir}/hayhooks.service" "${pkgdir}/usr/lib/systemd/system/hayhooks.service"
