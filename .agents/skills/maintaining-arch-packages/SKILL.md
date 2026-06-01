@@ -49,10 +49,11 @@ before implementing the local package:
 - Treat an update request as including package-local README or maintainer-doc
   updates when the update changes package behavior, source provenance, build
   commands, install commands, service behavior, or known validation boundaries.
-- Treat an update request as including root README and package-catalog review
-  when the update changes the visible package list, package selection guidance,
-  install path, update path, local-repo workflow, or another user-facing
-  workflow described at repository scope.
+- Treat an update request as including repo-level user-doc updates when the
+  update changes the visible package list, package selection guidance, install
+  path, update path, local-repo workflow, or another user-facing workflow
+  described at repository scope. Check `README.md` and `packages/README.md`,
+  and update any stale repository-scope guidance before closeout.
 - Unless the user explicitly asks for a local-only update, continue through the
   repository's normal branch, commit, pull request, and merge flow after local
   verification passes.
