@@ -187,7 +187,7 @@ Deliverables:
 - A runner that can evaluate a package's policy and perform the declared
   action.
 - A `codex-app` policy that preserves the current rule: use a package built in
-  the past 24 hours when present; otherwise run `make pacman` in
+  the past 24 hours when present; otherwise run `make build-app pacman` in
   `upstream/codex-app-linux`, cloning the source repo first when needed.
 - Maintainer docs that explain how to add another package with the same policy
   mechanism.

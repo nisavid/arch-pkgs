@@ -1,5 +1,5 @@
 pkgname=python-posthog
-pkgver=7.15.3
+pkgver=7.16.2
 pkgrel=1
 pkgdesc="Integrate PostHog into Python applications"
 arch=('any')
@@ -7,8 +7,8 @@ url="https://pypi.org/project/posthog/"
 license=('MIT')
 depends=('python' 'python-backoff' 'python-distro' 'python-requests' 'python-typing_extensions')
 makedepends=('python-build' 'python-installer' 'python-setuptools' 'python-wheel')
-source=("https://files.pythonhosted.org/packages/c5/ad/0eedae8cc9d2878d5b52c8607bd21f76101cfe4d875e5ff77fec9da3a83c/posthog-${pkgver}.tar.gz")
-sha256sums=('809dcaf08ca2d8bc0ea8228c28419181b74a79dfd1c0687a3d459a7bbe2e2953')
+source=("https://files.pythonhosted.org/packages/3e/f5/47118915e8ab01c141f7fbc4a882646de7fe2fb30d446f7c666dbbcf0847/posthog-${pkgver}.tar.gz")
+sha256sums=('6411aaa3defa31fee43441b4d3284f2cda38652b0221a17b586769c29c913dac')
 
 build() {
   cd "posthog-${pkgver}"

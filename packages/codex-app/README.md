@@ -41,11 +41,13 @@ The ingestion policy is:
    a `codex-app-*.pkg.tar.zst` or `codex-app-*.pkg.tar.xz` package modified in
    the past 24 hours, ingest the newest matching file by filesystem mtime.
 2. If `upstream/codex-app-linux` is present but has no package built in
-   the past 24 hours, run `make pacman` in `upstream/codex-app-linux`, then
-   ingest the newest matching package in `dist/` by filesystem mtime.
+   the past 24 hours, run `make build-app pacman` in
+   `upstream/codex-app-linux`, then ingest the newest matching package in
+   `dist/` by filesystem mtime.
 3. If `upstream/codex-app-linux` is absent, clone
    [nisavid/codex-app-linux](https://github.com/nisavid/codex-app-linux) there,
-   run `make pacman`, then ingest the newest matching package in `dist/`.
+   run `make build-app pacman`, then ingest the newest matching package in
+   `dist/`.
 
 For this workspace, `upstream/codex-app-linux` may be a local symlink to a
 checkout of [nisavid/codex-app-linux](https://github.com/nisavid/codex-app-linux).

@@ -13,7 +13,7 @@ upstream_url=https://github.com/nisavid/codex-app-linux.git
 max_age_hours=24
 cloned_source=0
 dry_run=0
-build_command=(make pacman)
+build_command=(make build-app pacman)
 
 usage() {
   cat <<EOF
@@ -23,7 +23,7 @@ Ingest the codex-app pacman package built by codex-app-linux.
 
 Policy:
   - Use a codex-app package from source-dir/dist if it is newer than 24 hours.
-  - Otherwise run 'make pacman' in source-dir, then ingest the newest package.
+  - Otherwise run 'make build-app pacman' in source-dir, then ingest the newest package.
   - If source-dir is missing, clone ${upstream_url} first.
 
 Options:
