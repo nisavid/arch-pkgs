@@ -41,8 +41,11 @@ If you want one package quickly, build and install it from its package directory
 ```
 
 `codex-app` is different from the normal `PKGBUILD` packages: this repo ingests
-the pacman package produced by the maintained `codex-app-linux` checkout. To
-refresh and stage the latest Codex desktop app package:
+the pacman package produced by the maintained `codex-app-linux` source repo. The
+ingest helper uses `upstream/codex-app-linux` by default, clones that checkout
+when it is missing, and accepts `CODEX_APP_LINUX_DIR` when you want to point at
+another local checkout. To refresh and stage the latest Codex desktop app
+package:
 
 ```bash
 tools/ingest_codex_app.zsh
