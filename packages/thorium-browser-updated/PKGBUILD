@@ -256,8 +256,12 @@ import re
 
 root = Path.cwd()
 update_py = (root / "tools/clang/scripts/update.py").read_text()
-revision = re.search(r"CLANG_REVISION = '([^']+)'", update_py).group(1)
-subrevision = re.search(r"CLANG_SUB_REVISION = ([0-9]+)", update_py).group(1)
+revision_match = re.search(r"CLANG_REVISION = '([^']+)'", update_py)
+subrevision_match = re.search(r"CLANG_SUB_REVISION = ([0-9]+)", update_py)
+if not revision_match or not subrevision_match:
+    raise SystemExit("Unable to parse Chromium clang revision metadata")
+revision = revision_match.group(1)
+subrevision = subrevision_match.group(1)
 (root / "third_party/llvm-build/Release+Asserts/cr_build_revision").write_text(
     f"{revision}-{subrevision}\n"
 )
@@ -297,6 +301,10 @@ build() {
     return 1
   fi
 
+  [[ -f out/thorium/chrome_sandbox.stripped ]] || {
+    echo "Missing stripped sandbox binary." >&2
+    return 1
+  }
   ln -f out/thorium/chrome_sandbox.stripped out/thorium/thorium_sandbox.stripped
   patchelf --remove-rpath out/thorium/thorium.stripped 2>/dev/null || true
   patchelf --remove-rpath out/thorium/chrome_management_service.stripped 2>/dev/null || true
@@ -319,11 +327,13 @@ build() {
 
 package() {
   local rpm
-  rpm="$srcdir/chromium/src/out/thorium/thorium-browser_${pkgver}_AVX.rpm"
-  [[ -f "$rpm" ]] || {
-    echo "Unable to find built Thorium RPM" >&2
+  local -a rpms
+  mapfile -t rpms < <(compgen -G "$srcdir/chromium/src/out/thorium/thorium-browser_${pkgver}_*.rpm")
+  (( ${#rpms[@]} == 1 )) || {
+    echo "Expected exactly one built Thorium RPM for ${pkgver}; found ${#rpms[@]}." >&2
     return 1
   }
+  rpm="${rpms[0]}"
 
   cd "$srcdir"
   rpm2cpio "$rpm" | bsdtar -xf -
