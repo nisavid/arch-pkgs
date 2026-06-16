@@ -266,6 +266,13 @@ subrevision = subrevision_match.group(1)
     f"{revision}-{subrevision}\n"
 )
 PY
+  # The official Chromium source tarball carries the pinned Chromium LLVM
+  # payload. Keep that bundled toolchain path explicit so updates fail before
+  # GN generation if the source archive shape changes.
+  [[ -x third_party/llvm-build/Release+Asserts/bin/clang ]] || {
+    echo "Missing bundled Chromium clang toolchain from the source tarball." >&2
+    return 1
+  }
   local gn_args
   gn_args="$(
     sed \
