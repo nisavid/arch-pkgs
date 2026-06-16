@@ -83,6 +83,6 @@ pkgbase = thorium-browser-updated
 	source = chromium-149.0.7827.114.tar.xz::https://commondatastorage.googleapis.com/chromium-browser-official/chromium-149.0.7827.114.tar.xz
 	sha256sums = SKIP
 	sha256sums = SKIP
-	sha256sums = SKIP
+	sha256sums = abad81ea3e1367b024d58d29b6ffd51643d30e13436cd1b95875e318756e3878
 
 pkgname = thorium-browser-updated
