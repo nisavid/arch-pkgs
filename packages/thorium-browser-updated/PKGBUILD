@@ -87,7 +87,11 @@ source=(
   "depot_tools::git+https://chromium.googlesource.com/chromium/tools/depot_tools.git"
   "chromium-$pkgver.tar.xz::https://commondatastorage.googleapis.com/chromium-browser-official/chromium-$pkgver.tar.xz"
 )
-sha256sums=('SKIP' 'SKIP' 'SKIP')
+sha256sums=(
+  'SKIP'
+  'SKIP'
+  'abad81ea3e1367b024d58d29b6ffd51643d30e13436cd1b95875e318756e3878'
+)
 
 _jobs=6
 
@@ -361,9 +365,10 @@ fi
 
 flags=()
 for line in "${lines[@]}"; do
-  if [[ ! "${line}" =~ ^[[:space:]]*#.* ]] && [[ -n "${line}" ]]; then
-    flags+=("${line}")
+  if [[ "${line}" =~ ^[[:space:]]*# ]] || [[ ! "${line}" =~ [^[:space:]] ]]; then
+    continue
   fi
+  flags+=("${line}")
 done
 
 exec /opt/thorium-browser/thorium-browser "${flags[@]}" "$@"
