@@ -1,0 +1,387 @@
+# Maintainer: Braulio Oliveira <brauliobo@gmail.com>
+
+pkgname=thorium-browser-updated
+pkgver=149.0.7827.114
+pkgrel=4
+pkgdesc="Chromium fork focused on high performance and security, built from source"
+arch=('x86_64')
+url="https://github.com/brauliobo/thorium"
+license=('BSD-3-Clause')
+depends=(
+  'alsa-lib'
+  'at-spi2-core'
+  'cairo'
+  'dbus'
+  'desktop-file-utils'
+  'expat'
+  'glib2'
+  'glibc'
+  'gtk3'
+  'hicolor-icon-theme'
+  'libcups'
+  'libffi'
+  'libgcc'
+  'libgcrypt'
+  'libnotify'
+  'libpulse'
+  'libstdc++'
+  'libva'
+  'libx11'
+  'libxcb'
+  'libxcomposite'
+  'libxdamage'
+  'libxext'
+  'libxfixes'
+  'libxkbcommon'
+  'libxrandr'
+  'libxss'
+  'mesa'
+  'nspr'
+  'nss'
+  'pango'
+  'pciutils'
+  'systemd'
+  'systemd-libs'
+  'ttf-liberation'
+  'xdg-utils'
+  'zlib'
+)
+makedepends=(
+  'ccache'
+  'clang'
+  'compiler-rt'
+  'git'
+  'gn'
+  'gperf'
+  'java-runtime-headless'
+  'lld'
+  'ninja'
+  'nodejs'
+  'npm'
+  'patchelf'
+  'pipewire'
+  'python'
+  'python-httplib2'
+  'python-pyparsing'
+  'python-six'
+  'qt6-base'
+  'rpm-tools'
+  'rsync'
+  'rust'
+  'rust-bindgen'
+)
+optdepends=(
+  'pipewire: WebRTC desktop sharing under Wayland'
+  'kdialog: support for native dialogs in Plasma'
+  'gtk4: for --gtk-version=4'
+  'qt6-base: Qt support'
+  'org.freedesktop.secrets: password storage backend on GNOME, KDE and Xfce'
+  'upower: Battery Status API support'
+)
+provides=('thorium-browser')
+conflicts=('thorium-browser' 'thorium-browser-bin' 'thorium-browser-updated-bin')
+options=('!lto' '!strip' '!debug')
+install="${pkgname}.install"
+source=(
+  "thorium::git+https://github.com/brauliobo/thorium.git#tag=M149.0.7827.114-updated"
+  "depot_tools::git+https://chromium.googlesource.com/chromium/tools/depot_tools.git"
+  "chromium-$pkgver.tar.xz::https://commondatastorage.googleapis.com/chromium-browser-official/chromium-$pkgver.tar.xz"
+)
+sha256sums=('SKIP' 'SKIP' 'SKIP')
+
+_jobs=6
+
+prepare() {
+  export CR_DIR="$srcdir/chromium/src"
+  export HOME="$srcdir/home"
+  export PATH="$srcdir/depot_tools:$PATH"
+  export DEPOT_TOOLS_UPDATE=0
+  local cr_root="$srcdir/chromium"
+  local chromium_archive_dir="$srcdir/chromium-$pkgver"
+
+  mkdir -p "$HOME"
+  ln -sfn "$srcdir/depot_tools" "$HOME/depot_tools"
+  sed -i \
+    -e 's@git -C "${patch_dir}" apply --check "${patch_file}"@git -C "${patch_dir}" apply --check --recount "${patch_file}"@' \
+    -e 's@git -C "${patch_dir}" apply --reject "${patch_file}"@git -C "${patch_dir}" apply --reject --recount "${patch_file}"@' \
+    -e 's@git -C "${patch_dir}" apply --check --reverse "${patch_file}"@git -C "${patch_dir}" apply --check --reverse --recount "${patch_file}"@' \
+    -e 's@cp -r -v src/google_apis ${CR_SRC_DIR}/ &&@copy_optional_overlay src/google_apis \&\&@' \
+    -e 's@cp -r -v src/services ${CR_SRC_DIR}/ &&@copy_optional_overlay src/services \&\&@' \
+    "$srcdir/thorium/setup.sh"
+  sed -i '/^@@ -225,7 +228,7 @@/,$d' "$srcdir/thorium/other/keyboard_shortcuts.patch"
+  sed -i '/^diff --git a\/ui\/webui\/resources\/BUILD\.gn/,$d' "$srcdir/thorium/other/thorium_webui.patch"
+  sed -i '/build\/config\/nacl\/config\.gni/d' "$srcdir/thorium/src/sandbox/linux/BUILD.gn"
+  if [[ ! -d "$CR_DIR" ]]; then
+    mkdir -p "$cr_root"
+    mv "$chromium_archive_dir" "$CR_DIR"
+  fi
+
+  [[ -f "$CR_DIR/DEPS" ]] || {
+    echo "Chromium source tarball did not extract to the expected location." >&2
+    return 1
+  }
+  if [[ ! -d "$CR_DIR/.git" ]]; then
+    git -C "$CR_DIR" init
+    git -C "$CR_DIR" config user.name "makepkg"
+    git -C "$CR_DIR" config user.email "makepkg@localhost"
+    git -C "$CR_DIR" remote add origin https://chromium.googlesource.com/chromium/src.git
+    git -C "$CR_DIR" -c commit.gpgsign=false commit --allow-empty -m "Chromium $pkgver source tarball"
+  fi
+  mkdir -p "$cr_root"
+  cat > "$cr_root/.gclient" <<'EOF'
+solutions = [
+  {
+    "name": "src",
+    "url": "https://chromium.googlesource.com/chromium/src.git",
+    "managed": False,
+    "custom_deps": {},
+    "custom_vars": {
+      "checkout_pgo_profiles": False,
+    },
+  },
+]
+
+target_os = [ "linux" ]
+target_cpu = [ "x64" ]
+EOF
+
+  cd "$CR_DIR"
+  "$srcdir/depot_tools/ensure_bootstrap"
+  build/linux/sysroot_scripts/install-sysroot.py --arch=amd64
+  python3 v8/tools/builtins-pgo/download_profiles.py --depot-tools="$HOME/depot_tools" --force download
+
+  cd "$srcdir/thorium"
+  ./setup.sh
+
+  cd "$CR_DIR"
+  python3 - <<'PY'
+from pathlib import Path
+
+path = Path("chrome/installer/linux/common/installer.include")
+text = path.read_text()
+old = """  if [ -r "${OUTPUTDIR}/chrome_100_percent.pak" ]; then
+    install -m 644 "${OUTPUTDIR}/chrome_100_percent.pak" "${STAGEDIR}/${INSTALLDIR}/"
+    install -m 644 "${OUTPUTDIR}/chrome_200_percent.pak" "${STAGEDIR}/${INSTALLDIR}/"
+    install -m 644 "${OUTPUTDIR}/content_shell.pak" "${STAGEDIR}/${INSTALLDIR}/"
+    install -m 644 "${OUTPUTDIR}/shell_resources.pak" "${STAGEDIR}/${INSTALLDIR}/"
+    install -m 644 "${OUTPUTDIR}/ui_resources_100_percent.pak" "${STAGEDIR}/${INSTALLDIR}/"
+    install -m 644 "${OUTPUTDIR}/resources/inspector_overlay/inspector_overlay_resources.grd" "${STAGEDIR}/${INSTALLDIR}/resources/inspector_overlay/"
+    install -m 644 "${OUTPUTDIR}/resources/inspector_overlay/main.js" "${STAGEDIR}/${INSTALLDIR}/resources/inspector_overlay/"
+    install -m 755 "${OUTPUTDIR}/thorium_shell" "${STAGEDIR}/${INSTALLDIR}/"
+    install -m ${SHLIB_PERMS} "${OUTPUTDIR}/libffmpeg.so" "${STAGEDIR}/${INSTALLDIR}/"
+    install -m ${SHLIB_PERMS} "${OUTPUTDIR}/libffmpeg.so" "${STAGEDIR}/${INSTALLDIR}/lib"
+    # install -m ${SHLIB_PERMS} "${OUTPUTDIR}/libblink_test_plugin.so" "${STAGEDIR}/${INSTALLDIR}/lib"
+    install -m ${SHLIB_PERMS} "${OUTPUTDIR}/ClearKeyCdm/_platform_specific/linux_x64/libclearkeycdm.so" "${STAGEDIR}/${INSTALLDIR}/lib"
+    install -m 644 "${OUTPUTDIR}/thorium_shell.png" "${STAGEDIR}/${INSTALLDIR}/"
+    install -m 644 "${OUTPUTDIR}/thorium.svg" "${STAGEDIR}/${INSTALLDIR}/"
+    # install -m 644 "${OUTPUTDIR}/thor_ver" "${STAGEDIR}/${INSTALLDIR}/"
+    install -m 644 "${OUTPUTDIR}/thorium-shell.desktop" "${STAGEDIR}/usr/share/applications/"
+    install -m 755 "${OUTPUTDIR}/thorium-shell" "${STAGEDIR}/usr/bin/"
+    install -m 755 "${OUTPUTDIR}/chromedriver" "${STAGEDIR}/${INSTALLDIR}/"
+    install -m 755 "${OUTPUTDIR}/pak" "${STAGEDIR}/usr/bin/"
+    install -m 644 "${OUTPUTDIR}/initial_preferences" "${STAGEDIR}/${INSTALLDIR}/"
+  else
+    install -m 644 "${OUTPUTDIR}/theme_resources_100_percent.pak" "${STAGEDIR}/${INSTALLDIR}/"
+    install -m 644 "${OUTPUTDIR}/ui_resources_100_percent.pak" "${STAGEDIR}/${INSTALLDIR}/"
+  fi
+"""
+new = """  for pak in \\
+    chrome_100_percent.pak \\
+    chrome_200_percent.pak \\
+    content_shell.pak \\
+    shell_resources.pak \\
+    theme_resources_100_percent.pak \\
+    ui_resources_100_percent.pak; do
+    if [ -r "${OUTPUTDIR}/${pak}" ]; then
+      install -m 644 "${OUTPUTDIR}/${pak}" "${STAGEDIR}/${INSTALLDIR}/"
+    fi
+  done
+  if [ -r "${OUTPUTDIR}/resources/inspector_overlay/inspector_overlay_resources.grd" ]; then
+    install -m 644 "${OUTPUTDIR}/resources/inspector_overlay/inspector_overlay_resources.grd" "${STAGEDIR}/${INSTALLDIR}/resources/inspector_overlay/"
+  fi
+  if [ -r "${OUTPUTDIR}/resources/inspector_overlay/main.js" ]; then
+    install -m 644 "${OUTPUTDIR}/resources/inspector_overlay/main.js" "${STAGEDIR}/${INSTALLDIR}/resources/inspector_overlay/"
+  fi
+  if [ -x "${OUTPUTDIR}/thorium_shell" ]; then
+    install -m 755 "${OUTPUTDIR}/thorium_shell" "${STAGEDIR}/${INSTALLDIR}/"
+  fi
+  install -m ${SHLIB_PERMS} "${OUTPUTDIR}/libffmpeg.so" "${STAGEDIR}/${INSTALLDIR}/"
+  install -m ${SHLIB_PERMS} "${OUTPUTDIR}/libffmpeg.so" "${STAGEDIR}/${INSTALLDIR}/lib"
+  # install -m ${SHLIB_PERMS} "${OUTPUTDIR}/libblink_test_plugin.so" "${STAGEDIR}/${INSTALLDIR}/lib"
+  install -m ${SHLIB_PERMS} "${OUTPUTDIR}/ClearKeyCdm/_platform_specific/linux_x64/libclearkeycdm.so" "${STAGEDIR}/${INSTALLDIR}/lib"
+  if [ -r "${OUTPUTDIR}/thorium_shell.png" ]; then
+    install -m 644 "${OUTPUTDIR}/thorium_shell.png" "${STAGEDIR}/${INSTALLDIR}/"
+  fi
+  install -m 644 "${OUTPUTDIR}/thorium.svg" "${STAGEDIR}/${INSTALLDIR}/"
+  # install -m 644 "${OUTPUTDIR}/thor_ver" "${STAGEDIR}/${INSTALLDIR}/"
+  if [ -r "${OUTPUTDIR}/thorium-shell.desktop" ]; then
+    install -m 644 "${OUTPUTDIR}/thorium-shell.desktop" "${STAGEDIR}/usr/share/applications/"
+  fi
+  if [ -x "${OUTPUTDIR}/thorium-shell" ]; then
+    install -m 755 "${OUTPUTDIR}/thorium-shell" "${STAGEDIR}/usr/bin/"
+  fi
+  install -m 755 "${OUTPUTDIR}/chromedriver" "${STAGEDIR}/${INSTALLDIR}/"
+  install -m 755 "${OUTPUTDIR}/pak" "${STAGEDIR}/usr/bin/"
+  install -m 644 "${OUTPUTDIR}/initial_preferences" "${STAGEDIR}/${INSTALLDIR}/"
+"""
+if old in text:
+    path.write_text(text.replace(old, new))
+elif new not in text:
+    raise SystemExit("Unable to patch installer.include resource staging block")
+
+path = Path("chrome/installer/linux/rpm/thorium.spec.template")
+text = path.read_text()
+text = text.replace("/usr/bin/thorium-shell\n", "")
+text = text.replace("/usr/share/applications/thorium-shell.desktop\n", "")
+path.write_text(text)
+PY
+  grep -q 'system_loopback_as_aec_reference_supported' media/media_options.gni ||
+    cat >> media/media_options.gni <<'EOF'
+
+declare_args() {
+  system_loopback_as_aec_reference_supported = false
+}
+EOF
+  grep -q 'enable_passthrough_audio_codecs' media/media_options.gni ||
+    sed -i '/system_loopback_as_aec_reference_supported/a\  enable_passthrough_audio_codecs = false' media/media_options.gni
+  grep -q 'media_use_symphonia' media/media_options.gni ||
+    sed -i '/system_loopback_as_aec_reference_supported/a\  media_use_symphonia = false' media/media_options.gni
+  python3 - <<'PY'
+from pathlib import Path
+import re
+
+root = Path.cwd()
+update_py = (root / "tools/clang/scripts/update.py").read_text()
+revision = re.search(r"CLANG_REVISION = '([^']+)'", update_py).group(1)
+subrevision = re.search(r"CLANG_SUB_REVISION = ([0-9]+)", update_py).group(1)
+(root / "third_party/llvm-build/Release+Asserts/cr_build_revision").write_text(
+    f"{revision}-{subrevision}\n"
+)
+PY
+  local gn_args
+  gn_args="$(
+    sed \
+      -e 's@^chrome_pgo_phase = .*@chrome_pgo_phase = 0@' \
+      -e 's@^pgo_data_path = .*@pgo_data_path = ""@' \
+      "$srcdir/thorium/args.gn"
+  )"
+  gn_args+=$'\ncc_wrapper = "ccache"'
+  gn gen out/thorium --args="$gn_args"
+}
+
+build() {
+  export CR_DIR="$srcdir/chromium/src"
+  export HOME="$srcdir/home"
+  export PATH="$srcdir/depot_tools:$PATH"
+  export DEPOT_TOOLS_UPDATE=0
+  export NINJA_SUMMARIZE_BUILD=1
+  export NINJA_STATUS="[%r processes, %f/%t @ %o/s | %e sec. ] "
+
+  cd "$CR_DIR"
+  nice -n 10 ionice -c2 -n7 autoninja -C out/thorium \
+    clear_key_cdm \
+    chromedriver \
+    chrome/installer/linux:strip_chrome_binary \
+    chrome/installer/linux:strip_chrome_sandbox \
+    chrome/installer/linux:strip_chrome_management_service \
+    -j"$_jobs"
+
+  if [[ -f out/thorium/chrome.stripped ]]; then
+    ln -f out/thorium/chrome.stripped out/thorium/thorium.stripped
+  elif [[ ! -f out/thorium/thorium.stripped ]]; then
+    echo "Missing stripped browser binary." >&2
+    return 1
+  fi
+
+  ln -f out/thorium/chrome_sandbox.stripped out/thorium/thorium_sandbox.stripped
+  patchelf --remove-rpath out/thorium/thorium.stripped 2>/dev/null || true
+  patchelf --remove-rpath out/thorium/chrome_management_service.stripped 2>/dev/null || true
+
+  cp -f "$srcdir/thorium/thorium_shell/thorium.svg" out/thorium/thorium.svg
+  cp -f "$srcdir/thorium/pak_src/binaries/pak" out/thorium/pak
+  cp -f "$srcdir/thorium/infra/initial_preferences" out/thorium/initial_preferences
+  chmod 755 out/thorium/pak
+
+  if [[ ! -x buildtools/third_party/eu-strip/bin/eu-strip ]] &&
+     command -v eu-strip >/dev/null; then
+    mkdir -p buildtools/third_party/eu-strip/bin
+    ln -sf "$(command -v eu-strip)" buildtools/third_party/eu-strip/bin/eu-strip
+  fi
+
+  nice -n 10 ionice -c2 -n7 autoninja -C out/thorium \
+    chrome/installer/linux:stable_rpm \
+    -j"$_jobs"
+}
+
+package() {
+  local rpm
+  rpm="$srcdir/chromium/src/out/thorium/thorium-browser_${pkgver}_AVX.rpm"
+  [[ -f "$rpm" ]] || {
+    echo "Unable to find built Thorium RPM" >&2
+    return 1
+  }
+
+  cd "$srcdir"
+  rpm2cpio "$rpm" | bsdtar -xf -
+
+  install -dm755 "$pkgdir/opt"
+  mv opt/chromium.org/thorium "$pkgdir/opt/thorium-browser"
+  cp -a usr "$pkgdir/"
+  cp -a etc "$pkgdir/" 2>/dev/null || true
+
+  rm -rf \
+    "$pkgdir/etc/cron.daily" \
+    "$pkgdir/opt/thorium-browser/cron" \
+    "$pkgdir/usr/share/doc" \
+    "$pkgdir/usr/share/menu"
+
+  rm -f \
+    "$pkgdir/opt/thorium-browser/thorium_shell" \
+    "$pkgdir/opt/thorium-browser/thorium_shell.png" \
+    "$pkgdir/usr/bin/thorium-browser" \
+    "$pkgdir/usr/bin/thorium-browser-stable" \
+    "$pkgdir/usr/bin/thorium-shell" \
+    "$pkgdir/usr/bin/pak" \
+    "$pkgdir/usr/share/applications/thorium-shell.desktop" \
+    "$pkgdir/usr/share/icons/hicolor/256x256/apps/thorium-shell.png" \
+    "$pkgdir/usr/share/man/man1/thorium-browser-stable.1" \
+    "$pkgdir/usr/share/man/man1/thorium-browser-stable.1.gz"
+
+  install -Dm755 /dev/stdin "$pkgdir/usr/bin/thorium-browser" <<'END'
+#!/usr/bin/env bash
+set -euo pipefail
+
+name=thorium
+flags_file="${XDG_CONFIG_HOME:-$HOME/.config}/${name}-flags.conf"
+
+lines=()
+if [[ -f "${flags_file}" ]]; then
+  mapfile -t lines < "${flags_file}"
+fi
+
+flags=()
+for line in "${lines[@]}"; do
+  if [[ ! "${line}" =~ ^[[:space:]]*#.* ]] && [[ -n "${line}" ]]; then
+    flags+=("${line}")
+  fi
+done
+
+exec /opt/thorium-browser/thorium-browser "${flags[@]}" "$@"
+END
+
+  find "$pkgdir/usr/share/applications" -name '*.desktop' -type f -exec \
+    sed -i 's@/usr/bin/thorium-browser-stable@/usr/bin/thorium-browser@g' {} +
+
+  if [[ -f "$pkgdir/usr/share/gnome-control-center/default-apps/thorium-browser.xml" ]]; then
+    sed -E -i 's@/opt/chromium.org/thorium/@/opt/thorium-browser/@g' \
+      "$pkgdir/usr/share/gnome-control-center/default-apps/thorium-browser.xml"
+  fi
+
+  chmod 4755 "$pkgdir/opt/thorium-browser/chrome-sandbox"
+
+  if [[ -f "$pkgdir/opt/thorium-browser/product_logo_256.png" ]]; then
+    install -Dm644 "$pkgdir/opt/thorium-browser/product_logo_256.png" \
+      "$pkgdir/usr/share/icons/hicolor/256x256/apps/thorium-browser.png"
+  fi
+  find "$pkgdir" -type d -exec chmod 755 {} +
+}
