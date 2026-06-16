@@ -382,7 +382,7 @@ if desktop.exists():
         if line == "[Desktop Action content-shell]":
             skip_section = True
             continue
-        if skip_section and line.startswith("[Desktop Action "):
+        if skip_section and line.startswith("["):
             skip_section = False
         if skip_section:
             continue
