@@ -361,6 +361,32 @@ package() {
     "$pkgdir/usr/share/man/man1/thorium-browser-stable.1" \
     "$pkgdir/usr/share/man/man1/thorium-browser-stable.1.gz"
 
+  PKGDIR="$pkgdir" python - <<'PY'
+import os
+from pathlib import Path
+
+desktop = Path(os.environ["PKGDIR"]) / "usr/share/applications/thorium-browser.desktop"
+if desktop.exists():
+    lines = desktop.read_text(encoding="utf-8").splitlines()
+    filtered = []
+    skip_section = False
+
+    for line in lines:
+        if line == "[Desktop Action content-shell]":
+            skip_section = True
+            continue
+        if skip_section and line.startswith("[Desktop Action "):
+            skip_section = False
+        if skip_section:
+            continue
+        if line.startswith("Actions="):
+            actions = [action for action in line.removeprefix("Actions=").split(";") if action]
+            line = "Actions=" + ";".join(action for action in actions if action != "content-shell") + ";"
+        filtered.append(line)
+
+    desktop.write_text("\n".join(filtered) + "\n", encoding="utf-8")
+PY
+
   install -Dm755 /dev/stdin "$pkgdir/usr/bin/thorium-browser" <<'END'
 #!/usr/bin/env bash
 set -euo pipefail
