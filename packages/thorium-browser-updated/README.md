@@ -20,14 +20,19 @@ Chromium tarball and Thorium release tag recipe.
   release notes, and Chromium source release/build notes
 - `divergence_notes`:
   - This package tracks the fixed local AUR working recipe for
-    `149.0.7827.114-4`.
+    `149.0.7827.155-4`.
   - This package uses the reachable Thorium tag
-    `M149.0.7827.114-updated`.
+    `M149.0.7827.155-updated`.
   - This package uses the official Chromium source tarball instead of a full
     Chromium git checkout.
   - This package keeps the build-time compatibility patches needed for the
     Thorium setup scripts, Chromium media defaults, GN args, and RPM staging
     assumptions.
+  - This package disables Chrome PGO and V8 builtins PGO for source-tarball
+    builds instead of requiring unavailable Chromium profile artifacts.
+  - The intermediate Thorium RPM build uses package-local RPM temp and database
+    paths and avoids ownership preservation so `makepkg` can run without
+    `/var` writes or host-specific ownership restoration.
 - `update_notes`:
   - Diff AUR `thorium-browser-updated` before changing the source, dependency,
     or install behavior.
@@ -38,13 +43,13 @@ Chromium tarball and Thorium release tag recipe.
 
 ## Verification
 
-Metadata-only verification for this ingest:
+Thorium updates require full package validation before merge:
 
 ```bash
-env -u 'BASH_FUNC_ml%%' -u 'BASH_FUNC_module%%' makepkg --printsrcinfo > .SRCINFO
-git ls-remote --tags https://github.com/brauliobo/thorium.git refs/tags/M149.0.7827.114-updated
-curl -L -I --fail --max-time 20 https://commondatastorage.googleapis.com/chromium-browser-official/chromium-149.0.7827.114.tar.xz
+makepkg --verifysource
+makepkg -f
+bsdtar -tf thorium-browser-updated-*.pkg.tar.*
 ```
 
-Full package validation requires `makepkg --verifysource`, `makepkg -f` or
-`makepkg -si`, and package payload inspection.
+After building, run a bounded browser smoke with the packaged
+`/usr/bin/thorium-browser` wrapper or the built `/opt/thorium-browser` payload.

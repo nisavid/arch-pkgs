@@ -17,7 +17,7 @@ checked against upstream releases on 2026-05-23.
 | [`qdrant`](qdrant/) | `qdrant` | 1.18.1-2 | Current | You need a local vector database with packaged service defaults. |
 | [`hayhooks`](hayhooks/) | `hayhooks` | 1.19.1-1 | Current | You want to serve Haystack pipelines over HTTP from a system-managed service. |
 | [`haystack-ai`](haystack-ai/) | `python-haystack-ai` | 2.29.0-1 | Current | You need the Haystack Python framework installed from pacman. |
-| [`thorium-browser-updated`](thorium-browser-updated/) | `thorium-browser-updated` | 149.0.7827.114-4 | Metadata-only ingest | You want Thorium Browser built from source using the fixed tarball/tag recipe. |
+| [`thorium-browser-updated`](thorium-browser-updated/) | `thorium-browser-updated` | 149.0.7827.155-4 | Current | You want Thorium Browser built from source using the fixed tarball/tag recipe. |
 | [`utilyze`](utilyze/) | `utilyze` | 0.1.1-2 | 0.1.3 available; focused patch-refresh lane | You want to inspect NVIDIA GPU utilization with the experimental Arch-patched TUI. |
 
 ## Supporting Python Packages
