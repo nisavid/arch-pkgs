@@ -7,20 +7,17 @@ notes.
 ## Inventory
 
 Package freshness is checked per maintenance task. The package catalog was last
-checked against upstream releases on 2026-06-17; see the
-[refresh report](../docs/maintainers/package-inventory-refresh-2026-06-17.md)
-for candidate dispositions.
+checked against upstream releases on 2026-06-17.
 
 | Directory | Package | Packaged version | Upstream status | Use it when |
 | --- | --- | --- | --- | --- |
 | [`codex-app`](codex-app/) | `codex-app` | Ingested artifact | Source repo policy-managed | You want the unofficial Linux build of OpenAI Codex's desktop app packaged for pacman. |
-| [`open-webui`](open-webui/) | `open-webui` | 0.9.5-1 | 0.9.6 available | You want Open WebUI managed by pacman and `systemd` with local-only service defaults. |
-| [`ctranslate2`](ctranslate2/) | `ctranslate2`, `python-ctranslate2` | 4.7.2-1 | 4.8.0 available | You need a generic CPU/OpenBLAS CTranslate2 provider for Python applications. |
-| [`qdrant`](qdrant/) | `qdrant` | 1.18.1-2 | 1.18.2 available | You need a local vector database with packaged service defaults. |
+| [`open-webui`](open-webui/) | `open-webui` | 0.9.6-1 | Current | You want Open WebUI managed by pacman and `systemd` with local-only service defaults. |
+| [`ctranslate2`](ctranslate2/) | `ctranslate2`, `python-ctranslate2` | 4.8.0-1 | Current | You need a generic CPU/OpenBLAS CTranslate2 provider for Python applications. |
+| [`qdrant`](qdrant/) | `qdrant` | 1.18.1-2 | 1.18.2 available; tracked build gate | You need a local vector database with packaged service defaults. |
 | [`hayhooks`](hayhooks/) | `hayhooks` | 1.20.0-1 | Current | You want to serve Haystack pipelines over HTTP from a system-managed service. |
 | [`haystack-ai`](haystack-ai/) | `python-haystack-ai` | 2.30.1-1 | Current | You need the Haystack Python framework installed from pacman. |
-| [`thorium-browser-updated`](thorium-browser-updated/) | `thorium-browser-updated` | 149.0.7827.114-4 | 149.0.7827.155 available; metadata-only ingest | You want Thorium Browser built from source using the fixed tarball/tag recipe. |
-| [`utilyze`](utilyze/) | `utilyze` | 0.1.1-2 | 0.1.3 available; focused patch-refresh lane | You want to inspect NVIDIA GPU utilization with the experimental Arch-patched TUI. |
+| [`thorium-browser-updated`](thorium-browser-updated/) | `thorium-browser-updated` | 149.0.7827.114-4 | 149.0.7827.155 available; split upgrade lane | You want Thorium Browser built from source using the fixed tarball/tag recipe. |
 
 ## Supporting Python Packages
 

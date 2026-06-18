@@ -1,7 +1,7 @@
 # Contributor: diplomat
 
 pkgname=open-webui
-pkgver=0.9.5
+pkgver=0.9.6
 pkgrel=1
 pkgdesc="Self-hosted AI web interface for Ollama and OpenAI-compatible APIs"
 arch=('x86_64')
@@ -52,7 +52,7 @@ source=(
   'open-webui.tmpfiles'
   'open-webui-wrapper'
 )
-sha256sums=('385975c2da333fede8827e3cae04ae154b2fb4d850fdc44470c9f6d25636ebfd'
+sha256sums=('62ee09360bf45c5c2ea5ba8bf9d43cdc85755edb0c293ab90f1a845111e0cabb'
             '59ab5b67f520771dc6a776b9a6139734a3068fdfcc555ddc09705d6a55ed683f'
             'df4913ae991576f627503f171b4f9b17c9bcc2c70e2862968dd56f267ea4f1a2'
             '7dcae39f3e0ff967a2febd4c048c9661219f34b2b37aac15ecaa7758bc92809c'

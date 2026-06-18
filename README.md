@@ -6,9 +6,8 @@ This repository collects packages that are useful enough to keep close, patched,
 and installable through a local pacman repository. It is not a public distro or a
 general AUR mirror. It is a small workspace for reproducible local packages:
 Codex desktop app packaging, vector storage, Haystack services, their Python
-dependencies, and an experimental GPU inspection tool.
-It also keeps a source-build Thorium Browser recipe when a local browser package
-needs the fixed tarball/tag build path.
+dependencies, and a source-build Thorium Browser recipe when a local browser
+package needs the fixed tarball/tag build path.
 
 ## What You Can Install
 
@@ -28,14 +27,6 @@ Start with the package family that matches what you want to install:
 - [`thorium-browser-updated`](packages/thorium-browser-updated/) packages
   Thorium Browser from source with the fixed Chromium tarball and Thorium tag
   recipe.
-- [`utilyze`](packages/utilyze/) is an experimental NVIDIA GPU utilization TUI
-  with Arch runtime, config, update, and telemetry-consent patches.
-
-> [!NOTE]
-> `utilyze` is packaged and partially verified, but it still needs runtime
-> validation on supported NVIDIA hardware. Read
-> [`packages/utilyze/README.Arch.md`](packages/utilyze/README.Arch.md) before
-> first use.
 
 ## Start Here
 
@@ -83,9 +74,6 @@ The full local-repo setup, including the pacman stanza, is in
 - **I want to run services.** Read the package docs for
   [`qdrant`](packages/qdrant/) and [`hayhooks`](packages/hayhooks/); their units
   install disabled and must be enabled explicitly.
-- **I want to try `utilyze`.** Read
-  [`packages/utilyze/README.Arch.md`](packages/utilyze/README.Arch.md), then
-  check the active validation work in [`docs/backlog.md`](docs/backlog.md).
 - **I am maintaining the repo.** Read `AGENTS.md` and the repo-local skills in
   `.agents/skills/`.
 
