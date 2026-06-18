@@ -1,6 +1,6 @@
 pkgbase = python-haystack-ai
 	pkgdesc = LLM framework for production-ready applications
-	pkgver = 2.29.0
+	pkgver = 2.30.1
 	pkgrel = 1
 	url = https://docs.haystack.deepset.ai/
 	arch = any
@@ -29,7 +29,7 @@ pkgbase = python-haystack-ai
 	depends = python-tenacity
 	depends = python-tqdm
 	depends = python-typing_extensions
-	source = https://files.pythonhosted.org/packages/c3/46/9365968c5edbdb7276ff507cd0dd8aac13d71da18a08a8567d23059082d9/haystack_ai-2.29.0.tar.gz
-	sha256sums = 0de2bbf79c218858c7c6f63b39a15606d65255d8c9fe558af7096e8aba25149b
+	source = https://files.pythonhosted.org/packages/e1/0b/7e7ff0bfcf483ec5c87887388ca654cb5b780e9e5b63f482804d5f7c8566/haystack_ai-2.30.1.tar.gz
+	sha256sums = 60b3d7add807559f6a00a1e518e7f09d3eb3754b3e60b1de31f6cefdf9d86307
 
 pkgname = python-haystack-ai

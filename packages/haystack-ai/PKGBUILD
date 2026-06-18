@@ -1,5 +1,5 @@
 pkgname=python-haystack-ai
-pkgver=2.29.0
+pkgver=2.30.1
 pkgrel=1
 pkgdesc="LLM framework for production-ready applications"
 arch=('any')
@@ -7,8 +7,8 @@ url="https://docs.haystack.deepset.ai/"
 license=('Apache-2.0')
 depends=('python' 'python-docstring-parser' 'python-filetype' 'python-haystack-experimental' 'python-httpx' 'python-jinja' 'python-jsonschema' 'python-lazy-imports' 'python-markupsafe' 'python-more-itertools' 'python-networkx' 'python-numpy' 'python-openai' 'python-posthog' 'python-pydantic' 'python-dateutil' 'python-yaml' 'python-tenacity' 'python-tqdm' 'python-typing_extensions')
 makedepends=('python-build' 'python-hatchling' 'python-installer' 'python-wheel')
-source=("https://files.pythonhosted.org/packages/c3/46/9365968c5edbdb7276ff507cd0dd8aac13d71da18a08a8567d23059082d9/haystack_ai-${pkgver}.tar.gz")
-sha256sums=('0de2bbf79c218858c7c6f63b39a15606d65255d8c9fe558af7096e8aba25149b')
+source=("https://files.pythonhosted.org/packages/e1/0b/7e7ff0bfcf483ec5c87887388ca654cb5b780e9e5b63f482804d5f7c8566/haystack_ai-${pkgver}.tar.gz")
+sha256sums=('60b3d7add807559f6a00a1e518e7f09d3eb3754b3e60b1de31f6cefdf9d86307')
 
 build() {
   cd "haystack_ai-${pkgver}"

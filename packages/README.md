@@ -7,17 +7,19 @@ notes.
 ## Inventory
 
 Package freshness is checked per maintenance task. The package catalog was last
-checked against upstream releases on 2026-05-23.
+checked against upstream releases on 2026-06-17; see the
+[refresh report](../docs/maintainers/package-inventory-refresh-2026-06-17.md)
+for candidate dispositions.
 
 | Directory | Package | Packaged version | Upstream status | Use it when |
 | --- | --- | --- | --- | --- |
 | [`codex-app`](codex-app/) | `codex-app` | Ingested artifact | Source repo policy-managed | You want the unofficial Linux build of OpenAI Codex's desktop app packaged for pacman. |
-| [`open-webui`](open-webui/) | `open-webui` | 0.9.5-1 | Current | You want Open WebUI managed by pacman and `systemd` with local-only service defaults. |
-| [`ctranslate2`](ctranslate2/) | `ctranslate2`, `python-ctranslate2` | 4.7.2-1 | Current | You need a generic CPU/OpenBLAS CTranslate2 provider for Python applications. |
-| [`qdrant`](qdrant/) | `qdrant` | 1.18.1-2 | Current | You need a local vector database with packaged service defaults. |
-| [`hayhooks`](hayhooks/) | `hayhooks` | 1.19.1-1 | Current | You want to serve Haystack pipelines over HTTP from a system-managed service. |
-| [`haystack-ai`](haystack-ai/) | `python-haystack-ai` | 2.29.0-1 | Current | You need the Haystack Python framework installed from pacman. |
-| [`thorium-browser-updated`](thorium-browser-updated/) | `thorium-browser-updated` | 149.0.7827.114-4 | Metadata-only ingest | You want Thorium Browser built from source using the fixed tarball/tag recipe. |
+| [`open-webui`](open-webui/) | `open-webui` | 0.9.5-1 | 0.9.6 available | You want Open WebUI managed by pacman and `systemd` with local-only service defaults. |
+| [`ctranslate2`](ctranslate2/) | `ctranslate2`, `python-ctranslate2` | 4.7.2-1 | 4.8.0 available | You need a generic CPU/OpenBLAS CTranslate2 provider for Python applications. |
+| [`qdrant`](qdrant/) | `qdrant` | 1.18.1-2 | 1.18.2 available | You need a local vector database with packaged service defaults. |
+| [`hayhooks`](hayhooks/) | `hayhooks` | 1.20.0-1 | Current | You want to serve Haystack pipelines over HTTP from a system-managed service. |
+| [`haystack-ai`](haystack-ai/) | `python-haystack-ai` | 2.30.1-1 | Current | You need the Haystack Python framework installed from pacman. |
+| [`thorium-browser-updated`](thorium-browser-updated/) | `thorium-browser-updated` | 149.0.7827.114-4 | 149.0.7827.155 available; metadata-only ingest | You want Thorium Browser built from source using the fixed tarball/tag recipe. |
 | [`utilyze`](utilyze/) | `utilyze` | 0.1.1-2 | 0.1.3 available; focused patch-refresh lane | You want to inspect NVIDIA GPU utilization with the experimental Arch-patched TUI. |
 
 ## Supporting Python Packages
@@ -32,10 +34,10 @@ available locally in the desired shape:
 | [`python-fastapi-openai-compat`](python-fastapi-openai-compat/) | `python-fastapi-openai-compat` | 1.2.0-1 | Current |
 | [`python-haystack-experimental`](python-haystack-experimental/) | `python-haystack-experimental` | 0.19.0-1 | Current |
 | [`python-lazy-imports`](python-lazy-imports/) | `python-lazy-imports` | 1.2.0-1 | Current |
-| [`python-posthog`](python-posthog/) | `python-posthog` | 7.15.3-1 | Current |
+| [`python-posthog`](python-posthog/) | `python-posthog` | 7.19.2-1 | Current |
 | [`python-faster-whisper`](python-faster-whisper/) | `python-faster-whisper` | 1.2.1-1 | Current |
 | [`python-rapidocr-onnxruntime`](python-rapidocr-onnxruntime/) | `python-rapidocr-onnxruntime` | 1.4.4-1 | Current |
-| [`python-sentence-transformers`](python-sentence-transformers/) | `python-sentence-transformers` | 5.5.1-1 | Current |
+| [`python-sentence-transformers`](python-sentence-transformers/) | `python-sentence-transformers` | 5.6.0-1 | Current |
 
 ## Build And Publish
 
