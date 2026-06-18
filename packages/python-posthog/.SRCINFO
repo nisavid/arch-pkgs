@@ -1,6 +1,6 @@
 pkgbase = python-posthog
 	pkgdesc = Integrate PostHog into Python applications
-	pkgver = 7.16.2
+	pkgver = 7.19.2
 	pkgrel = 1
 	url = https://pypi.org/project/posthog/
 	arch = any
@@ -14,7 +14,7 @@ pkgbase = python-posthog
 	depends = python-distro
 	depends = python-requests
 	depends = python-typing_extensions
-	source = https://files.pythonhosted.org/packages/3e/f5/47118915e8ab01c141f7fbc4a882646de7fe2fb30d446f7c666dbbcf0847/posthog-7.16.2.tar.gz
-	sha256sums = 6411aaa3defa31fee43441b4d3284f2cda38652b0221a17b586769c29c913dac
+	source = https://files.pythonhosted.org/packages/19/24/c4880740bb875c05da8cb4cb70fcb4d0e572748bae30347f73de97217851/posthog-7.19.2.tar.gz
+	sha256sums = c39d464b5b5930bf930329ba2593a778d44ecf8724f2c3b473209e3e68ef6cad
 
 pkgname = python-posthog
