@@ -36,7 +36,7 @@ depends=(
   'python-tokenizers'
   'python-transformers'
 )
-makedepends=('npm' 'nodejs-lts-jod' 'uv')
+makedepends=('npm' 'nodejs-lts-krypton' 'uv')
 optdepends=('ollama: local Ollama model runner'
             'tika-server: Apache Tika content extraction backend')
 conflicts=('open-webui-git' 'open-webui-no-venv')
