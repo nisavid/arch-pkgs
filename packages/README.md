@@ -1,17 +1,19 @@
 # Package Catalog
 
-Each directory under `packages/` is a self-contained Arch package. Open a package
-directory when you want its build recipe, service assets, patches, and local
-notes.
+Each directory under `packages/` is a self-contained Arch package lane. Normal
+lanes carry a `PKGBUILD`, `.SRCINFO`, service assets, patches, and local notes.
+The `chatgpt` lane is the explicit exception: it accepts an exact package
+artifact and provenance record, so it has no local `PKGBUILD` or `.SRCINFO`.
 
 ## Inventory
 
-Package freshness is checked per maintenance task. The package catalog was last
-checked against upstream releases on 2026-05-23.
+Package freshness is checked per maintenance task. The ChatGPT artifact lane
+was last reviewed on 2026-08-16; the remaining catalog was last swept on
+2026-05-23.
 
 | Directory | Package | Packaged version | Upstream status | Use it when |
 | --- | --- | --- | --- | --- |
-| [`codex-app`](codex-app/) | `codex-app` | Ingested artifact | Source repo policy-managed | You want the unofficial Linux build of OpenAI Codex's desktop app packaged for pacman. |
+| [`chatgpt`](chatgpt/) | `chatgpt` | 26.810.52044-1 | Accepted exact artifact from `fallback-baseline-2026-08-16` | You want the maintained ChatGPT for Linux fallback installed through pacman. |
 | [`open-webui`](open-webui/) | `open-webui` | 0.9.5-1 | Current | You want Open WebUI managed by pacman and `systemd` with local-only service defaults. |
 | [`ctranslate2`](ctranslate2/) | `ctranslate2`, `python-ctranslate2` | 4.7.2-1 | Current | You need a generic CPU/OpenBLAS CTranslate2 provider for Python applications. |
 | [`qdrant`](qdrant/) | `qdrant` | 1.18.1-2 | Current | You need a local vector database with packaged service defaults. |

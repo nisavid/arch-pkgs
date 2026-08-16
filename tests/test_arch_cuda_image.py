@@ -82,11 +82,24 @@ class ArchCudaImageTests(unittest.TestCase):
         self.assertIn("exit ${exit_status}", validate)
 
     def test_zsh_scripts_parse(self):
-        scripts = [
-            "tools/arch_cuda_image.zsh",
-            "containers/arch-cuda/entrypoint.zsh",
-            "containers/arch-cuda/validate.zsh",
-        ]
+        scripts = subprocess.run(
+            [
+                "git",
+                "ls-files",
+                "--cached",
+                "--others",
+                "--exclude-standard",
+                "*.zsh",
+            ],
+            cwd=REPO_ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=True,
+        ).stdout.splitlines()
+        scripts = sorted(
+            {script for script in scripts if (REPO_ROOT / script).is_file()}
+        )
         subprocess.run(
             ["zsh", "-n", *scripts],
             cwd=REPO_ROOT,

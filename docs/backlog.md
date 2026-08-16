@@ -161,14 +161,14 @@ Exit criteria:
 ### Adopt declarative package maintenance policies
 
 This repo has started to need package-specific maintenance policy beyond a
-plain `PKGBUILD` workflow. `codex-app` is the first concrete case: it is built
-by the maintained `codex-app-linux` source repo, and this repo should ingest a
-fresh package artifact when one exists instead of rebuilding it here.
+plain `PKGBUILD` workflow. `chatgpt` is the first concrete case: it is built by
+the maintained `chatgpt-linux` source repo, and this repo ingests an explicitly
+selected, provenance-bound package artifact instead of rebuilding it here.
 
 Adopt a generic, declarative maintenance-policy system derived from the
 [`arch-strix-halo-pkgs`](https://github.com/nisavid/arch-strix-halo-pkgs)
-approach, then express the `codex-app` ingestion policy as the first instance.
-The current `tools/ingest_codex_app.zsh` helper should be treated as a working
+approach, then express the `chatgpt` ingestion policy as the first instance.
+The current `tools/ingest_chatgpt.zsh` helper should be treated as a working
 bridge, not the final package-policy architecture.
 
 If this repo's fetch, freshness, or update-disposition workflows develop gaps,
@@ -186,15 +186,15 @@ Deliverables:
   owned by this repo.
 - A runner that can evaluate a package's policy and perform the declared
   action.
-- A `codex-app` policy that preserves the current rule: use a package built in
-  the past 24 hours when present; otherwise run `make build-app pacman` in
-  `upstream/codex-app-linux`, cloning the source repo first when needed.
+- A `chatgpt` policy that requires an explicit retained artifact, verification
+  record and digest, annotated source tag, package stream-manifest equality,
+  and transactional staging without cloning or rebuilding.
 - Maintainer docs that explain how to add another package with the same policy
   mechanism.
 
 Exit criteria:
 
-- `codex-app` no longer needs a one-off ingest script for its normal update
+- `chatgpt` no longer needs a one-off ingest script for its normal update
   path.
 - A maintainer can add a second package policy without designing new plumbing.
 - The policy runner reports clearly whether it reused a fresh artifact, built a
