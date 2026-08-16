@@ -5,7 +5,7 @@ like normal Arch packages during install, repair, and upgrade.
 
 The workflow has four parts:
 
-1. Build package archives with `makepkg`.
+1. Build package archives with `makepkg`, or verify an artifact-ingest lane.
 2. Refresh checkout-local repo metadata under `repo/x86_64/`.
 3. Publish that repo to a pacman-visible path.
 4. Install with `pacman` or an AUR helper.
@@ -52,6 +52,23 @@ names, and leaves unrelated packages alone.
 When publishing an application package with local dependencies, such as
 `hayhooks`, build and refresh the dependency package directories too.
 
+Artifact-ingest lanes have their own verifier. For the ChatGPT fallback, first
+seed staging from the complete currently published repository so unrelated
+packages remain present, then run the exact ingest command documented in
+[`packages/chatgpt/README.md`](../../packages/chatgpt/README.md):
+
+```bash
+rsync -a --delete /srv/pacman/nisavid/x86_64/ repo/x86_64/
+tools/ingest_chatgpt.zsh \
+  --artifact /path/to/chatgpt.pkg.tar.zst \
+  --verification-record /path/to/verification-record.json \
+  --record-sha256 RECORD_SHA256 \
+  --source-dir /path/to/chatgpt-linux
+```
+
+Never publish a partial staging directory: the publisher mirrors staging and
+removes destination files that are absent from it.
+
 ## Publish A Pacman-Visible Copy
 
 Create the published path once:
@@ -65,6 +82,13 @@ Then publish the current staging repo whenever it changes:
 ```bash
 tools/publish_pacman_repo.zsh
 ```
+
+The publisher locks the destination, hashes staging, copies it into a candidate
+directory, verifies the candidate, atomically exchanges it with the current
+destination, and compares the promoted destination with staging. It restores the
+old repository on any post-promotion verification failure and retains the old
+repository as a timestamped previous copy after success. Keep that copy until
+the installed package passes acceptance.
 
 ## Enable The Repo In Pacman
 

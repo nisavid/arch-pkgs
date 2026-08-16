@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 1,
+  "disposition": "accepted-current",
+  "reviewDate": "2026-08-16",
+  "source": {
+    "repository": "https://github.com/nisavid/chatgpt-linux",
+    "commit": "dd3d1397f544752ea1170af8393cd59379373f52",
+    "tag": "fallback-baseline-2026-08-16",
+    "tagObject": "4ca5cb05ee73dd78da7e719a0b376221d5f9fa0f",
+    "tagTarget": "dd3d1397f544752ea1170af8393cd59379373f52"
+  },
+  "package": {
+    "fileName": "chatgpt-26.810.52044-1-x86_64.pkg.tar.zst",
+    "name": "chatgpt",
+    "version": "26.810.52044-1",
+    "architecture": "x86_64",
+    "sizeBytes": 444280902,
+    "sha256": "678cb85152895eeed112428df110bd85b5b713fc26db03c12d9e2e120985340b",
+    "updaterIncluded": true,
+    "provides": [
+      "codex-app",
+      "codex-desktop"
+    ],
+    "conflicts": [
+      "codex-app",
+      "codex-desktop"
+    ],
+    "replaces": [
+      "codex-app",
+      "codex-desktop"
+    ]
+  },
+  "payloadManifest": {
+    "fileName": "payload-manifest.json",
+    "fileSha256": "aacc65bd3837f2d9eef5c21205a197292bad3b05a3d0e80b50f627a8b09736ef",
+    "manifestSha256": "a433754f9a5f79350bdef63d87a50e5f5c3ccccd7ae3ea6b1edae7dc83085a0d",
+    "entryCount": 21400
+  },
+  "verification": {
+    "recordSha256": "b7761927b93f4164cf34c40d5e789d16e8b2b2325a83a9a77565bdcdbd64e923",
+    "generationDecisionSha256": "677139ee5cea37099304a7001c25915c7d6abd7244240d150b49624cce37fce3",
+    "buildInfoSha256": "90aad8f486c884faad1c8269f92e37a37cae028c58186b1d3eb61be95673dfc2",
+    "acceptanceVerdict": "accepted_with_warnings",
+    "blockerCount": 0,
+    "inconclusiveReasonCount": 0,
+    "optionalWarningCount": 6
+  },
+  "hostedValidation": [
+    {
+      "name": "CI",
+      "runId": 31972793550,
+      "url": "https://github.com/nisavid/chatgpt-linux/actions/runs/31972793550",
+      "conclusion": "success"
+    },
+    {
+      "name": "Official DMG Build App scheduled",
+      "runId": 31973993376,
+      "url": "https://github.com/nisavid/chatgpt-linux/actions/runs/31973993376",
+      "conclusion": "success"
+    }
+  ]
+}

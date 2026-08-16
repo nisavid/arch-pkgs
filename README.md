@@ -5,7 +5,7 @@ Personal Arch Linux packages for a local AI application stack.
 This repository collects packages that are useful enough to keep close, patched,
 and installable through a local pacman repository. It is not a public distro or a
 general AUR mirror. It is a small workspace for reproducible local packages:
-Codex desktop app packaging, vector storage, Haystack services, their Python
+ChatGPT desktop app packaging, vector storage, Haystack services, their Python
 dependencies, and an experimental GPU inspection tool.
 It also keeps a source-build Thorium Browser recipe when a local browser package
 needs the fixed tarball/tag build path.
@@ -18,8 +18,8 @@ notes.
 
 Start with the package family that matches what you want to install:
 
-- [`codex-app`](packages/codex-app/) packages the unofficial Linux build of
-  OpenAI Codex's desktop app for pacman.
+- [`chatgpt`](packages/chatgpt/) ingests the exact verified native package from
+  the maintained ChatGPT for Linux source repository.
 - [`qdrant`](packages/qdrant/) and [`hayhooks`](packages/hayhooks/) provide the
   local service layer for vector storage and Haystack pipeline serving.
 - [`python-haystack-ai`](packages/haystack-ai/) and its companion Python
@@ -45,18 +45,26 @@ If you want one package quickly, build and install it from its package directory
 (cd packages/qdrant && makepkg --verifysource && makepkg -si)
 ```
 
-`codex-app` is different from the normal `PKGBUILD` packages: this repo ingests
-the pacman package produced by the maintained `codex-app-linux` source repo. The
-ingest helper uses `upstream/codex-app-linux` by default, clones that checkout
-when it is missing, and accepts `CODEX_APP_LINUX_DIR` when you want to point at
-another local checkout. To refresh and stage the latest Codex desktop app
-package:
+`chatgpt` is different from the normal `PKGBUILD` packages: this repo ingests an
+explicitly retained pacman package produced by the maintained
+[`chatgpt-linux`](https://github.com/nisavid/chatgpt-linux) source repository.
+The helper requires the exact artifact, verification record and digest, and the
+annotated source tag. It never selects by version or filesystem time and never
+rebuilds the package. See [`packages/chatgpt/`](packages/chatgpt/) for the
+accepted baseline and complete command.
+
+Before the first ingest in a fresh checkout, seed `repo/x86_64/` from the
+complete published repository as documented in
+[`docs/usage/local-repo.md`](docs/usage/local-repo.md#refresh-the-checkout-local-repo).
 
 ```bash
-tools/ingest_codex_app.zsh
+tools/ingest_chatgpt.zsh \
+  --artifact /path/to/chatgpt.pkg.tar.zst \
+  --verification-record /path/to/verification-record.json \
+  --record-sha256 RECORD_SHA256 \
+  --source-dir /path/to/chatgpt-linux
 tools/publish_pacman_repo.zsh
-sudo pacman -Sy
-sudo pacman -S codex-app
+sudo pacman -Syu chatgpt
 ```
 
 If you want the normal workflow, build a package, refresh the local repo staging
