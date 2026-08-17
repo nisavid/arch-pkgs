@@ -7,6 +7,12 @@ script_dir=${0:A:h}
 repo_root=${script_dir:h}
 repo_dir=${repo_root}/repo/x86_64
 repo_name=nisavid
+test_mode=${ARCH_PKGS_UPDATE_TEST_MODE:-0}
+test_signal_during_lock=${ARCH_PKGS_UPDATE_TEST_SIGNAL_DURING_LOCK_ACQUISITION:-0}
+[[ "$test_mode" == 0 || "$test_mode" == 1 ]] \
+  || { print -u2 -- "ARCH_PKGS_UPDATE_TEST_MODE must be 0 or 1"; exit 2; }
+[[ "$test_signal_during_lock" == 0 || "$test_signal_during_lock" == 1 ]] \
+  || { print -u2 -- "ARCH_PKGS_UPDATE_TEST_SIGNAL_DURING_LOCK_ACQUISITION must be 0 or 1"; exit 2; }
 
 usage() {
   cat <<EOF
@@ -62,6 +68,8 @@ done
   usage
   exit 2
 }
+(( ! test_mode )) || [[ "$repo_dir" == /tmp/* ]] \
+  || die "update test mode is restricted to repository directories under /tmp"
 
 typeset -a package_paths
 typeset -A targeted_names
@@ -134,8 +142,7 @@ signal_deferral=1
 if mkdir -- "$writer_lock" 2>/dev/null; then
   writer_lock_acquired=1
 fi
-if (( writer_lock_acquired )) \
-    && [[ ${ARCH_PKGS_UPDATE_TEST_SIGNAL_DURING_LOCK_ACQUISITION:-0} == 1 ]]; then
+if (( writer_lock_acquired && test_mode && test_signal_during_lock )); then
   kill -TERM $$
 fi
 (( writer_lock_acquired )) && writer_lock_owned=1

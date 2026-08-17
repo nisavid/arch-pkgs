@@ -424,10 +424,12 @@ class ChatGPTLinuxIngestTests(unittest.TestCase):
         real_repo_add = shutil.which("repo-add")
         self.assertIsNotNone(real_repo_add)
         fake_repo_add = fake_bin / "repo-add"
+        marker = self.root / "repo-add-invoked"
         fake_repo_add.write_text(
             "#!/usr/bin/python3\n"
             "import os\n"
             "import sys\n"
+            f"open({str(marker)!r}, 'a').close()\n"
             "if any(key.startswith('BASH_FUNC_') for key in os.environ):\n"
             "    raise SystemExit(88)\n"
             f"os.execv({real_repo_add!r}, [{real_repo_add!r}, *sys.argv[1:]])\n",
@@ -444,6 +446,7 @@ class ChatGPTLinuxIngestTests(unittest.TestCase):
         result = self._run_ingest(check=False, environment=environment)
 
         self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(marker.exists())
         self.assertTrue((self.repo / self.artifact.name).is_file())
 
     def test_repo_dir_must_not_be_a_regular_file(self):
@@ -526,6 +529,43 @@ class ChatGPTLinuxIngestTests(unittest.TestCase):
         self.assertFalse(Path(f"{self.repo}.writer.lock").exists())
         self.assertEqual(list(self.repo.iterdir()), [])
 
+    def test_ingest_interruption_hooks_reject_a_non_temporary_repository(self):
+        environment = os.environ.copy()
+        for key in list(environment):
+            if key.startswith("BASH_FUNC_"):
+                del environment[key]
+        environment["ARCH_PKGS_INGEST_TEST_SIGNAL_AFTER_BACKUP"] = "1"
+
+        result = subprocess.run(
+            [
+                "zsh",
+                str(self.ingest),
+                "--artifact",
+                str(self.artifact),
+                "--verification-record",
+                str(self.record),
+                "--record-sha256",
+                self.record_sha256,
+                "--source-dir",
+                str(self.source),
+                "--repo-dir",
+                "/var/lib/arch-pkgs-ingest-interruption-test",
+                "--repo-name",
+                "fixture",
+            ],
+            cwd=REPO_ROOT,
+            env=environment,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn(
+            "restricted to repository directories under /tmp", result.stderr
+        )
+
     def test_signal_during_update_lock_acquisition_cleans_the_owned_lock(self):
         package_dir = self.root / "update-package"
         package_dir.mkdir()
@@ -543,6 +583,7 @@ class ChatGPTLinuxIngestTests(unittest.TestCase):
             if key.startswith("BASH_FUNC_"):
                 del environment[key]
         environment["ARCH_PKGS_UPDATE_TEST_SIGNAL_DURING_LOCK_ACQUISITION"] = "1"
+        environment["ARCH_PKGS_UPDATE_TEST_MODE"] = "1"
 
         result = subprocess.run(
             [
@@ -1343,6 +1384,7 @@ class ChatGPTPackageContractTests(unittest.TestCase):
         self.assertTrue(os.access(PUBLISH, os.X_OK))
         self.assertTrue(os.access(UPDATE, os.X_OK))
 
+    @unittest.skipIf(MISSING_TOOLS, f"missing required tools: {MISSING_TOOLS}")
     def test_ingest_and_direct_update_share_one_repository_writer_lock(self):
         ingest_text = INGEST.read_text(encoding="utf-8")
         update_text = UPDATE.read_text(encoding="utf-8")
