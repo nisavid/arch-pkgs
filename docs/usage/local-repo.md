@@ -109,23 +109,36 @@ the installed package passes acceptance. The verification manifest covers each
 entry's content or symlink target together with its mode, UID, and GID.
 If the new repository is verified but retaining the previous copy fails, the
 publisher keeps the new repository live and preserves both transaction locks
-and the old candidate path as explicit recovery state. In these patterns,
+and any candidate or previous path that remains as explicit recovery state. In
+these patterns,
 `PUBLISH_LEAF` is the final component of the published repository path, such as
 `x86_64`, and `REPO_DIR` is checkout-local staging, such as `repo/x86_64`. The
-recovery paths are `.PUBLISH_LEAF.candidate.*` and
-`.PUBLISH_LEAF.publish.lock` beside the published repository,
-`REPO_DIR.writer.lock` beside staging, and the manifest directory printed by
-the publisher. Before retrying, verify the live repository against the
-preserved staging manifest, reconcile the old candidate into a retained
+recovery paths are `.PUBLISH_LEAF.candidate.*`,
+`.PUBLISH_LEAF.failed.*`, and `.PUBLISH_LEAF.publish.lock` beside the published
+repository, `REPO_DIR.writer.lock` beside staging, and the manifest directory
+printed by the publisher. Before retrying, verify the live repository against
+the preserved staging manifest, reconcile the old candidate into a retained
 `PUBLISH_LEAF.previous.*` copy, and release both locks only after those
 identities are coherent. Preserve every path and stop when the identities are
 ambiguous.
 If the candidate path is absent while a `PUBLISH_LEAF.previous.*` copy exists,
 inspect and explicitly accept that retained path as the rollback copy instead.
-The preserved `staging.json`, `candidate.json`, and `published.json` manifests
-all describe the new repository and prove its staged, candidate, and live
-coherence; they do not authenticate the old rollback copy. Keep both locks and
-all recovery paths when that rollback copy cannot be established safely.
+A retained `.PUBLISH_LEAF.failed.*` directory together with both transaction
+locks means the publisher could not prove the failed or rollback-copy identity.
+Keep the failed directory and both locks until fresh identities establish its
+role; do not treat it as disposable merely because its name contains `failed`.
+If the pacman-visible repository remains populated after the publisher reports
+that post-promotion identity is indeterminate, label that live repository
+unverified. Do not refresh package metadata or install from it until a freshly
+computed manifest proves whether it is the staged candidate or the prior
+repository.
+For the verified-but-unretained state, the preserved `staging.json`,
+`candidate.json`, and `published.json` manifests are complete snapshots of the
+new repository before and after promotion. In any other recovery state, one or
+more manifests may be absent, incomplete, or intentionally different; treat
+them as evidence to reconcile with freshly computed identities, not as proof.
+None of these manifests authenticates the old rollback copy. Keep both locks
+and all recovery paths when that rollback copy cannot be established safely.
 
 Publication requires GNU coreutils 9.5 or newer and probes the target filesystem
 for atomic-exchange support before promotion. By default it permits at most two
@@ -140,9 +153,19 @@ Create a small repo config file:
 ```bash
 printf '%s\n' \
   '[nisavid]' \
-  'SigLevel = Optional TrustAll' \
+  'SigLevel = Optional TrustedOnly' \
   'Server = file:///srv/pacman/nisavid/x86_64' \
   | sudo tee /etc/pacman.d/nisavid.conf >/dev/null
+```
+
+If an existing configuration still carries the former trust relaxation,
+replace it explicitly and verify the result before refreshing metadata:
+
+```bash
+sudo sed -i \
+  's/^SigLevel = Optional TrustAll$/SigLevel = Optional TrustedOnly/' \
+  /etc/pacman.d/nisavid.conf
+grep -qxF 'SigLevel = Optional TrustedOnly' /etc/pacman.d/nisavid.conf
 ```
 
 Include it from `/etc/pacman.conf` if it is not already included:
@@ -190,11 +213,20 @@ Then upgrade or reinstall the package with normal pacman commands:
 sudo pacman -S <pkgname>
 ```
 
+Package replacement also owns an adjacent detached package signature. A helper
+must remove `<archive>.sig` together with the archive it replaces, or reject the
+replacement while that stale signature remains; otherwise `repo-add` can bind
+old signature data to new package bytes. This rule does not authorize deleting
+repository database signatures such as `nisavid.db.tar.zst.sig` or
+`nisavid.files.tar.zst.sig`. Those authenticate database files, not package
+archives, and require their own configured verify-and-regenerate workflow.
+
 ## Notes
 
 - `repo/x86_64/` is disposable staging output. Rebuild it from package
   directories when in doubt.
-- The repo uses `SigLevel = Optional TrustAll` for a local, personal package
-  source. Do not reuse that setting for an untrusted or shared repository.
+- The repo uses `SigLevel = Optional TrustedOnly` to accept unsigned local
+  packages while requiring any present signature to come from a fully trusted
+  key.
 - `amerge` is not part of this repo workflow yet. The current path is the
   explicit build, refresh, publish, and install sequence above.
