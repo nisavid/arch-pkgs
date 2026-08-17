@@ -584,15 +584,52 @@ class ChatGPTLinuxIngestTests(unittest.TestCase):
         self.assertFalse(Path(f"{self.repo}.writer.lock").exists())
         self.assertFalse(list(self.repo.parent.glob(f".{self.repo.name}.ingest.*")))
 
-    def test_missing_seed_repo_initializes_empty_staging(self):
+    def test_missing_supplied_seed_repo_is_rejected(self):
         missing_seed_repo = self.root / "missing-seed-repo"
 
         result = self._run_ingest(check=False, seed_repo_dir=missing_seed_repo)
 
-        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn(
+            "seed repo directory is missing or not a directory", result.stderr
+        )
         self.assertFalse(missing_seed_repo.exists())
-        self.assertTrue((self.repo / self.artifact.name).is_file())
-        self.assertTrue((self.repo / "fixture.db.tar.zst").is_file())
+        self.assertEqual(list(self.repo.iterdir()), [])
+        self.assertFalse(Path(f"{self.repo}.writer.lock").exists())
+
+    def test_supplied_seed_disappearing_after_validation_fails_closed(self):
+        seed_repo = self.root / "seed-repo"
+        seed_repo.mkdir()
+        (seed_repo / "fixture.db.tar.zst").write_bytes(b"seed database")
+        fake_bin = self.root / "seed-race-bin"
+        fake_bin.mkdir()
+        real_mktemp = shutil.which("mktemp")
+        self.assertIsNotNone(real_mktemp)
+        fake_mktemp = fake_bin / "mktemp"
+        fake_mktemp.write_text(
+            "#!/usr/bin/python3\n"
+            "import os\n"
+            "import shutil\n"
+            "import sys\n"
+            f"seed = {str(seed_repo)!r}\n"
+            "if any('.ingest.' in argument for argument in sys.argv[1:]):\n"
+            "    shutil.rmtree(seed)\n"
+            f"os.execv({real_mktemp!r}, [{real_mktemp!r}, *sys.argv[1:]])\n",
+            encoding="utf-8",
+        )
+        fake_mktemp.chmod(0o755)
+        environment = os.environ.copy()
+        environment["PATH"] = f"{fake_bin}:{environment['PATH']}"
+
+        result = self._run_ingest(
+            check=False,
+            environment=environment,
+            seed_repo_dir=seed_repo,
+        )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("seed repo is missing fixture.db.tar.zst", result.stderr)
+        self.assertEqual(list(self.repo.iterdir()), [])
         self.assertFalse(Path(f"{self.repo}.writer.lock").exists())
 
     def test_seed_repo_respects_preheld_staging_writer_lock(self):
@@ -782,6 +819,8 @@ class ChatGPTLinuxIngestTests(unittest.TestCase):
         self.assertEqual(list(self.repo.iterdir()), [])
 
     def test_ingest_interruption_hooks_reject_a_non_temporary_repository(self):
+        rejected_repo = Path("/var/lib/arch-pkgs-ingest-interruption-test")
+        self.assertFalse(rejected_repo.exists(), "test path must be absent")
         environment = os.environ.copy()
         for key in list(environment):
             if key.startswith("BASH_FUNC_"):
@@ -801,7 +840,7 @@ class ChatGPTLinuxIngestTests(unittest.TestCase):
                 "--source-dir",
                 str(self.source),
                 "--repo-dir",
-                "/var/lib/arch-pkgs-ingest-interruption-test",
+                str(rejected_repo),
                 "--repo-name",
                 "fixture",
             ],
@@ -817,6 +856,7 @@ class ChatGPTLinuxIngestTests(unittest.TestCase):
         self.assertIn(
             "restricted to repository directories under /tmp", result.stderr
         )
+        self.assertFalse(rejected_repo.exists())
 
     def test_signal_during_update_lock_acquisition_cleans_the_owned_lock(self):
         package_dir = self.root / "update-package"
