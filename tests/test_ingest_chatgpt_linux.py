@@ -1019,6 +1019,7 @@ class PacmanRepoPublicationTests(unittest.TestCase):
         root: Path,
         *,
         fail_retention_move: bool = False,
+        fail_after_retention_move: bool = False,
         replace_retained_identity: bool = False,
         signal_after_retention_move: str | None = None,
     ) -> tuple[subprocess.CompletedProcess[str], Path, Path]:
@@ -1048,6 +1049,7 @@ class PacmanRepoPublicationTests(unittest.TestCase):
             "import time\n"
             f"real_mv = {real_mv!r}\n"
             f"fail_retention_move = {fail_retention_move!r}\n"
+            f"fail_after_retention_move = {fail_after_retention_move!r}\n"
             f"replace_retained_identity = {replace_retained_identity!r}\n"
             f"signal_after_retention_move = {signal_after_retention_move!r}\n"
             "source = pathlib.Path(sys.argv[-2]) if len(sys.argv) >= 3 else None\n"
@@ -1061,6 +1063,8 @@ class PacmanRepoPublicationTests(unittest.TestCase):
             "if is_retention_move and fail_retention_move:\n"
             "    raise SystemExit(77)\n"
             "result = subprocess.run([real_mv, *sys.argv[1:]])\n"
+            "if is_retention_move and result.returncode == 0 and fail_after_retention_move:\n"
+            "    raise SystemExit(77)\n"
             "if is_retention_move and result.returncode == 0 and replace_retained_identity:\n"
             "    moved = destination.with_name(f'{destination.name}.moved')\n"
             "    destination.rename(moved)\n"
@@ -1131,6 +1135,36 @@ class PacmanRepoPublicationTests(unittest.TestCase):
             self.assertFalse((root / ".published.publish.lock").exists())
             self.assertFalse(Path(f"{repo}.writer.lock").exists())
             self.assertEqual(list((root / "manifest-tmp").iterdir()), [])
+
+    def test_completed_retention_move_reconciles_nonzero_command_status(self):
+        with tempfile.TemporaryDirectory(dir="/tmp") as temporary:
+            root = Path(temporary)
+
+            result, repo, publish = self._run_retention_transition(
+                root, fail_after_retention_move=True
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn("could not be retained", result.stderr)
+            self.assertNotIn("preserving repository locks", result.stderr)
+            self.assertEqual(
+                (publish / "fixture.db.tar.zst").read_bytes(), b"new database"
+            )
+            self.assertTrue((publish / "new.pkg.tar.zst").is_file())
+            self.assertFalse((publish / "old.pkg.tar.zst").exists())
+            previous = list(root.glob("published.previous.*"))
+            self.assertEqual(len(previous), 1)
+            self.assertEqual(
+                (previous[0] / "fixture.db.tar.zst").read_bytes(), b"old database"
+            )
+            self.assertTrue((previous[0] / "old.pkg.tar.zst").is_file())
+            self.assertFalse(list(root.glob(".published.candidate.*")))
+            self.assertFalse(list(root.glob(".published.failed.*")))
+            self.assertFalse((root / ".published.publish.lock").exists())
+            self.assertFalse(Path(f"{repo}.writer.lock").exists())
+            self.assertEqual(list((root / "manifest-tmp").iterdir()), [])
+            self.assertIn("Retained previous pacman repo", result.stdout)
+            self.assertIn("Published verified pacman repo", result.stdout)
 
     def test_retention_move_failure_keeps_verified_publication_and_recovery_locks(
         self,
