@@ -902,6 +902,209 @@ class ChatGPTLinuxIngestTests(unittest.TestCase):
 
 @unittest.skipIf(MISSING_TOOLS, f"missing required tools: {MISSING_TOOLS}")
 class PacmanRepoPublicationTests(unittest.TestCase):
+    def _run_retention_transition(
+        self,
+        root: Path,
+        *,
+        fail_retention_move: bool = False,
+        replace_retained_identity: bool = False,
+        signal_after_retention_move: str | None = None,
+    ) -> tuple[subprocess.CompletedProcess[str], Path, Path]:
+        repo = root / "repo"
+        publish = root / "published"
+        fake_bin = root / "bin"
+        manifest_tmp = root / "manifest-tmp"
+        repo.mkdir()
+        publish.mkdir()
+        fake_bin.mkdir()
+        manifest_tmp.mkdir()
+        (repo / "fixture.db.tar.zst").write_bytes(b"new database")
+        (repo / "new.pkg.tar.zst").write_bytes(b"new package")
+        (publish / "fixture.db.tar.zst").write_bytes(b"old database")
+        (publish / "old.pkg.tar.zst").write_bytes(b"old package")
+        real_mv = shutil.which("mv")
+        self.assertIsNotNone(real_mv)
+        fake_mv = fake_bin / "mv"
+        fake_mv.write_text(
+            "#!/usr/bin/python3\n"
+            "import os\n"
+            "import pathlib\n"
+            "import signal\n"
+            "import shutil\n"
+            "import subprocess\n"
+            "import sys\n"
+            "import time\n"
+            f"real_mv = {real_mv!r}\n"
+            f"fail_retention_move = {fail_retention_move!r}\n"
+            f"replace_retained_identity = {replace_retained_identity!r}\n"
+            f"signal_after_retention_move = {signal_after_retention_move!r}\n"
+            "source = pathlib.Path(sys.argv[-2]) if len(sys.argv) >= 3 else None\n"
+            "destination = pathlib.Path(sys.argv[-1]) if len(sys.argv) >= 2 else None\n"
+            "is_retention_move = (\n"
+            "    source is not None\n"
+            "    and destination is not None\n"
+            "    and source.name.startswith('.published.candidate.')\n"
+            "    and destination.name.startswith('published.previous.')\n"
+            ")\n"
+            "if is_retention_move and fail_retention_move:\n"
+            "    raise SystemExit(77)\n"
+            "result = subprocess.run([real_mv, *sys.argv[1:]])\n"
+            "if is_retention_move and result.returncode == 0 and replace_retained_identity:\n"
+            "    moved = destination.with_name(f'{destination.name}.moved')\n"
+            "    destination.rename(moved)\n"
+            "    shutil.copytree(moved, destination, symlinks=True)\n"
+            "    shutil.rmtree(moved)\n"
+            "if is_retention_move and result.returncode == 0 and signal_after_retention_move:\n"
+            "    os.kill(os.getppid(), getattr(signal, f'SIG{signal_after_retention_move}'))\n"
+            "    time.sleep(0.2)\n"
+            "    raise SystemExit({'HUP': 129, 'TERM': 143}[signal_after_retention_move])\n"
+            "raise SystemExit(result.returncode)\n",
+            encoding="utf-8",
+        )
+        fake_mv.chmod(0o755)
+        environment = os.environ.copy()
+        for key in list(environment):
+            if key.startswith("BASH_FUNC_"):
+                del environment[key]
+        environment["ARCH_PKGS_PUBLISH_TEST_MODE"] = "1"
+        environment["PATH"] = f"{fake_bin}:{environment['PATH']}"
+        environment["TMPDIR"] = str(manifest_tmp)
+
+        result = subprocess.run(
+            [
+                "zsh",
+                str(PUBLISH),
+                "--repo-dir",
+                str(repo),
+                "--repo-name",
+                "fixture",
+                "--publish-dir",
+                str(publish),
+            ],
+            cwd=REPO_ROOT,
+            env=environment,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        return result, repo, publish
+
+    def _assert_signal_after_retention_move_keeps_new_publication(
+        self, signal_name: str, expected_returncode: int
+    ) -> None:
+        with tempfile.TemporaryDirectory(dir="/tmp") as temporary:
+            root = Path(temporary)
+
+            result, repo, publish = self._run_retention_transition(
+                root, signal_after_retention_move=signal_name
+            )
+
+            self.assertEqual(result.returncode, expected_returncode, result.stderr)
+            self.assertEqual(
+                (publish / "fixture.db.tar.zst").read_bytes(), b"new database"
+            )
+            self.assertTrue((publish / "new.pkg.tar.zst").is_file())
+            self.assertFalse((publish / "old.pkg.tar.zst").exists())
+            previous = list(root.glob("published.previous.*"))
+            self.assertEqual(len(previous), 1)
+            self.assertEqual(
+                (previous[0] / "fixture.db.tar.zst").read_bytes(), b"old database"
+            )
+            self.assertTrue((previous[0] / "old.pkg.tar.zst").is_file())
+            self.assertFalse(list(root.glob(".published.candidate.*")))
+            self.assertFalse(list(root.glob(".published.failed.*")))
+            self.assertFalse((root / ".published.publish.lock").exists())
+            self.assertFalse(Path(f"{repo}.writer.lock").exists())
+            self.assertEqual(list((root / "manifest-tmp").iterdir()), [])
+
+    def test_retention_move_failure_keeps_verified_publication_and_recovery_locks(
+        self,
+    ):
+        with tempfile.TemporaryDirectory(dir="/tmp") as temporary:
+            root = Path(temporary)
+
+            result, repo, publish = self._run_retention_transition(
+                root, fail_retention_move=True
+            )
+
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertIn(
+                "verified repository was published but the previous repository "
+                "could not be retained (status 77)",
+                result.stderr,
+            )
+            self.assertIn(
+                "verified publication is live but previous-repository retention "
+                "is incomplete; preserving repository locks and transaction paths "
+                "for recovery",
+                result.stderr,
+            )
+            manifest_prefix = "recovery manifests preserved at: "
+            recovery_manifest_paths = [
+                Path(line.removeprefix(manifest_prefix))
+                for line in result.stderr.splitlines()
+                if line.startswith(manifest_prefix)
+            ]
+            self.assertEqual(len(recovery_manifest_paths), 1, result.stderr)
+            recovery_manifest_dir = recovery_manifest_paths[0]
+            self.assertEqual(recovery_manifest_dir.parent, root / "manifest-tmp")
+            self.assertEqual(
+                sorted(path.name for path in recovery_manifest_dir.iterdir()),
+                ["candidate.json", "published.json", "staging.json"],
+            )
+            self.assertEqual(
+                (publish / "fixture.db.tar.zst").read_bytes(), b"new database"
+            )
+            self.assertTrue((publish / "new.pkg.tar.zst").is_file())
+            self.assertFalse((publish / "old.pkg.tar.zst").exists())
+            candidates = list(root.glob(".published.candidate.*"))
+            self.assertEqual(len(candidates), 1)
+            self.assertEqual(
+                (candidates[0] / "fixture.db.tar.zst").read_bytes(), b"old database"
+            )
+            self.assertTrue((candidates[0] / "old.pkg.tar.zst").is_file())
+            self.assertFalse(list(root.glob("published.previous.*")))
+            self.assertTrue((root / ".published.publish.lock").is_dir())
+            self.assertTrue(Path(f"{repo}.writer.lock").is_dir())
+
+    def test_retention_identity_mismatch_reports_nonzero_recovery_status(self):
+        with tempfile.TemporaryDirectory(dir="/tmp") as temporary:
+            root = Path(temporary)
+
+            result, repo, publish = self._run_retention_transition(
+                root, replace_retained_identity=True
+            )
+
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertRegex(
+                result.stderr,
+                r"verified repository was published but the previous repository "
+                r"could not be retained \(status [1-9][0-9]*\)",
+            )
+            self.assertNotIn("(status 0)", result.stderr)
+            self.assertEqual(
+                (publish / "fixture.db.tar.zst").read_bytes(), b"new database"
+            )
+            self.assertTrue((publish / "new.pkg.tar.zst").is_file())
+            self.assertFalse((publish / "old.pkg.tar.zst").exists())
+            previous = list(root.glob("published.previous.*"))
+            self.assertEqual(len(previous), 1)
+            self.assertEqual(
+                (previous[0] / "fixture.db.tar.zst").read_bytes(), b"old database"
+            )
+            self.assertTrue((previous[0] / "old.pkg.tar.zst").is_file())
+            self.assertFalse(list(root.glob(".published.candidate.*")))
+            self.assertFalse(list(root.glob(".published.failed.*")))
+            self.assertTrue((root / ".published.publish.lock").is_dir())
+            self.assertTrue(Path(f"{repo}.writer.lock").is_dir())
+
+    def test_term_after_retention_move_keeps_new_publication_coherent(self):
+        self._assert_signal_after_retention_move_keeps_new_publication("TERM", 143)
+
+    def test_hup_after_retention_move_keeps_new_publication_coherent(self):
+        self._assert_signal_after_retention_move_keeps_new_publication("HUP", 129)
+
     def test_existing_non_directory_destination_is_left_untouched(self):
         with tempfile.TemporaryDirectory(dir="/tmp") as temporary:
             root = Path(temporary)
