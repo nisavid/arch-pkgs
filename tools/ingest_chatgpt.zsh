@@ -42,6 +42,11 @@ need_command() {
   command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"
 }
 
+require_reflink_cp() {
+  cp --help 2>/dev/null | grep -q -- '--reflink' \
+    || die "ingest requires cp with --reflink support"
+}
+
 require_sha256() {
   local value=$1 label=$2
   (( ${#value} == 64 )) && [[ "$value" == [0-9a-f]## ]] \
@@ -158,10 +163,11 @@ done
   || [[ "$repo_dir" == /tmp/* ]] \
   || die "ingest interruption injection is restricted to repository directories under /tmp"
 
-for command_name in awk bsdtar env git jq mktemp python3 repo-add repo-remove \
-  sed sha256sum stat zstd; do
+for command_name in awk bsdtar cp env git grep install jq mkdir mktemp mv python3 \
+  repo-add repo-remove rm rmdir sed sha256sum sort stat zstd; do
   need_command "$command_name"
 done
+require_reflink_cp
 
 [[ -n "$artifact" ]] || die "--artifact is required"
 [[ -n "$verification_record" ]] || die "--verification-record is required"

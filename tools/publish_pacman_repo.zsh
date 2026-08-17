@@ -93,7 +93,7 @@ validate_repo_name() {
 }
 
 validate_publish_dir() {
-  local component path rel
+  local component path rel trusted_root
 
   [[ -n "$publish_dir" ]] || die "publish dir must not be empty"
   [[ "$publish_dir" != "/" ]] || die "publish dir must not be /"
@@ -110,14 +110,16 @@ validate_publish_dir() {
 
   if (( test_mode )); then
     rel=${publish_dir#/tmp/}
-    path=/tmp
+    trusted_root=/tmp
   else
     rel=${publish_dir#/srv/pacman/}
-    path=/srv/pacman
+    trusted_root=/srv/pacman
   fi
+  path=$trusted_root
   for component in ${(s:/:)rel}; do
     path=${path}/${component}
-    [[ ! -L "$path" ]] || die "publish dir must not contain symlink components under /srv/pacman: $path"
+    [[ ! -L "$path" ]] \
+      || die "publish dir must not contain symlink components under ${trusted_root}: $path"
   done
 }
 
