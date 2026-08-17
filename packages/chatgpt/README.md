@@ -29,6 +29,11 @@ Its public, path-free provenance tuple is recorded in
 
 ## Ingest
 
+The ingest lane requires Zsh, GNU `cp` with `--reflink` support, `bsdtar`, Git,
+`jq`, Python 3, `repo-add`, `repo-remove`, and `zstd`, together with the standard
+Arch packaging tools. The helper checks these prerequisites before it creates
+or changes checkout-local staging.
+
 For the first ingest into otherwise-empty checkout-local staging, run the
 helper with the retained evidence set, exact record digest, and complete
 published repository as the seed:
@@ -47,11 +52,11 @@ The seed is read while the helper holds the repository-writer lock. Omit
 the complete repository, or to initialize the first repository. A supplied seed
 path must already exist as a directory.
 
-The helper first binds the record digest and full accepted tuple to the tracked
-baseline, then snapshots the artifact and evidence before parsing them. It
-verifies the source, package, manifest, generation-decision, and build-info
-tuple. It resolves the package-manifest verifier from the recorded commit
-object, so unrelated working-tree files cannot change verification. It then
+The helper first binds the record digest to the tracked baseline, then snapshots
+the artifact and evidence before parsing them. It compares the full accepted
+source, package, manifest, generation-decision, and build-info tuple afterward.
+It resolves the package-manifest verifier from the recorded commit object, so
+unrelated working-tree files cannot change verification. It then
 replaces only the `chatgpt` entry and the recorded legacy `codex-app` and
 `codex-desktop` entries in staging, and writes allowlisted public provenance
 without local paths.

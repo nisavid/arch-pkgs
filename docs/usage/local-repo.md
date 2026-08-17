@@ -12,11 +12,16 @@ The workflow has four parts:
 
 ## Before You Start
 
-Install the usual Arch packaging tools on the build host:
+Install the Arch packaging tools and artifact-ingest prerequisites on the build
+host:
 
 ```bash
-sudo pacman -S --needed base-devel
+sudo pacman -S --needed base-devel git jq libarchive python zsh zstd
 ```
+
+The ChatGPT artifact-ingest lane uses GNU `cp` with `--reflink` support and
+`bsdtar` from `libarchive`. Its `repo-add` and `repo-remove` commands come from
+`pacman`, which `base-devel` installs.
 
 The examples below use `/srv/pacman/nisavid/x86_64` as the published repo path.
 That path is outside the checkout so pacman can read it without depending on a
@@ -69,6 +74,8 @@ tools/ingest_chatgpt.zsh \
   --source-dir /path/to/chatgpt-linux \
   --seed-repo-dir /srv/pacman/nisavid/x86_64
 ```
+
+Run the staged verification in the package-local README before publication.
 
 The helper reads the seed while holding the shared repository-writer lock and
 accepts it only when checkout-local staging is otherwise empty. An existing
