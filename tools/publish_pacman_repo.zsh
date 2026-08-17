@@ -341,7 +341,10 @@ cleanup_publication() {
       reconcile_publication_state >/dev/null 2>&1 || true
     fi
   fi
-  if (( had_previous )) && [[ "$publication_state" != original ]]; then
+  if (( had_previous )) && [[ "$publication_state" == verified_unretained ]]; then
+    cleanup_safe=0
+    print -u2 -- "verified publication is live but previous-repository retention is incomplete; preserving repository locks and transaction paths for recovery"
+  elif (( had_previous )) && [[ "$publication_state" != original ]]; then
     cleanup_safe=0
     print -u2 -- "publication state is indeterminate; preserving repository locks and transaction paths for recovery"
   fi
@@ -368,8 +371,10 @@ cleanup_publication() {
       rmdir -- "$writer_lock" >/dev/null 2>&1 || true
     fi
   fi
-  if [[ -d "$manifest_dir" ]]; then
+  if (( cleanup_safe )) && [[ -d "$manifest_dir" ]]; then
     rm -rf -- "$manifest_dir"
+  elif [[ -d "$manifest_dir" ]]; then
+    print -u2 -- "recovery manifests preserved at: $manifest_dir"
   fi
   return $exit_status
 }
@@ -488,15 +493,28 @@ fi
 
 if (( had_previous )); then
   retention_status=0
+  retention_complete=0
+  publication_state=verified_unretained
   privileged mv -- "$candidate_dir" "$previous_dir" || retention_status=$?
   if (( test_mode )) \
       && [[ ${ARCH_PKGS_PUBLISH_TEST_SIGNAL_DURING_RETENTION_FINALIZATION:-0} == 1 ]]; then
     kill -TERM $$
   fi
-  (( ! retention_status )) && publication_state=original
+  if [[ ! -e "$candidate_dir" && -d "$previous_dir" ]]; then
+    current_publish_identity=
+    retained_previous_identity=
+    if current_publish_identity=$(directory_identity "$publish_dir") \
+        && retained_previous_identity=$(directory_identity "$previous_dir") \
+        && [[ "$current_publish_identity" == "$candidate_identity" \
+        && "$retained_previous_identity" == "$previous_identity" ]]; then
+      retention_complete=1
+      publication_state=original
+    fi
+  fi
+  (( retention_complete || retention_status )) || retention_status=1
   finish_signal_deferral
-  (( ! retention_status )) \
-    || die "verified repository was published but the previous repository could not be retained"
+  (( retention_complete )) \
+    || die "verified repository was published but the previous repository could not be retained (status ${retention_status})"
   print -- "Retained previous pacman repo: $previous_dir"
 else
   if (( test_mode )) \

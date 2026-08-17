@@ -100,6 +100,25 @@ old repository on any post-promotion verification failure and retains the old
 repository as a timestamped previous copy after success. Keep that copy until
 the installed package passes acceptance. The verification manifest covers each
 entry's content or symlink target together with its mode, UID, and GID.
+If the new repository is verified but retaining the previous copy fails, the
+publisher keeps the new repository live and preserves both transaction locks
+and the old candidate path as explicit recovery state. In these patterns,
+`PUBLISH_LEAF` is the final component of the published repository path, such as
+`x86_64`, and `REPO_DIR` is checkout-local staging, such as `repo/x86_64`. The
+recovery paths are `.PUBLISH_LEAF.candidate.*` and
+`.PUBLISH_LEAF.publish.lock` beside the published repository,
+`REPO_DIR.writer.lock` beside staging, and the manifest directory printed by
+the publisher. Before retrying, verify the live repository against the
+preserved staging manifest, reconcile the old candidate into a retained
+`PUBLISH_LEAF.previous.*` copy, and release both locks only after those
+identities are coherent. Preserve every path and stop when the identities are
+ambiguous.
+If the candidate path is absent while a `PUBLISH_LEAF.previous.*` copy exists,
+inspect and explicitly accept that retained path as the rollback copy instead.
+The preserved `staging.json`, `candidate.json`, and `published.json` manifests
+all describe the new repository and prove its staged, candidate, and live
+coherence; they do not authenticate the old rollback copy. Keep both locks and
+all recovery paths when that rollback copy cannot be established safely.
 
 Publication requires GNU coreutils 9.5 or newer and probes the target filesystem
 for atomic-exchange support before promotion. By default it permits at most two
