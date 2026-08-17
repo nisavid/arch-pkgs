@@ -1038,7 +1038,9 @@ class ChatGPTLinuxIngestTests(unittest.TestCase):
 
     def test_signal_during_update_lock_acquisition_cleans_the_owned_lock(self):
         package_dir = self.root / "update-package"
+        fake_bin = self.root / "update-lock-bin"
         package_dir.mkdir()
+        fake_bin.mkdir()
         (package_dir / "PKGBUILD").write_text(
             "pkgname=chatgpt\n"
             "pkgver=26.810.52044\n"
@@ -1047,13 +1049,29 @@ class ChatGPTLinuxIngestTests(unittest.TestCase):
             "package() { :; }\n",
             encoding="utf-8",
         )
-        shutil.copy2(self.artifact, package_dir / self.artifact.name)
+        package_archive = package_dir / self.artifact.name
+        shutil.copy2(self.artifact, package_archive)
+        fake_makepkg = fake_bin / "makepkg"
+        fake_makepkg.write_text(
+            f"#!{sys.executable}\n"
+            "import sys\n"
+            f"package = {str(package_archive)!r}\n"
+            "if sys.argv[1:] == ['--packagelist']:\n"
+            "    print(package)\n"
+            "elif sys.argv[1:] == ['--printsrcinfo']:\n"
+            "    print('pkgname = chatgpt')\n"
+            "else:\n"
+            "    raise SystemExit(2)\n",
+            encoding="utf-8",
+        )
+        fake_makepkg.chmod(0o755)
         environment = os.environ.copy()
         for key in list(environment):
             if key.startswith("BASH_FUNC_"):
                 del environment[key]
         environment["ARCH_PKGS_UPDATE_TEST_SIGNAL_DURING_LOCK_ACQUISITION"] = "1"
         environment["ARCH_PKGS_UPDATE_TEST_MODE"] = "1"
+        environment["PATH"] = f"{fake_bin}:{environment['PATH']}"
 
         result = subprocess.run(
             [

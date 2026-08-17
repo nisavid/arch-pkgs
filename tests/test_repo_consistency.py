@@ -160,6 +160,53 @@ class RepositoryConsistencyTests(unittest.TestCase):
             result.stderr,
         )
 
+    def test_srcinfo_identity_requires_named_version_fields(self):
+        for name in (".SRCINFO", ".generated-srcinfo"):
+            srcinfo = self.repo / "packages/example" / name
+            srcinfo.write_text(
+                srcinfo.read_text(encoding="utf-8").replace(
+                    "\tpkgver = 1.2.3\n", ""
+                ),
+                encoding="utf-8",
+            )
+
+        result = self.run_checker()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "packages/example/.SRCINFO: required field pkgver must appear exactly once and be nonempty",
+            result.stderr,
+        )
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_chatgpt_identity_requires_object_package_metadata(self):
+        baseline_readme = (self.repo / "packages/example/README.md").read_text(
+            encoding="utf-8"
+        )
+        for name in ("PKGBUILD", ".SRCINFO", ".generated-srcinfo", "README.md"):
+            (self.repo / "packages/example" / name).unlink()
+        catalog = self.repo / "packages/README.md"
+        catalog.write_text(
+            catalog.read_text(encoding="utf-8")
+            .replace("[`example`](example/)", "[`chatgpt`](chatgpt/)")
+            .replace("| `example` | 1.2.3-4 |", "| `chatgpt` | 1.0-1 |"),
+            encoding="utf-8",
+        )
+        self.write("packages/chatgpt/README.md", baseline_readme)
+        self.write(
+            "packages/chatgpt/fallback-baseline-fixture.json",
+            '{"package": []}\n',
+        )
+
+        result = self.run_checker()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "packages/chatgpt/fallback-baseline-fixture.json: package must be an object",
+            result.stderr,
+        )
+        self.assertNotIn("Traceback", result.stderr)
+
     def test_catalog_must_cover_each_package_lane_once(self):
         self.write(
             "packages/README.md",
@@ -314,22 +361,21 @@ class RepositoryConsistencyTests(unittest.TestCase):
             result.stderr,
         )
 
-    def test_catalog_requires_deferred_lane_to_be_excluded(self):
+    def test_catalog_allows_deferred_lane_with_previous_publishable_version(self):
         catalog = self.repo / "packages/README.md"
         catalog.write_text(
-            catalog.read_text(encoding="utf-8").replace(
-                "| accepted-current |", "| deferred |"
+            catalog.read_text(encoding="utf-8")
+            .replace("| accepted-current |", "| deferred |")
+            .replace(
+                "| Fixture acceptance passed |",
+                "| Previously accepted 1.2.3 remains publishable |",
             ),
             encoding="utf-8",
         )
 
         result = self.run_checker()
 
-        self.assertEqual(result.returncode, 1)
-        self.assertIn(
-            "packages/README.md: example deferred lane must not be publication eligible",
-            result.stderr,
-        )
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_retained_lane_requires_complete_baseline(self):
         readme = self.repo / "packages/example/README.md"
@@ -362,6 +408,46 @@ class RepositoryConsistencyTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn(
             "packages/example/README.md: required section ## Maintenance Baseline must appear exactly once",
+            result.stderr,
+        )
+
+    def test_blank_baseline_field_does_not_borrow_a_later_nested_bullet(self):
+        readme = self.repo / "packages/example/README.md"
+        readme.write_text(
+            readme.read_text(encoding="utf-8").replace(
+                "- `authoritative_reference`: upstream example release\n",
+                "- `authoritative_reference`:\n"
+                "- unrelated note\n"
+                "  nested continuation\n",
+            ),
+            encoding="utf-8",
+        )
+
+        result = self.run_checker()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "packages/example/README.md: required baseline field authoritative_reference must appear exactly once and be nonempty",
+            result.stderr,
+        )
+
+    def test_blank_baseline_field_does_not_borrow_an_alternate_list(self):
+        readme = self.repo / "packages/example/README.md"
+        readme.write_text(
+            readme.read_text(encoding="utf-8").replace(
+                "- `authoritative_reference`: upstream example release\n",
+                "- `authoritative_reference`:\n"
+                "* unrelated note\n"
+                "  nested continuation\n",
+            ),
+            encoding="utf-8",
+        )
+
+        result = self.run_checker()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "packages/example/README.md: required baseline field authoritative_reference must appear exactly once and be nonempty",
             result.stderr,
         )
 

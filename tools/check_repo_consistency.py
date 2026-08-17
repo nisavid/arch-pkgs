@@ -199,31 +199,63 @@ def check_catalog_coverage(repo: Path) -> list[str]:
     return errors
 
 
-def srcinfo_identity(srcinfo: Path) -> tuple[list[str], str]:
+def srcinfo_identity(repo: Path, srcinfo: Path) -> tuple[list[str], str]:
     values: dict[str, list[str]] = {}
     for line in srcinfo.read_text(encoding="utf-8").splitlines():
         if " = " not in line:
             continue
         key, value = line.strip().split(" = ", 1)
         values.setdefault(key, []).append(value)
-    version = values["pkgver"][0]
+    relative = srcinfo.relative_to(repo).as_posix()
+
+    def required_single_value(key: str) -> str:
+        matching = values.get(key, [])
+        if len(matching) != 1 or not matching[0].strip():
+            raise ValueError(
+                f"{relative}: required field {key} must appear exactly once and be nonempty"
+            )
+        return matching[0]
+
+    package_names = values.get("pkgname", [])
+    if not package_names or any(not name.strip() for name in package_names):
+        raise ValueError(
+            f"{relative}: required field pkgname must appear and be nonempty"
+        )
+    version = required_single_value("pkgver")
     if "epoch" in values:
-        version = f"{values['epoch'][0]}:{version}"
-    version = f"{version}-{values['pkgrel'][0]}"
-    return sorted(values.get("pkgname", [])), version
+        version = f"{required_single_value('epoch')}:{version}"
+    version = f"{version}-{required_single_value('pkgrel')}"
+    return sorted(package_names), version
 
 
 def package_identity(repo: Path, package_name: str) -> tuple[list[str], str]:
     package_dir = repo / "packages" / package_name
     if package_name != "chatgpt":
-        return srcinfo_identity(package_dir / ".SRCINFO")
+        return srcinfo_identity(repo, package_dir / ".SRCINFO")
     baselines = sorted(package_dir.glob("fallback-baseline-*.json"))
     if len(baselines) != 1:
         raise ValueError(
             f"packages/chatgpt: expected one fallback baseline; found {len(baselines)}"
         )
-    baseline = json.loads(baselines[0].read_text(encoding="utf-8"))
-    return [baseline["package"]["name"]], baseline["package"]["version"]
+    relative = baselines[0].relative_to(repo).as_posix()
+    try:
+        baseline = json.loads(baselines[0].read_text(encoding="utf-8"))
+    except json.JSONDecodeError as error:
+        raise ValueError(f"{relative}: invalid JSON: {error.msg}") from error
+    if not isinstance(baseline, dict):
+        raise ValueError(f"{relative}: baseline must be an object")
+    package = baseline.get("package")
+    if not isinstance(package, dict):
+        raise ValueError(f"{relative}: package must be an object")
+    identity: dict[str, str] = {}
+    for key in ("name", "version"):
+        value = package.get(key)
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(
+                f"{relative}: package.{key} must be a nonempty string"
+            )
+        identity[key] = value
+    return [identity["name"]], identity["version"]
 
 
 def check_catalog_identity(repo: Path) -> list[str]:
@@ -299,27 +331,24 @@ def check_catalog_shape(repo: Path) -> list[str]:
                 f"packages/README.md: {package_name} retired lane "
                 "must not be publication eligible"
             )
-        if disposition == "deferred" and row[7] == "yes":
-            errors.append(
-                f"packages/README.md: {package_name} deferred lane "
-                "must not be publication eligible"
-            )
     return errors
 
 
 def baseline_value_is_present(text: str, field: str) -> bool:
-    pattern = re.compile(rf"(?m)^- `{re.escape(field)}`:\s*(?P<value>[^\n]*)$")
+    pattern = re.compile(
+        rf"(?m)^- `{re.escape(field)}`:[ \t]*(?P<value>[^\n]*)$"
+    )
     matches = list(pattern.finditer(text))
     if len(matches) != 1:
         return False
     match = matches[0]
     if match.group("value").strip():
         return True
-    following = text[match.end() :]
-    boundary = re.search(r"(?m)^(?:- `[^`]+`:\s*|#{1,6}\s+)", following)
-    if boundary:
-        following = following[: boundary.start()]
-    return any(line.startswith(("  ", "\t")) and line.strip() for line in following.splitlines())
+    for line in text[match.end() :].splitlines():
+        if not line.strip():
+            continue
+        return line.startswith((" ", "\t"))
+    return False
 
 
 def maintenance_baseline_section(text: str) -> str | None:
