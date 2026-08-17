@@ -105,14 +105,14 @@ class ArchCudaImageTests(unittest.TestCase):
         self.assertTrue(scripts, "no .zsh scripts were discovered")
         for script in scripts:
             with self.subTest(script=script):
-                subprocess.run(
+                result = subprocess.run(
                     ["zsh", "-n", script],
                     cwd=REPO_ROOT,
                     text=True,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    check=True,
+                    capture_output=True,
+                    check=False,
                 )
+                self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_runpod_template_targets_private_arch_cuda_ssh_pod(self):
         template = json.loads(self.read("containers/arch-cuda/runpod-template.json"))

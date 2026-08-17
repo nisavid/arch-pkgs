@@ -72,8 +72,9 @@ tools/ingest_chatgpt.zsh \
 
 The helper reads the seed while holding the shared repository-writer lock and
 accepts it only when checkout-local staging is otherwise empty. An existing
-seed supplies the complete repository; an absent seed initializes the first
-repository instead. This keeps seeding and ingest in one guarded transaction.
+seed supplies the complete repository. A supplied seed path must exist; omit
+the option to initialize the first repository. This keeps seeding and ingest in
+one guarded transaction.
 
 Never publish a partial staging directory: the publisher mirrors staging and
 removes destination files that are absent from it.

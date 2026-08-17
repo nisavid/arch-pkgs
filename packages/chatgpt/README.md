@@ -44,7 +44,8 @@ tools/ingest_chatgpt.zsh \
 
 The seed is read while the helper holds the repository-writer lock. Omit
 `--seed-repo-dir` on later ingests after checkout-local staging already contains
-the complete repository.
+the complete repository, or to initialize the first repository. A supplied seed
+path must already exist as a directory.
 
 The helper first binds the record digest and full accepted tuple to the tracked
 baseline, then snapshots the artifact and evidence before parsing them. It

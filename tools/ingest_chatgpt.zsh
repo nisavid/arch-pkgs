@@ -52,8 +52,8 @@ validate_seed_repo_dir() {
   [[ "$seed_repo_dir" != "/" ]] || die "seed repo directory must not be /"
   [[ ! -L "$seed_repo_dir" ]] \
     || die "seed repo directory must not be a symlink: $seed_repo_dir"
-  [[ ! -e "$seed_repo_dir" || -d "$seed_repo_dir" ]] \
-    || die "seed repo directory target exists and is not a directory: $seed_repo_dir"
+  [[ -d "$seed_repo_dir" ]] \
+    || die "seed repo directory is missing or not a directory: $seed_repo_dir"
 }
 
 require_sha256() {
@@ -539,7 +539,7 @@ if [[ -d "$repo_dir" ]]; then
   fi
   cp -a -- "$repo_dir"/. "$stage_dir"/
 fi
-if [[ -n "$seed_repo_dir" && -d "$seed_repo_dir" ]]; then
+if [[ -n "$seed_repo_dir" ]]; then
   [[ -f "${seed_repo_dir}/${repo_name}.db.tar.zst" ]] \
     || die "seed repo is missing ${repo_name}.db.tar.zst: $seed_repo_dir"
   cp -a -- "$seed_repo_dir"/. "$stage_dir"/
