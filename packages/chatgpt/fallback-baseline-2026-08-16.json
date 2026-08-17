@@ -45,18 +45,36 @@
     "inconclusiveReasonCount": 0,
     "optionalWarningCount": 6
   },
-  "hostedValidation": [
-    {
-      "name": "CI",
-      "runId": 31972793550,
-      "url": "https://github.com/nisavid/chatgpt-linux/actions/runs/31972793550",
-      "conclusion": "success"
-    },
-    {
-      "name": "Official DMG Build App scheduled",
-      "runId": 31973993376,
-      "url": "https://github.com/nisavid/chatgpt-linux/actions/runs/31973993376",
-      "conclusion": "success"
-    }
-  ]
+  "hostedValidation": {
+    "headSha": "dd3d1397f544752ea1170af8393cd59379373f52",
+    "repositoryActionsQuiescent": true,
+    "runs": [
+      {
+        "name": "CI",
+        "id": 31972793550,
+        "url": "https://github.com/nisavid/chatgpt-linux/actions/runs/31972793550",
+        "conclusion": "success"
+      },
+      {
+        "name": "Official DMG Build App scheduled",
+        "id": 31973993376,
+        "url": "https://github.com/nisavid/chatgpt-linux/actions/runs/31973993376",
+        "conclusion": "success"
+      }
+    ],
+    "requiredJobs": [
+      {
+        "name": "Build Pacman Package",
+        "id": 95227717021,
+        "url": "https://github.com/nisavid/chatgpt-linux/actions/runs/31972793550/job/95227717021",
+        "conclusion": "success"
+      },
+      {
+        "name": "Scheduled Build App Against Official DMG",
+        "id": 95230609814,
+        "url": "https://github.com/nisavid/chatgpt-linux/actions/runs/31973993376/job/95230609814",
+        "conclusion": "success"
+      }
+    ]
+  }
 }

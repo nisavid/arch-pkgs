@@ -187,6 +187,8 @@ accepted_record_sha256=$(jq -er '.verification.recordSha256' "$accepted_baseline
 
 typeset -a temporary_paths
 backup_dir=
+signal_deferral=0
+pending_signal=0
 cleanup_temporary_paths() {
   local exit_status=$?
   local temporary_path
@@ -195,14 +197,35 @@ cleanup_temporary_paths() {
     mv -- "$backup_dir" "$repo_dir" >/dev/null 2>&1 || true
   fi
   for temporary_path in "${temporary_paths[@]}"; do
-    [[ -n "$temporary_path" && -e "$temporary_path" ]] && rm -rf -- "$temporary_path"
+    if [[ -n "$temporary_path" && -e "$temporary_path" ]]; then
+      rm -rf -- "$temporary_path"
+    fi
   done
   return $exit_status
 }
+handle_signal() {
+  local signal_status=$1
+
+  if (( signal_deferral )); then
+    (( pending_signal )) || pending_signal=$signal_status
+    return 0
+  fi
+  exit $signal_status
+}
+finish_signal_deferral() {
+  local signal_status
+
+  signal_deferral=0
+  if (( pending_signal )); then
+    signal_status=$pending_signal
+    pending_signal=0
+    exit $signal_status
+  fi
+}
 trap cleanup_temporary_paths EXIT
-trap 'exit 129' HUP
-trap 'exit 130' INT
-trap 'exit 143' TERM
+trap 'handle_signal 129' HUP
+trap 'handle_signal 130' INT
+trap 'handle_signal 143' TERM
 
 evidence_dir=${verification_record:h}
 verification_temp=$(mktemp -d)
@@ -239,6 +262,12 @@ jq -e --slurpfile accepted "$accepted_baseline" '
   || die "verification record does not match the tracked accepted fallback tuple"
 
 typeset -a sanitized_environment=(env)
+for environment_entry in "${(@0)$(env -0)}"; do
+  environment_key=${environment_entry%%=*}
+  if [[ "$environment_key" == BASH_FUNC_*%% ]]; then
+    sanitized_environment+=(-u "$environment_key")
+  fi
+done
 for exported_function_key in ${(f)"$(jq -r '.generationEvidence.sanitizedExportedFunctionKeys[]? // empty' "$verification_record")"}; do
   [[ "$exported_function_key" =~ '^BASH_FUNC_[A-Za-z0-9_]+%%$' ]] \
     || die "verification record contains an unsafe exported-function key"
@@ -426,11 +455,19 @@ public = {
             "repositoryActionsQuiescent"
         ),
         "runs": [
-            {key: run[key] for key in ("name", "id", "conclusion", "url")}
+            {
+                key: run[key]
+                for key in ("name", "id", "conclusion", "url")
+                if key in run
+            }
             for run in record.get("hostedValidation", {}).get("runs", [])
         ],
         "requiredJobs": [
-            {key: job[key] for key in ("name", "id", "conclusion", "url")}
+            {
+                key: job[key]
+                for key in ("name", "id", "conclusion", "url")
+                if key in job
+            }
             for job in record.get("hostedValidation", {}).get("requiredJobs", [])
         ],
     },
@@ -450,10 +487,20 @@ fi
 repo_parent=${repo_dir:h}
 repo_leaf=${repo_dir:t}
 mkdir -p -- "$repo_parent"
-lock_dir=${repo_dir}.ingest.lock
-mkdir -- "$lock_dir" 2>/dev/null \
-  || die "another ingest appears to be active: $lock_dir"
-temporary_paths+=("$lock_dir")
+lock_dir=${repo_dir}.writer.lock
+lock_acquired=0
+signal_deferral=1
+if mkdir -- "$lock_dir" 2>/dev/null; then
+  lock_acquired=1
+fi
+if (( lock_acquired )) \
+    && [[ ${ARCH_PKGS_INGEST_TEST_SIGNAL_DURING_LOCK_ACQUISITION:-0} == 1 ]]; then
+  kill -TERM $$
+fi
+(( lock_acquired )) && temporary_paths+=("$lock_dir")
+finish_signal_deferral
+(( lock_acquired )) \
+  || die "another repository writer appears to be active: $lock_dir"
 stage_dir=$(mktemp -d "${repo_parent}/.${repo_leaf}.ingest.XXXXXX")
 temporary_paths+=("$stage_dir")
 
@@ -477,9 +524,11 @@ if [[ -e "$repo_db" ]]; then
 fi
 
 for existing_archive in "$stage_dir"/*.pkg.tar.*(N); do
+  [[ "$existing_archive" != *.sig ]] || continue
   existing_name=$(package_name_from_archive "$existing_archive" || true)
+  [[ -n "$existing_name" ]] || continue
   if (( ${replaced_package_names[(Ie)$existing_name]} )); then
-    rm -f -- "$existing_archive"
+    rm -f -- "$existing_archive" "${existing_archive}.sig"
   fi
 done
 

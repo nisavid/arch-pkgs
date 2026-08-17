@@ -12,8 +12,11 @@ publish_dir=
 publish_dir_set=0
 dry_run=0
 test_mode=${ARCH_PKGS_PUBLISH_TEST_MODE:-0}
+publish_retention=${ARCH_PKGS_PUBLISH_RETENTION:-2}
 [[ "$test_mode" == 0 || "$test_mode" == 1 ]] \
   || { print -u2 -- "ARCH_PKGS_PUBLISH_TEST_MODE must be 0 or 1"; exit 2; }
+[[ "$publish_retention" =~ '^[1-9][0-9]*$' ]] \
+  || { print -u2 -- "ARCH_PKGS_PUBLISH_RETENTION must be a positive integer"; exit 2; }
 
 usage() {
   local default_publish_dir=${publish_dir:-/srv/pacman/${repo_name}/x86_64}
@@ -26,6 +29,7 @@ Defaults:
   repo-dir:     ${repo_dir}
   repo-name:    ${repo_name}
   publish-dir: ${default_publish_dir}
+  retained previous repositories: ${publish_retention}
 EOF
 }
 
@@ -79,6 +83,10 @@ print(json.dumps({"entries": entries, "schemaVersion": 1}, indent=2, sort_keys=T
 PY
 }
 
+directory_identity() {
+  stat -Lc '%d:%i' -- "$1"
+}
+
 validate_repo_name() {
   [[ "$repo_name" =~ '^[A-Za-z0-9._-]+$' ]] || die "repo name contains unsupported characters: $repo_name"
   [[ "$repo_name" != "." && "$repo_name" != ".." ]] || die "repo name must not be a path segment: $repo_name"
@@ -89,6 +97,8 @@ validate_publish_dir() {
 
   [[ -n "$publish_dir" ]] || die "publish dir must not be empty"
   [[ "$publish_dir" != "/" ]] || die "publish dir must not be /"
+  [[ ! -e "$publish_dir" || -d "$publish_dir" ]] \
+    || die "publish dir exists and is not a directory: $publish_dir"
   if (( test_mode )); then
     [[ "$publish_dir" == /tmp/* ]] \
       || die "test-mode publish dir must be under /tmp: $publish_dir"
@@ -119,6 +129,23 @@ privileged() {
   fi
 }
 
+require_atomic_mv() {
+  local version
+  version=$(mv --version 2>/dev/null | sed -n '1s/.* //p') \
+    || die "publication requires GNU coreutils mv 9.5 or newer"
+  python3 - "$version" <<'PY' \
+    || die "publication requires GNU coreutils mv 9.5 or newer"
+import re
+import sys
+
+match = re.fullmatch(r"(\d+)\.(\d+)(?:\.\d+)?", sys.argv[1])
+if match is None or tuple(map(int, match.groups())) < (9, 5):
+    raise SystemExit(1)
+PY
+  mv --help 2>/dev/null | grep -q -- '--exchange' \
+    || die "publication mv does not support --exchange"
+}
+
 while (( $# )); do
   case "$1" in
     --dry-run)
@@ -127,7 +154,7 @@ while (( $# )); do
       ;;
     --repo-dir)
       (( $# >= 2 )) || die "--repo-dir requires a value"
-      repo_dir=${2:a}
+      repo_dir=${2:A}
       shift 2
       ;;
     --repo-name)
@@ -151,7 +178,7 @@ while (( $# )); do
   esac
 done
 
-repo_dir=${repo_dir:a}
+repo_dir=${repo_dir:A}
 validate_repo_name
 
 if (( ! publish_dir_set )); then
@@ -167,6 +194,10 @@ if (( ! dry_run )); then
   need_command sha256sum
   need_command awk
   need_command date
+  need_command grep
+  need_command mv
+  need_command stat
+  require_atomic_mv
 fi
 
 [[ -d "$repo_dir" ]] || die "repo dir does not exist: $repo_dir"
@@ -190,15 +221,80 @@ if (( dry_run )); then
 fi
 
 manifest_dir=$(mktemp -d)
+writer_lock=
+writer_lock_owned=0
+signal_deferral=0
+pending_signal=0
+publication_state=original
+previous_identity=
+candidate_identity=
+destination_lock_owned=0
 cleanup_manifest_dir() {
   local exit_status=$?
-  [[ -d "$manifest_dir" ]] && rm -rf -- "$manifest_dir"
+  if (( writer_lock_owned )) && [[ -n "$writer_lock" && -d "$writer_lock" ]]; then
+    rmdir -- "$writer_lock" >/dev/null 2>&1 || true
+  fi
+  if [[ -d "$manifest_dir" ]]; then
+    rm -rf -- "$manifest_dir"
+  fi
   return $exit_status
 }
+handle_signal() {
+  local signal_status=$1
+
+  if (( signal_deferral )); then
+    (( pending_signal )) || pending_signal=$signal_status
+    return 0
+  fi
+  exit $signal_status
+}
+finish_signal_deferral() {
+  local signal_status
+
+  signal_deferral=0
+  if (( pending_signal )); then
+    signal_status=$pending_signal
+    pending_signal=0
+    exit $signal_status
+  fi
+}
+reconcile_publication_state() {
+  local current_candidate_identity current_publish_identity
+
+  publication_state=indeterminate
+  current_publish_identity=$(directory_identity "$publish_dir") || return 1
+  current_candidate_identity=$(directory_identity "$candidate_dir") || return 1
+  if [[ "$current_publish_identity" == "$candidate_identity" \
+      && "$current_candidate_identity" == "$previous_identity" ]]; then
+    publication_state=swapped
+    return 0
+  fi
+  if [[ "$current_publish_identity" == "$previous_identity" \
+      && "$current_candidate_identity" == "$candidate_identity" ]]; then
+    publication_state=original
+    return 0
+  fi
+  return 1
+}
 trap cleanup_manifest_dir EXIT
-trap 'exit 129' HUP
-trap 'exit 130' INT
-trap 'exit 143' TERM
+trap 'handle_signal 129' HUP
+trap 'handle_signal 130' INT
+trap 'handle_signal 143' TERM
+
+writer_lock=${repo_dir}.writer.lock
+writer_lock_acquired=0
+signal_deferral=1
+if mkdir -- "$writer_lock" 2>/dev/null; then
+  writer_lock_acquired=1
+fi
+if (( writer_lock_acquired && test_mode )) \
+    && [[ ${ARCH_PKGS_PUBLISH_TEST_SIGNAL_DURING_WRITER_LOCK_ACQUISITION:-0} == 1 ]]; then
+  kill -TERM $$
+fi
+(( writer_lock_acquired )) && writer_lock_owned=1
+finish_signal_deferral
+(( writer_lock_acquired )) \
+  || die "another repository writer appears to be active: $writer_lock"
 
 staging_manifest=${manifest_dir}/staging.json
 candidate_manifest=${manifest_dir}/candidate.json
@@ -213,25 +309,87 @@ candidate_dir=${publish_parent}/.${publish_leaf}.candidate.${timestamp}.$$
 previous_dir=${publish_parent}/${publish_leaf}.previous.${timestamp}.$$
 failed_dir=${publish_parent}/.${publish_leaf}.failed.${timestamp}.$$
 lock_dir=${publish_parent}/.${publish_leaf}.publish.lock
+probe_a=${publish_parent}/.${publish_leaf}.exchange-probe-a.$$
+probe_b=${publish_parent}/.${publish_leaf}.exchange-probe-b.$$
 had_previous=0
-publication_swapped=0
+publication_created=0
 
-privileged install -d -- "$publish_parent"
-privileged mkdir -- "$lock_dir" 2>/dev/null \
-  || die "another publication appears to be active: $lock_dir"
 cleanup_publication() {
   local exit_status=$?
+  local cleanup_safe=1
+  local first_rollback_ok=1
 
-  if (( publication_swapped && had_previous )) \
-      && [[ -e "$candidate_dir" && -e "$publish_dir" ]]; then
-    privileged mv --exchange --no-copy --no-target-directory -- "$candidate_dir" "$publish_dir" \
-      >/dev/null 2>&1 || true
+  if (( had_previous )) && [[ "$publication_state" == indeterminate ]]; then
+    reconcile_publication_state >/dev/null 2>&1 || true
   fi
-  privileged rmdir -- "$lock_dir" >/dev/null 2>&1 || true
-  [[ -d "$manifest_dir" ]] && rm -rf -- "$manifest_dir"
+  if (( had_previous )) && [[ "$publication_state" == swapped ]] \
+      && [[ -e "$candidate_dir" && -e "$publish_dir" ]]; then
+    publication_state=indeterminate
+    if privileged mv --exchange --no-copy --no-target-directory -- "$candidate_dir" "$publish_dir" \
+        >/dev/null 2>&1; then
+      reconcile_publication_state >/dev/null 2>&1 || true
+    fi
+  fi
+  if (( had_previous )) && [[ "$publication_state" != original ]]; then
+    cleanup_safe=0
+    print -u2 -- "publication state is indeterminate; preserving repository locks and transaction paths for recovery"
+  fi
+  if (( publication_created && ! had_previous )) && [[ -e "$publish_dir" ]]; then
+    if (( test_mode )) \
+        && [[ ${ARCH_PKGS_PUBLISH_TEST_FAIL_FIRST_ROLLBACK:-0} == 1 ]]; then
+      first_rollback_ok=0
+    elif ! privileged mv -- "$publish_dir" "$failed_dir" >/dev/null 2>&1; then
+      first_rollback_ok=0
+    fi
+    if (( first_rollback_ok )); then
+      publication_created=0
+    else
+      cleanup_safe=0
+      print -u2 -- "first publication could not be rolled back; preserving repository locks for recovery"
+    fi
+  fi
+  privileged rmdir -- "$probe_a" "$probe_b" >/dev/null 2>&1 || true
+  if (( cleanup_safe && destination_lock_owned )); then
+    privileged rmdir -- "$lock_dir" >/dev/null 2>&1 || true
+  fi
+  if (( cleanup_safe )); then
+    if (( writer_lock_owned )) && [[ -d "$writer_lock" ]]; then
+      rmdir -- "$writer_lock" >/dev/null 2>&1 || true
+    fi
+  fi
+  if [[ -d "$manifest_dir" ]]; then
+    rm -rf -- "$manifest_dir"
+  fi
   return $exit_status
 }
 trap cleanup_publication EXIT
+
+privileged install -d -- "$publish_parent"
+destination_lock_acquired=0
+signal_deferral=1
+if privileged mkdir -- "$lock_dir" 2>/dev/null; then
+  destination_lock_acquired=1
+fi
+if (( destination_lock_acquired && test_mode )) \
+    && [[ ${ARCH_PKGS_PUBLISH_TEST_SIGNAL_AFTER_DESTINATION_LOCK:-0} == 1 ]]; then
+  kill -TERM $$
+fi
+(( destination_lock_acquired )) && destination_lock_owned=1
+finish_signal_deferral
+(( destination_lock_acquired )) \
+  || die "another publication appears to be active: $lock_dir"
+
+typeset -a retained_previous
+retained_previous=(${publish_parent}/${publish_leaf}.previous.*(N/))
+if [[ -e "$publish_dir" ]] && (( ${#retained_previous} >= publish_retention )); then
+  die "retained previous-repository limit reached (${publish_retention}); preserve or remove an accepted old copy before publishing"
+fi
+
+privileged mkdir -- "$probe_a" "$probe_b"
+if ! privileged mv --exchange --no-copy --no-target-directory -- "$probe_a" "$probe_b"; then
+  die "target filesystem does not support atomic repository exchange"
+fi
+privileged rmdir -- "$probe_a" "$probe_b"
 
 privileged install -d -m 0755 -- "$candidate_dir"
 privileged rsync -a --delete -- "${repo_dir}/" "${candidate_dir}/"
@@ -241,13 +399,35 @@ cmp -s -- "$staging_manifest" "$candidate_manifest" \
 
 if [[ -e "$publish_dir" ]]; then
   had_previous=1
-  if ! privileged mv --exchange --no-copy --no-target-directory -- "$candidate_dir" "$publish_dir"; then
-    die "could not atomically exchange candidate and published repositories"
+  previous_identity=$(directory_identity "$publish_dir")
+  candidate_identity=$(directory_identity "$candidate_dir")
+  exchange_status=0
+  identity_status=0
+  publication_state=indeterminate
+  signal_deferral=1
+  privileged mv --exchange --no-copy --no-target-directory -- "$candidate_dir" "$publish_dir" \
+    || exchange_status=$?
+  if (( test_mode )) \
+      && [[ ${ARCH_PKGS_PUBLISH_TEST_SIGNAL_DURING_PROMOTION:-0} == 1 ]]; then
+    kill -TERM $$
   fi
-  publication_swapped=1
+  if (( test_mode )) \
+      && [[ ${ARCH_PKGS_PUBLISH_TEST_FAIL_IDENTITY_AFTER_PROMOTION:-0} == 1 ]]; then
+    identity_status=1
+  elif ! reconcile_publication_state; then
+    identity_status=1
+  fi
+  finish_signal_deferral
+  (( ! identity_status )) \
+    || die "could not identify the published repository after atomic exchange"
+  [[ "$publication_state" == swapped ]] \
+    || die "could not atomically exchange candidate and published repositories (status ${exchange_status})"
 else
-  privileged mv -- "$candidate_dir" "$publish_dir" \
-    || die "could not promote candidate repository"
+  publication_created=1
+  if ! privileged mv -- "$candidate_dir" "$publish_dir"; then
+    publication_created=0
+    die "could not promote candidate repository"
+  fi
 fi
 
 if (( test_mode )) && [[ ${ARCH_PKGS_PUBLISH_TEST_SIGNAL_AFTER_PROMOTION:-0} == 1 ]]; then
@@ -264,20 +444,41 @@ fi
 
 if (( ! post_promotion_verified )); then
   if (( had_previous )); then
+    restore_status=0
+    identity_status=0
+    publication_state=indeterminate
+    signal_deferral=1
     privileged mv --exchange --no-copy --no-target-directory -- "$candidate_dir" "$publish_dir" \
-      || die "published verification failed and the previous repository could not be restored"
-    publication_swapped=0
+      || restore_status=$?
+    if (( test_mode )) \
+        && [[ ${ARCH_PKGS_PUBLISH_TEST_SIGNAL_DURING_RESTORATION:-0} == 1 ]]; then
+      kill -TERM $$
+    fi
+    if (( test_mode )) \
+        && [[ ${ARCH_PKGS_PUBLISH_TEST_FAIL_IDENTITY_AFTER_RESTORATION:-0} == 1 ]]; then
+      identity_status=1
+    elif ! reconcile_publication_state; then
+      identity_status=1
+    fi
+    finish_signal_deferral
+    (( ! identity_status )) \
+      || die "published verification failed and the restored repository could not be identified"
+    [[ "$publication_state" == original ]] \
+      || die "published verification failed and the previous repository could not be restored (status ${restore_status})"
     privileged mv -- "$candidate_dir" "$failed_dir"
     die "published repository failed post-promotion verification; previous repository restored; failed copy retained at $failed_dir"
   fi
   privileged mv -- "$publish_dir" "$failed_dir"
+  publication_created=0
   die "published repository failed post-promotion verification; no previous repository existed; failed copy retained at $failed_dir"
 fi
 
 if (( had_previous )); then
   privileged mv -- "$candidate_dir" "$previous_dir"
-  publication_swapped=0
+  publication_state=original
   print -- "Retained previous pacman repo: $previous_dir"
+else
+  publication_created=0
 fi
 print -- "Published verified pacman repo: $publish_dir"
 print -- "Verified repository-manifest SHA-256: $staging_manifest_sha256"
