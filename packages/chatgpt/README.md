@@ -74,13 +74,38 @@ package_file=$(jq -er '.package.fileName' "$baseline")
 package_name=$(jq -er '.package.name' "$baseline")
 package_version=$(jq -er '.package.version' "$baseline")
 package_path=${repo_dir}/${package_file}
+database_entry=${package_name}-${package_version}/desc
+database_member=$(bsdtar -tf "${repo_dir}/nisavid.db.tar.zst" | \
+  awk -v expected="$database_entry" '
+    { normalized = $0; sub(/^\.\//, "", normalized) }
+    normalized == expected { print $0 }
+  ')
 verification_dir=$(mktemp -d)
 trap 'rm -rf -- "$verification_dir"' EXIT
 
 [[ "$(sha256sum -- "$package_path" | awk '{print $1}')" == \
   "$(jq -er '.package.sha256' "$baseline")" ]]
-[[ "$(bsdtar -tf "${repo_dir}/nisavid.db.tar.zst" | \
-  grep -xcF "${package_name}-${package_version}/desc")" == 1 ]]
+if [[ "$database_member" != "$database_entry" \
+    && "$database_member" != "./${database_entry}" ]]; then
+  print -u2 -- "repository database must contain exactly one member: $database_entry"
+  exit 1
+fi
+bsdtar -xOf "${repo_dir}/nisavid.db.tar.zst" "$database_member" \
+  >"${verification_dir}/repo-desc"
+repo_desc_value() {
+  local field=$1
+  if [[ "$(grep -cxF "%${field}%" "${verification_dir}/repo-desc" || true)" != 1 ]]; then
+    print -u2 -- "repository desc must contain exactly one %${field}% field"
+    return 1
+  fi
+  awk -v marker="%${field}%" \
+    '$0 == marker { getline; print; exit }' "${verification_dir}/repo-desc"
+}
+[[ "$(repo_desc_value FILENAME)" == "$package_file" ]]
+[[ "$(repo_desc_value CSIZE)" == \
+  "$(jq -er '.package.sizeBytes | tostring' "$baseline")" ]]
+[[ "$(repo_desc_value SHA256SUM)" == \
+  "$(jq -er '.package.sha256' "$baseline")" ]]
 
 bsdtar -xOf "$package_path" .PKGINFO >"${verification_dir}/PKGINFO"
 [[ "$(sed -n 's/^pkgname = //p' "${verification_dir}/PKGINFO")" == \
