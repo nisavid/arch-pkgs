@@ -64,6 +64,12 @@ tools/ingest_chatgpt.zsh \
   --record-sha256 RECORD_SHA256 \
   --source-dir /path/to/chatgpt-linux \
   --seed-repo-dir /srv/pacman/nisavid/x86_64
+```
+
+Run the staged verification in `packages/chatgpt/README.md`. Only after it
+succeeds, publish and install:
+
+```bash
 tools/publish_pacman_repo.zsh
 sudo pacman -Syu chatgpt
 ```

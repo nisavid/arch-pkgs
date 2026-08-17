@@ -122,6 +122,38 @@ repo_database_package_names() {
   done
 }
 
+validate_seed_repo_database_archives() {
+  local database=$1 repository_dir=$2 description_entry package_description
+  local package_file_name package_path expected_sha256 expected_size actual_size
+  [[ -f "$database" && ! -L "$database" ]] \
+    || die "staged seed repository database is missing or not a regular file: ${database:t}"
+  for description_entry in ${(f)"$(bsdtar -tf "$database" | sed -n 's#/desc$#/desc#p')"}; do
+    package_description=$(bsdtar -xOf "$database" "$description_entry" 2>/dev/null)
+    package_file_name=$(print -r -- "$package_description" \
+      | awk '/^%FILENAME%$/ { getline; print; exit }')
+    [[ -n "$package_file_name" ]] \
+      || die "seed repository database entry has no package filename: $description_entry"
+    [[ "$package_file_name" == "${package_file_name:t}" \
+      && "$package_file_name" != "." && "$package_file_name" != ".." ]] \
+      || die "seed repository database contains an unsafe package filename: $package_file_name"
+    package_path=${repository_dir}/${package_file_name}
+    [[ -f "$package_path" && ! -L "$package_path" ]] \
+      || die "seed repo is missing database package archive: $package_file_name"
+    expected_size=$(print -r -- "$package_description" \
+      | awk '/^%CSIZE%$/ { getline; print; exit }')
+    [[ -n "$expected_size" && "$expected_size" == <-> ]] \
+      || die "seed repository database has an invalid package size: $package_file_name"
+    actual_size=$(stat -c '%s' -- "$package_path")
+    [[ "$actual_size" == "$expected_size" ]] \
+      || die "seed repository database package size does not match: $package_file_name"
+    expected_sha256=$(print -r -- "$package_description" \
+      | awk '/^%SHA256SUM%$/ { getline; print; exit }')
+    require_sha256 "$expected_sha256" "seed repository database package SHA-256"
+    [[ "$(sha256_file "$package_path")" == "$expected_sha256" ]] \
+      || die "seed repository database package SHA-256 does not match: $package_file_name"
+  done
+}
+
 while (( $# )); do
   case "$1" in
     --artifact)
@@ -540,9 +572,12 @@ if [[ -d "$repo_dir" ]]; then
   cp -a -- "$repo_dir"/. "$stage_dir"/
 fi
 if [[ -n "$seed_repo_dir" ]]; then
-  [[ -f "${seed_repo_dir}/${repo_name}.db.tar.zst" ]] \
+  seed_repo_database=${seed_repo_dir}/${repo_name}.db.tar.zst
+  [[ -f "$seed_repo_database" && ! -L "$seed_repo_database" ]] \
     || die "seed repo is missing ${repo_name}.db.tar.zst: $seed_repo_dir"
   cp -a -- "$seed_repo_dir"/. "$stage_dir"/
+  validate_seed_repo_database_archives \
+    "${stage_dir}/${repo_name}.db.tar.zst" "$stage_dir"
 fi
 
 repo_db=${stage_dir}/${repo_name}.db.tar.zst

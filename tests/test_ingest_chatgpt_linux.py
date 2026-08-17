@@ -584,6 +584,115 @@ class ChatGPTLinuxIngestTests(unittest.TestCase):
         self.assertFalse(Path(f"{self.repo}.writer.lock").exists())
         self.assertFalse(list(self.repo.parent.glob(f".{self.repo.name}.ingest.*")))
 
+    def test_seed_repo_missing_database_package_archive_is_rejected(self):
+        seed_repo = self.root / "seed-repo"
+        seed_repo.mkdir()
+        unrelated = self._create_package(
+            "unrelated", "1.0-1", {"usr/bin/unrelated": b"missing archive\n"}
+        )
+        seeded_unrelated = seed_repo / unrelated.name
+        shutil.copy2(unrelated, seeded_unrelated)
+        subprocess.run(
+            [
+                "repo-add",
+                str(seed_repo / "fixture.db.tar.zst"),
+                str(seeded_unrelated),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=True,
+        )
+        seeded_unrelated.unlink()
+        seed_snapshot = {
+            path.name: self._sha256(path)
+            for path in seed_repo.iterdir()
+            if path.is_file()
+        }
+
+        result = self._run_ingest(check=False, seed_repo_dir=seed_repo)
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("seed repo is missing database package archive", result.stderr)
+        self.assertIn(unrelated.name, result.stderr)
+        self.assertEqual(list(self.repo.iterdir()), [])
+        self.assertEqual(
+            {
+                path.name: self._sha256(path)
+                for path in seed_repo.iterdir()
+                if path.is_file()
+            },
+            seed_snapshot,
+        )
+        self.assertFalse(Path(f"{self.repo}.writer.lock").exists())
+        self.assertFalse(list(self.repo.parent.glob(f".{self.repo.name}.ingest.*")))
+
+    def test_seed_repo_archive_replaced_during_copy_is_rejected(self):
+        seed_repo = self.root / "seed-repo"
+        seed_repo.mkdir()
+        unrelated = self._create_package(
+            "unrelated", "1.0-1", {"usr/bin/unrelated": b"accepted archive\n"}
+        )
+        seeded_unrelated = seed_repo / unrelated.name
+        shutil.copy2(unrelated, seeded_unrelated)
+        subprocess.run(
+            [
+                "repo-add",
+                str(seed_repo / "fixture.db.tar.zst"),
+                str(seeded_unrelated),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=True,
+        )
+        replacement = self.root / "replacement.pkg.tar.zst"
+        replacement_bytes = bytearray(seeded_unrelated.read_bytes())
+        replacement_bytes[-1] ^= 1
+        replacement.write_bytes(replacement_bytes)
+        self.assertEqual(replacement.stat().st_size, seeded_unrelated.stat().st_size)
+        fake_bin = self.root / "seed-copy-race-bin"
+        fake_bin.mkdir()
+        real_cp = shutil.which("cp")
+        self.assertIsNotNone(real_cp)
+        copy_invoked = self.root / "seed-copy-race-invoked"
+        fake_cp = fake_bin / "cp"
+        fake_cp.write_text(
+            "#!/usr/bin/python3\n"
+            "import os\n"
+            "import pathlib\n"
+            "import shutil\n"
+            "import sys\n"
+            f"real_cp = {real_cp!r}\n"
+            f"seed = pathlib.Path({str(seed_repo)!r}).resolve()\n"
+            f"seeded_archive = pathlib.Path({str(seeded_unrelated)!r})\n"
+            f"replacement = pathlib.Path({str(replacement)!r})\n"
+            f"marker = pathlib.Path({str(copy_invoked)!r})\n"
+            "sources = [pathlib.Path(value).resolve() for value in sys.argv[1:] if not value.startswith('-')]\n"
+            "if seed in sources:\n"
+            "    shutil.copy2(replacement, seeded_archive)\n"
+            "    marker.touch()\n"
+            "os.execv(real_cp, [real_cp, *sys.argv[1:]])\n",
+            encoding="utf-8",
+        )
+        fake_cp.chmod(0o755)
+        environment = os.environ.copy()
+        for key in list(environment):
+            if key.startswith("BASH_FUNC_"):
+                del environment[key]
+        environment["PATH"] = f"{fake_bin}:{environment['PATH']}"
+
+        result = self._run_ingest(
+            check=False,
+            environment=environment,
+            seed_repo_dir=seed_repo,
+        )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("database package SHA-256 does not match", result.stderr)
+        self.assertTrue(copy_invoked.exists())
+        self.assertEqual(list(self.repo.iterdir()), [])
+        self.assertFalse(Path(f"{self.repo}.writer.lock").exists())
+        self.assertFalse(list(self.repo.parent.glob(f".{self.repo.name}.ingest.*")))
+
     def test_missing_supplied_seed_repo_is_rejected(self):
         missing_seed_repo = self.root / "missing-seed-repo"
 
@@ -619,6 +728,9 @@ class ChatGPTLinuxIngestTests(unittest.TestCase):
         )
         fake_mktemp.chmod(0o755)
         environment = os.environ.copy()
+        for key in list(environment):
+            if key.startswith("BASH_FUNC_"):
+                del environment[key]
         environment["PATH"] = f"{fake_bin}:{environment['PATH']}"
 
         result = self._run_ingest(
@@ -957,7 +1069,7 @@ class PacmanRepoPublicationTests(unittest.TestCase):
             "if is_retention_move and result.returncode == 0 and signal_after_retention_move:\n"
             "    os.kill(os.getppid(), getattr(signal, f'SIG{signal_after_retention_move}'))\n"
             "    time.sleep(0.2)\n"
-            "    raise SystemExit({'HUP': 129, 'TERM': 143}[signal_after_retention_move])\n"
+            "    raise SystemExit(0)\n"
             "raise SystemExit(result.returncode)\n",
             encoding="utf-8",
         )
@@ -1001,6 +1113,8 @@ class PacmanRepoPublicationTests(unittest.TestCase):
             )
 
             self.assertEqual(result.returncode, expected_returncode, result.stderr)
+            self.assertNotIn("could not be retained", result.stderr)
+            self.assertNotIn("preserving repository locks", result.stderr)
             self.assertEqual(
                 (publish / "fixture.db.tar.zst").read_bytes(), b"new database"
             )
