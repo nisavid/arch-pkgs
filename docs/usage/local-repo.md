@@ -16,7 +16,7 @@ Install the Arch packaging tools and artifact-ingest prerequisites on the build
 host:
 
 ```bash
-sudo pacman -S --needed base-devel git jq libarchive python zsh zstd
+sudo pacman -S --needed base-devel git jq libarchive python rsync zsh zstd
 ```
 
 The ChatGPT artifact-ingest lane uses GNU `cp` with `--reflink` support and
