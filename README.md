@@ -101,8 +101,10 @@ The full local-repo setup, including the pacman stanza, is in
 - **I want to try `utilyze`.** Read
   [`packages/utilyze/README.Arch.md`](packages/utilyze/README.Arch.md), then
   check the active validation work in [`docs/backlog.md`](docs/backlog.md).
-- **I am maintaining the repo.** Read `AGENTS.md` and the repo-local skills in
-  `.agents/skills/`.
+- **I am maintaining the repo.** Read `AGENTS.md`, the checked
+  [`packages/`](packages/) refresh index, and the repo-local skills in
+  `.agents/skills/`. Before review, run
+  `python3 tools/check_repo_consistency.py` from the repository root.
 
 ## Repository Map
 
