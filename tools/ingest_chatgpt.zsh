@@ -12,6 +12,7 @@ record_sha256=
 source_dir=${CHATGPT_LINUX_DIR:-${repo_root}/upstream/chatgpt-linux}
 repo_dir=${repo_root}/repo/x86_64
 repo_name=nisavid
+seed_repo_dir=
 dry_run=0
 accepted_baseline=${repo_root}/packages/chatgpt/fallback-baseline-2026-08-16.json
 test_signal_after_backup=${ARCH_PKGS_INGEST_TEST_SIGNAL_AFTER_BACKUP:-0}
@@ -25,7 +26,7 @@ usage() {
   cat <<EOF
 Usage: ${script_name} --artifact FILE --verification-record FILE \\
   --record-sha256 SHA256 [--source-dir DIR] [--repo-dir DIR] \\
-  [--repo-name NAME] [--dry-run]
+  [--repo-name NAME] [--seed-repo-dir DIR] [--dry-run]
 
 Verify and stage one immutable chatgpt-linux fallback package. The artifact,
 verification record, record digest, and annotated source tag must agree exactly.
@@ -45,6 +46,14 @@ need_command() {
 require_reflink_cp() {
   cp --help 2>/dev/null | grep -q -- '--reflink' \
     || die "ingest requires cp with --reflink support"
+}
+
+validate_seed_repo_dir() {
+  [[ "$seed_repo_dir" != "/" ]] || die "seed repo directory must not be /"
+  [[ ! -L "$seed_repo_dir" ]] \
+    || die "seed repo directory must not be a symlink: $seed_repo_dir"
+  [[ ! -e "$seed_repo_dir" || -d "$seed_repo_dir" ]] \
+    || die "seed repo directory target exists and is not a directory: $seed_repo_dir"
 }
 
 require_sha256() {
@@ -145,6 +154,11 @@ while (( $# )); do
       repo_name=$2
       shift 2
       ;;
+    --seed-repo-dir)
+      (( $# >= 2 )) || die "--seed-repo-dir requires a value"
+      seed_repo_dir=${2:a}
+      shift 2
+      ;;
     --dry-run)
       dry_run=1
       shift
@@ -189,6 +203,7 @@ git -C "$source_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1 \
 [[ ! -L "$repo_dir" ]] || die "repo directory must not be a symlink: $repo_dir"
 [[ ! -e "$repo_dir" || -d "$repo_dir" ]] \
   || die "repo directory target exists and is not a directory: $repo_dir"
+[[ -z "$seed_repo_dir" ]] || validate_seed_repo_dir
 
 require_sha256 "$record_sha256" "verification record SHA-256"
 accepted_record_sha256=$(jq -er '.verification.recordSha256' "$accepted_baseline") \
@@ -511,11 +526,23 @@ fi
 finish_signal_deferral
 (( lock_acquired )) \
   || die "another repository writer appears to be active: $lock_dir"
+[[ -z "$seed_repo_dir" ]] || validate_seed_repo_dir
 stage_dir=$(mktemp -d "${repo_parent}/.${repo_leaf}.ingest.XXXXXX")
 temporary_paths+=("$stage_dir")
 
 if [[ -d "$repo_dir" ]]; then
+  if [[ -n "$seed_repo_dir" ]]; then
+    for existing_entry in "$repo_dir"/*(DN); do
+      [[ "${existing_entry:t}" == .gitignore ]] \
+        || die "staging is not empty; --seed-repo-dir refuses to replace it: $repo_dir"
+    done
+  fi
   cp -a -- "$repo_dir"/. "$stage_dir"/
+fi
+if [[ -n "$seed_repo_dir" && -d "$seed_repo_dir" ]]; then
+  [[ -f "${seed_repo_dir}/${repo_name}.db.tar.zst" ]] \
+    || die "seed repo is missing ${repo_name}.db.tar.zst: $seed_repo_dir"
+  cp -a -- "$seed_repo_dir"/. "$stage_dir"/
 fi
 
 repo_db=${stage_dir}/${repo_name}.db.tar.zst
@@ -565,7 +592,9 @@ if ! mv -- "$stage_dir" "$repo_dir"; then
   fi
   die "could not promote verified staging repository"
 fi
-temporary_paths=("${(@)temporary_paths:#${(q)stage_dir}}")
+stage_path_index=${temporary_paths[(Ie)$stage_dir]}
+(( stage_path_index )) || die "promoted staging path is not tracked for cleanup"
+temporary_paths[$stage_path_index]=()
 if [[ -n "$backup_dir" && -e "$backup_dir" ]]; then
   rm -rf -- "$backup_dir"
 fi

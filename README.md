@@ -53,8 +53,8 @@ annotated source tag. It never selects by version or filesystem time and never
 rebuilds the package. See [`packages/chatgpt/`](packages/chatgpt/) for the
 accepted baseline and complete command.
 
-Before the first ingest in a fresh checkout, seed `repo/x86_64/` from the
-complete published repository as documented in
+Before the first ingest in a fresh checkout, pass the complete published
+repository as the ingest seed, as documented in
 [`docs/usage/local-repo.md`](docs/usage/local-repo.md#refresh-the-checkout-local-repo).
 
 ```bash
@@ -62,7 +62,8 @@ tools/ingest_chatgpt.zsh \
   --artifact /path/to/chatgpt.pkg.tar.zst \
   --verification-record /path/to/verification-record.json \
   --record-sha256 RECORD_SHA256 \
-  --source-dir /path/to/chatgpt-linux
+  --source-dir /path/to/chatgpt-linux \
+  --seed-repo-dir /srv/pacman/nisavid/x86_64
 tools/publish_pacman_repo.zsh
 sudo pacman -Syu chatgpt
 ```

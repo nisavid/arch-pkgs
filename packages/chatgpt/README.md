@@ -29,15 +29,22 @@ Its public, path-free provenance tuple is recorded in
 
 ## Ingest
 
-Run the helper with the retained evidence set and exact record digest:
+For the first ingest into otherwise-empty checkout-local staging, run the
+helper with the retained evidence set, exact record digest, and complete
+published repository as the seed:
 
 ```zsh
 tools/ingest_chatgpt.zsh \
   --artifact /path/to/chatgpt-26.810.52044-1-x86_64.pkg.tar.zst \
   --verification-record /path/to/verification-record.json \
   --record-sha256 b7761927b93f4164cf34c40d5e789d16e8b2b2325a83a9a77565bdcdbd64e923 \
-  --source-dir /path/to/chatgpt-linux
+  --source-dir /path/to/chatgpt-linux \
+  --seed-repo-dir /srv/pacman/nisavid/x86_64
 ```
+
+The seed is read while the helper holds the repository-writer lock. Omit
+`--seed-repo-dir` on later ingests after checkout-local staging already contains
+the complete repository.
 
 The helper first binds the record digest and full accepted tuple to the tracked
 baseline, then snapshots the artifact and evidence before parsing them. It
@@ -47,6 +54,85 @@ object, so unrelated working-tree files cannot change verification. It then
 replaces only the `chatgpt` entry and the recorded legacy `codex-app` and
 `codex-desktop` entries in staging, and writes allowlisted public provenance
 without local paths.
+
+Verify the staged repository against the tracked baseline before publication.
+These checks derive the accepted identity from the repository rather than
+repeating a version or digest by hand:
+
+```zsh
+set -euo pipefail
+
+baseline=packages/chatgpt/fallback-baseline-2026-08-16.json
+repo_dir=repo/x86_64
+package_file=$(jq -er '.package.fileName' "$baseline")
+package_name=$(jq -er '.package.name' "$baseline")
+package_version=$(jq -er '.package.version' "$baseline")
+package_path=${repo_dir}/${package_file}
+verification_dir=$(mktemp -d)
+trap 'rm -rf -- "$verification_dir"' EXIT
+
+[[ "$(sha256sum -- "$package_path" | awk '{print $1}')" == \
+  "$(jq -er '.package.sha256' "$baseline")" ]]
+[[ "$(bsdtar -tf "${repo_dir}/nisavid.db.tar.zst" | \
+  grep -xcF "${package_name}-${package_version}/desc")" == 1 ]]
+
+bsdtar -xOf "$package_path" .PKGINFO >"${verification_dir}/PKGINFO"
+[[ "$(sed -n 's/^pkgname = //p' "${verification_dir}/PKGINFO")" == \
+  "$package_name" ]]
+[[ "$(sed -n 's/^pkgver = //p' "${verification_dir}/PKGINFO")" == \
+  "$package_version" ]]
+[[ "$(sed -n 's/^arch = //p' "${verification_dir}/PKGINFO")" == \
+  "$(jq -er '.package.architecture' "$baseline")" ]]
+[[ "$(sed -n 's/^provides = //p' "${verification_dir}/PKGINFO" | sort)" == \
+  "$(jq -r '.package.provides[]' "$baseline" | sort)" ]]
+[[ "$(sed -n 's/^conflict = //p' "${verification_dir}/PKGINFO" | sort)" == \
+  "$(jq -r '.package.conflicts[]' "$baseline" | sort)" ]]
+[[ "$(sed -n 's/^replaces = //p' "${verification_dir}/PKGINFO" | sort)" == \
+  "$(jq -r '.package.replaces[]' "$baseline" | sort)" ]]
+
+bsdtar -tf "$package_path" | sed 's#^\./##' >"${verification_dir}/archive-list"
+for required_path in \
+  usr/bin/chatgpt \
+  usr/bin/chatgpt-updater \
+  usr/lib/systemd/user/chatgpt-updater.service \
+  usr/share/applications/chatgpt.desktop \
+  usr/share/polkit-1/actions/com.github.nisavid.chatgpt.update.policy \
+  opt/chatgpt/start.sh; do
+  grep -qxF "$required_path" "${verification_dir}/archive-list"
+done
+
+jq -e --slurpfile accepted "$baseline" '
+  . as $actual |
+  $accepted[0] as $baseline |
+  $actual.schemaVersion == 1 and
+  $actual.purpose == "retained-fallback-before-official-linux-app-evaluation" and
+  ($actual.recordedAt | type == "string" and length > 0) and
+  ($actual | keys | sort) == ([
+    "generationEvidence", "hostedValidation", "package", "payloadManifest",
+    "purpose", "recordedAt", "schemaVersion", "source",
+    "verificationRecordSha256"
+  ] | sort) and
+  $actual.source == $baseline.source and
+  $actual.package == $baseline.package and
+  ($actual.payloadManifest | {fileName, fileSha256, manifestSha256, entryCount}) ==
+    $baseline.payloadManifest and
+  $actual.verificationRecordSha256 == $baseline.verification.recordSha256 and
+  $actual.generationEvidence.acceptanceVerdict == $baseline.verification.acceptanceVerdict and
+  $actual.generationEvidence.blockerCount == $baseline.verification.blockerCount and
+  $actual.generationEvidence.inconclusiveReasonCount == $baseline.verification.inconclusiveReasonCount and
+  $actual.generationEvidence.optionalWarningCount == $baseline.verification.optionalWarningCount and
+  $actual.generationEvidence.decisionFileSha256 == $baseline.verification.generationDecisionSha256 and
+  $actual.generationEvidence.buildInfoFileSha256 == $baseline.verification.buildInfoSha256 and
+  $actual.hostedValidation.headSha == $baseline.hostedValidation.headSha and
+  $actual.hostedValidation.repositoryActionsQuiescent ==
+    $baseline.hostedValidation.repositoryActionsQuiescent and
+  ($baseline.hostedValidation.runs | all(. as $required |
+    $actual.hostedValidation.runs | any(. == $required))) and
+  ($baseline.hostedValidation.requiredJobs | all(. as $required |
+    $actual.hostedValidation.requiredJobs | any(. == $required))) and
+  ([$actual | .. | strings | select(test("^(file://)?/"))] | length == 0)
+' "${repo_dir}/chatgpt.provenance.json" >/dev/null
+```
 
 ## Install and updater boundary
 
@@ -69,10 +155,12 @@ workflow, verify the published package SHA-256, then install through pacman:
 sudo pacman -Syu chatgpt
 ```
 
-The package transaction replaces `codex-app`. Keep `chatgpt-updater.service`
-masked through installed and interactive acceptance. After acceptance, run the
-following only in the one designated updater-authority user's session; leave it
-masked and inactive for every other user:
+The package transaction replaces an installed `codex-app` producer and
+supersedes the legacy `codex-desktop` virtual identity. Keep
+`chatgpt-updater.service` masked through installed and interactive acceptance.
+After acceptance, run the following only in the one designated
+updater-authority user's session; leave it masked and inactive for every other
+user:
 
 ```zsh
 systemctl --user unmask chatgpt-updater.service
