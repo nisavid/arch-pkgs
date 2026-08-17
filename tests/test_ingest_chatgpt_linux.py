@@ -249,6 +249,12 @@ class ChatGPTLinuxIngestTests(unittest.TestCase):
                         "id": 1234,
                         "conclusion": "success",
                         "url": "https://github.com/nisavid/chatgpt-linux/actions/runs/1234",
+                    },
+                    {
+                        "name": "Scheduled verification",
+                        "id": 1235,
+                        "conclusion": "success",
+                        "url": "https://github.com/nisavid/chatgpt-linux/actions/runs/1235",
                     }
                 ],
                 "requiredJobs": [
@@ -257,6 +263,12 @@ class ChatGPTLinuxIngestTests(unittest.TestCase):
                         "id": 5678,
                         "conclusion": "success",
                         "url": "https://github.com/nisavid/chatgpt-linux/actions/runs/1234/job/5678",
+                    },
+                    {
+                        "name": "Verify package provenance",
+                        "id": 5679,
+                        "conclusion": "success",
+                        "url": "https://github.com/nisavid/chatgpt-linux/actions/runs/1235/job/5679",
                     }
                 ],
             },
@@ -299,6 +311,14 @@ class ChatGPTLinuxIngestTests(unittest.TestCase):
                 ],
                 "optionalWarningCount": 0,
             },
+            "hostedValidation": {
+                "headSha": record["hostedValidation"]["headSha"],
+                "repositoryActionsQuiescent": record["hostedValidation"][
+                    "repositoryActionsQuiescent"
+                ],
+                "runs": record["hostedValidation"]["runs"][:1],
+                "requiredJobs": record["hostedValidation"]["requiredJobs"][:1],
+            },
         }
         (helper_package / "fallback-baseline-2026-08-16.json").write_text(
             json.dumps(baseline, sort_keys=True) + "\n", encoding="utf-8"
@@ -310,24 +330,28 @@ class ChatGPTLinuxIngestTests(unittest.TestCase):
         check: bool = True,
         record_sha256: str | None = None,
         environment: dict[str, str] | None = None,
+        seed_repo_dir: Path | None = None,
     ):
+        command = [
+            "zsh",
+            str(self.ingest),
+            "--artifact",
+            str(self.artifact),
+            "--verification-record",
+            str(self.record),
+            "--record-sha256",
+            record_sha256 or self.record_sha256,
+            "--source-dir",
+            str(self.source),
+            "--repo-dir",
+            str(self.repo),
+            "--repo-name",
+            "fixture",
+        ]
+        if seed_repo_dir is not None:
+            command.extend(["--seed-repo-dir", str(seed_repo_dir)])
         result = subprocess.run(
-            [
-                "zsh",
-                str(self.ingest),
-                "--artifact",
-                str(self.artifact),
-                "--verification-record",
-                str(self.record),
-                "--record-sha256",
-                record_sha256 or self.record_sha256,
-                "--source-dir",
-                str(self.source),
-                "--repo-dir",
-                str(self.repo),
-                "--repo-name",
-                "fixture",
-            ],
+            command,
             cwd=REPO_ROOT,
             env=environment,
             text=True,
@@ -404,6 +428,19 @@ class ChatGPTLinuxIngestTests(unittest.TestCase):
         self.assertEqual(
             provenance["hostedValidation"]["requiredJobs"][0]["id"], 5678
         )
+        baseline = json.loads(
+            (
+                self.ingest.parents[1]
+                / "packages/chatgpt/fallback-baseline-2026-08-16.json"
+            ).read_text(encoding="utf-8")
+        )
+        for collection in ("runs", "requiredJobs"):
+            self.assertGreater(
+                len(provenance["hostedValidation"][collection]),
+                len(baseline["hostedValidation"][collection]),
+            )
+            for required in baseline["hostedValidation"][collection]:
+                self.assertIn(required, provenance["hostedValidation"][collection])
         self.assertNotIn(str(self.root), json.dumps(provenance))
         self.assertIn("Staged exact ChatGPT fallback", result.stdout)
 
@@ -456,7 +493,29 @@ class ChatGPTLinuxIngestTests(unittest.TestCase):
         sentinel.write_bytes(b"last known good")
         prerequisite_bin = self.root / "prerequisite-bin"
         prerequisite_bin.mkdir()
-        for command_name in ("awk", "bsdtar", "cp", "env", "git", "grep", "zsh"):
+        for command_name in (
+            "awk",
+            "bsdtar",
+            "cp",
+            "env",
+            "git",
+            "grep",
+            "jq",
+            "mkdir",
+            "mktemp",
+            "mv",
+            "python3",
+            "repo-add",
+            "repo-remove",
+            "rm",
+            "rmdir",
+            "sed",
+            "sha256sum",
+            "sort",
+            "stat",
+            "zsh",
+            "zstd",
+        ):
             command_path = shutil.which(command_name)
             self.assertIsNotNone(command_path)
             (prerequisite_bin / command_name).symlink_to(command_path)
@@ -473,6 +532,143 @@ class ChatGPTLinuxIngestTests(unittest.TestCase):
         self.assertEqual(sentinel.read_bytes(), b"last known good")
         self.assertEqual(sorted(path.name for path in self.repo.iterdir()), ["keep.txt"])
         self.assertFalse(Path(f"{self.repo}.writer.lock").exists())
+
+    def test_seed_repo_preserves_unrelated_package_and_database_entry(self):
+        seed_repo = self.root / "seed-repo"
+        seed_repo.mkdir()
+        unrelated = self._create_package(
+            "unrelated", "1.0-1", {"usr/bin/unrelated": b"preserve me\n"}
+        )
+        seeded_unrelated = seed_repo / unrelated.name
+        shutil.copy2(unrelated, seeded_unrelated)
+        subprocess.run(
+            [
+                "repo-add",
+                str(seed_repo / "fixture.db.tar.zst"),
+                str(seeded_unrelated),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=True,
+        )
+        seed_snapshot = {
+            path.name: self._sha256(path)
+            for path in seed_repo.iterdir()
+            if path.is_file()
+        }
+
+        result = self._run_ingest(check=False, seed_repo_dir=seed_repo)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.repo / self.artifact.name).is_file())
+        self.assertEqual(
+            (self.repo / unrelated.name).read_bytes(), unrelated.read_bytes()
+        )
+        database_entries = subprocess.run(
+            ["bsdtar", "-tf", str(self.repo / "fixture.db.tar.zst")],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=True,
+        ).stdout
+        self.assertIn("chatgpt-26.810.52044-1/", database_entries)
+        self.assertIn("unrelated-1.0-1/", database_entries)
+        self.assertEqual(
+            {
+                path.name: self._sha256(path)
+                for path in seed_repo.iterdir()
+                if path.is_file()
+            },
+            seed_snapshot,
+        )
+        self.assertFalse(Path(f"{self.repo}.writer.lock").exists())
+        self.assertFalse(list(self.repo.parent.glob(f".{self.repo.name}.ingest.*")))
+
+    def test_missing_seed_repo_initializes_empty_staging(self):
+        missing_seed_repo = self.root / "missing-seed-repo"
+
+        result = self._run_ingest(check=False, seed_repo_dir=missing_seed_repo)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(missing_seed_repo.exists())
+        self.assertTrue((self.repo / self.artifact.name).is_file())
+        self.assertTrue((self.repo / "fixture.db.tar.zst").is_file())
+        self.assertFalse(Path(f"{self.repo}.writer.lock").exists())
+
+    def test_seed_repo_respects_preheld_staging_writer_lock(self):
+        seed_repo = self.root / "seed-repo"
+        seed_repo.mkdir()
+        seed_sentinel = seed_repo / "keep.txt"
+        seed_sentinel.write_bytes(b"seed remains unchanged")
+        writer_lock = Path(f"{self.repo}.writer.lock")
+        writer_lock.mkdir()
+
+        result = self._run_ingest(check=False, seed_repo_dir=seed_repo)
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("another repository writer appears to be active", result.stderr)
+        self.assertEqual(seed_sentinel.read_bytes(), b"seed remains unchanged")
+        self.assertEqual(list(self.repo.iterdir()), [])
+        self.assertTrue(writer_lock.is_dir())
+
+    def test_seed_repo_rejects_nonempty_staging_without_mutation(self):
+        staging_sentinel = self.repo / "keep.txt"
+        staging_sentinel.write_bytes(b"staging remains unchanged")
+        seed_repo = self.root / "seed-repo"
+        seed_repo.mkdir()
+        seed_sentinel = seed_repo / "seed.txt"
+        seed_sentinel.write_bytes(b"seed remains unchanged")
+
+        result = self._run_ingest(check=False, seed_repo_dir=seed_repo)
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("seed", result.stderr.lower())
+        self.assertIn("not empty", result.stderr.lower())
+        self.assertEqual(staging_sentinel.read_bytes(), b"staging remains unchanged")
+        self.assertEqual(seed_sentinel.read_bytes(), b"seed remains unchanged")
+        self.assertEqual(sorted(path.name for path in self.repo.iterdir()), ["keep.txt"])
+        self.assertFalse(Path(f"{self.repo}.writer.lock").exists())
+
+    def test_promoted_stage_path_recreated_under_space_parent_survives_cleanup(self):
+        real_mv = shutil.which("mv")
+        self.assertIsNotNone(real_mv)
+        spaced_parent = self.root / "repo parent"
+        spaced_parent.mkdir()
+        self.repo = spaced_parent / "repo"
+        fake_bin = self.root / "mv-bin"
+        fake_bin.mkdir()
+        fake_mv = fake_bin / "mv"
+        fake_mv.write_text(
+            "#!/usr/bin/python3\n"
+            "import pathlib\n"
+            "import subprocess\n"
+            "import sys\n"
+            f"real_mv = {real_mv!r}\n"
+            f"repo = pathlib.Path({str(self.repo)!r})\n"
+            "result = subprocess.run([real_mv, *sys.argv[1:]])\n"
+            "if result.returncode == 0 and pathlib.Path(sys.argv[-1]) == repo:\n"
+            "    old_stage = pathlib.Path(sys.argv[-2])\n"
+            "    if old_stage.name.startswith('.repo.ingest.'):\n"
+            "        old_stage.mkdir()\n"
+            "        (old_stage / 'sentinel').write_bytes(b'preserve me')\n"
+            "raise SystemExit(result.returncode)\n",
+            encoding="utf-8",
+        )
+        fake_mv.chmod(0o755)
+        environment = os.environ.copy()
+        for key in list(environment):
+            if key.startswith("BASH_FUNC_"):
+                del environment[key]
+        environment["PATH"] = f"{fake_bin}:{environment['PATH']}"
+
+        result = self._run_ingest(check=False, environment=environment)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        recreated_stages = list(spaced_parent.glob(".repo.ingest.*"))
+        self.assertEqual(len(recreated_stages), 1)
+        self.assertEqual(
+            (recreated_stages[0] / "sentinel").read_bytes(), b"preserve me"
+        )
 
     def test_live_exported_bash_functions_are_removed_before_repo_tools(self):
         fake_bin = self.root / "sanitize-bin"
@@ -789,6 +985,76 @@ class PacmanRepoPublicationTests(unittest.TestCase):
             self.assertEqual(list(trusted_destination_parent.iterdir()), [])
             self.assertFalse(Path(f"{repo}.writer.lock").exists())
             self.assertFalse((trusted_destination_parent / ".published.publish.lock").exists())
+
+    def test_candidate_mode_drift_fails_before_promotion(self):
+        with tempfile.TemporaryDirectory(dir="/tmp") as temporary:
+            root = Path(temporary)
+            repo = root / "repo"
+            publish = root / "published"
+            fake_bin = root / "bin"
+            repo.mkdir()
+            publish.mkdir()
+            fake_bin.mkdir()
+            staged_database = repo / "fixture.db.tar.zst"
+            staged_package = repo / "new.pkg.tar.zst"
+            staged_database.write_bytes(b"new database")
+            staged_package.write_bytes(b"new package")
+            staged_package.chmod(0o644)
+            published_database = publish / "fixture.db.tar.zst"
+            published_package = publish / "old.pkg.tar.zst"
+            published_database.write_bytes(b"old database")
+            published_package.write_bytes(b"old package")
+            real_rsync = shutil.which("rsync")
+            self.assertIsNotNone(real_rsync)
+            fake_rsync = fake_bin / "rsync"
+            fake_rsync.write_text(
+                "#!/bin/sh\n"
+                f"{real_rsync!r} \"$@\" || exit $?\n"
+                "for destination do :; done\n"
+                "chmod 0600 -- \"${destination%/}/new.pkg.tar.zst\"\n",
+                encoding="utf-8",
+            )
+            fake_rsync.chmod(0o755)
+            environment = os.environ.copy()
+            for key in list(environment):
+                if key.startswith("BASH_FUNC_"):
+                    del environment[key]
+            environment["ARCH_PKGS_PUBLISH_TEST_MODE"] = "1"
+            environment["PATH"] = f"{fake_bin}:{environment['PATH']}"
+
+            result = subprocess.run(
+                [
+                    "zsh",
+                    str(PUBLISH),
+                    "--repo-dir",
+                    str(repo),
+                    "--repo-name",
+                    "fixture",
+                    "--publish-dir",
+                    str(publish),
+                ],
+                cwd=REPO_ROOT,
+                env=environment,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 2)
+            self.assertIn(
+                "candidate repository does not match verified staging", result.stderr
+            )
+            self.assertEqual(published_database.read_bytes(), b"old database")
+            self.assertEqual(published_package.read_bytes(), b"old package")
+            self.assertFalse((publish / "new.pkg.tar.zst").exists())
+            candidates = list(root.glob(".published.candidate.*"))
+            self.assertEqual(len(candidates), 1)
+            self.assertEqual(
+                (candidates[0] / "new.pkg.tar.zst").stat().st_mode & 0o777, 0o600
+            )
+            self.assertFalse((root / ".published.publish.lock").exists())
+            self.assertFalse(Path(f"{repo}.writer.lock").exists())
 
     def test_failed_post_promotion_verification_restores_previous_repository(self):
         with tempfile.TemporaryDirectory(dir="/tmp") as temporary:
@@ -1703,6 +1969,8 @@ class ChatGPTPackageContractTests(unittest.TestCase):
 
         self.assertIn("nisavid/chatgpt-linux", text)
         self.assertIn("tools/ingest_chatgpt.zsh", text)
+        self.assertIn("all(. as $required", text)
+        self.assertNotIn(".hostedValidation == $accepted[0].hostedValidation", text)
         self.assertNotIn("nisavid/codex-app-linux", text)
         self.assertNotIn("tools/ingest_codex_app.zsh", text)
 

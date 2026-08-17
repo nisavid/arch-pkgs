@@ -56,19 +56,24 @@ staging while another writer is active.
 When publishing an application package with local dependencies, such as
 `hayhooks`, build and refresh the dependency package directories too.
 
-Artifact-ingest lanes have their own verifier. For the ChatGPT fallback, first
-seed staging from the complete currently published repository so unrelated
-packages remain present, then run the exact ingest command documented in
+Artifact-ingest lanes have their own verifier. For the ChatGPT fallback, pass
+the complete published repository as the seed so unrelated packages remain
+present, then run the exact ingest command documented in
 [`packages/chatgpt/README.md`](../../packages/chatgpt/README.md):
 
 ```bash
-rsync -a --delete /srv/pacman/nisavid/x86_64/ repo/x86_64/
 tools/ingest_chatgpt.zsh \
   --artifact /path/to/chatgpt.pkg.tar.zst \
   --verification-record /path/to/verification-record.json \
   --record-sha256 RECORD_SHA256 \
-  --source-dir /path/to/chatgpt-linux
+  --source-dir /path/to/chatgpt-linux \
+  --seed-repo-dir /srv/pacman/nisavid/x86_64
 ```
+
+The helper reads the seed while holding the shared repository-writer lock and
+accepts it only when checkout-local staging is otherwise empty. An existing
+seed supplies the complete repository; an absent seed initializes the first
+repository instead. This keeps seeding and ingest in one guarded transaction.
 
 Never publish a partial staging directory: the publisher mirrors staging and
 removes destination files that are absent from it.
@@ -92,7 +97,8 @@ directory, verifies the candidate, atomically exchanges it with the current
 destination, and compares the promoted destination with staging. It restores the
 old repository on any post-promotion verification failure and retains the old
 repository as a timestamped previous copy after success. Keep that copy until
-the installed package passes acceptance.
+the installed package passes acceptance. The verification manifest covers each
+entry's content or symlink target together with its mode, UID, and GID.
 
 Publication requires GNU coreutils 9.5 or newer and probes the target filesystem
 for atomic-exchange support before promotion. By default it permits at most two

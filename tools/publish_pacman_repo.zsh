@@ -48,6 +48,7 @@ write_repo_manifest() {
 import hashlib
 import json
 import os
+import stat
 import sys
 from pathlib import Path
 
@@ -56,13 +57,19 @@ entries = []
 for path in sorted(root.iterdir(), key=lambda item: os.fsencode(item.name)):
     # Pacman repository publication is intentionally flat; never recurse.
     metadata = path.lstat()
+    common = {
+        "gid": metadata.st_gid,
+        "mode": f"{stat.S_IMODE(metadata.st_mode):04o}",
+        "name": path.name,
+        "uid": metadata.st_uid,
+    }
     if path.is_symlink():
         target = os.readlink(path)
         if "/" in target or target in ("", ".", ".."):
             raise SystemExit(f"unsafe repository symlink: {path.name} -> {target}")
         if not (root / target).is_file():
             raise SystemExit(f"repository symlink target is missing: {path.name} -> {target}")
-        entries.append({"name": path.name, "target": target, "type": "symlink"})
+        entries.append({**common, "target": target, "type": "symlink"})
     elif path.is_file():
         digest = hashlib.sha256()
         with path.open("rb") as source:
@@ -70,7 +77,7 @@ for path in sorted(root.iterdir(), key=lambda item: os.fsencode(item.name)):
                 digest.update(chunk)
         entries.append(
             {
-                "name": path.name,
+                **common,
                 "sha256": digest.hexdigest(),
                 "size": metadata.st_size,
                 "type": "file",
@@ -79,7 +86,7 @@ for path in sorted(root.iterdir(), key=lambda item: os.fsencode(item.name)):
     else:
         raise SystemExit(f"unsupported repository entry: {path.name}")
 
-print(json.dumps({"entries": entries, "schemaVersion": 1}, indent=2, sort_keys=True))
+print(json.dumps({"entries": entries, "schemaVersion": 2}, indent=2, sort_keys=True))
 PY
 }
 
@@ -116,6 +123,8 @@ validate_publish_dir() {
     trusted_root=/srv/pacman
   fi
   path=$trusted_root
+  [[ -d "$trusted_root" && ! -L "$trusted_root" ]] \
+    || die "publish trusted root must be a real directory: $trusted_root"
   for component in ${(s:/:)rel}; do
     path=${path}/${component}
     [[ ! -L "$path" ]] \
