@@ -161,10 +161,11 @@ if [[ -e "$repo_db" ]]; then
 fi
 
 for existing_archive in "$repo_dir"/*.pkg.tar.*(N); do
+  [[ "$existing_archive" != *.sig ]] || continue
   package_meta=$(pacman -Qp -- "$existing_archive" 2>/dev/null) || continue
   existing_name=${package_meta%% *}
   if [[ -n ${targeted_names[$existing_name]-} ]]; then
-    rm -f -- "$existing_archive"
+    rm -f -- "$existing_archive" "${existing_archive}.sig"
   fi
 done
 
@@ -172,7 +173,7 @@ typeset -a repo_packages
 
 for package_path in "${package_paths[@]}"; do
   staged_path=${repo_dir}/${package_path:t}
-  rm -f -- "$staged_path"
+  rm -f -- "$staged_path" "${staged_path}.sig"
   ln -- "$package_path" "$staged_path" 2>/dev/null || cp -f -- "$package_path" "$staged_path"
   repo_packages+=("$staged_path")
 done

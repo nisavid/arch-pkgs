@@ -140,6 +140,13 @@ privileged() {
   fi
 }
 
+move_to_unused_path() {
+  local source=$1 destination=$2
+
+  [[ ! -e "$destination" && ! -L "$destination" ]] || return 1
+  privileged mv --no-clobber --no-target-directory -- "$source" "$destination"
+}
+
 require_atomic_mv() {
   local version
   version=$(mv --version 2>/dev/null | sed -n '1s/.* //p') \
@@ -324,10 +331,12 @@ probe_a=${publish_parent}/.${publish_leaf}.exchange-probe-a.$$
 probe_b=${publish_parent}/.${publish_leaf}.exchange-probe-b.$$
 had_previous=0
 publication_created=0
+first_publication_indeterminate=0
 
 cleanup_publication() {
   local exit_status=$?
   local cleanup_safe=1
+  local failed_copy_identity
   local first_rollback_ok=1
 
   if (( had_previous )) && [[ "$publication_state" == indeterminate ]]; then
@@ -348,19 +357,33 @@ cleanup_publication() {
     cleanup_safe=0
     print -u2 -- "publication state is indeterminate; preserving repository locks and transaction paths for recovery"
   fi
-  if (( publication_created && ! had_previous )) && [[ -e "$publish_dir" ]]; then
+  if (( publication_created && ! had_previous && ! first_publication_indeterminate )) \
+      && [[ -e "$publish_dir" ]]; then
     if (( test_mode )) \
         && [[ ${ARCH_PKGS_PUBLISH_TEST_FAIL_FIRST_ROLLBACK:-0} == 1 ]]; then
       first_rollback_ok=0
-    elif ! privileged mv -- "$publish_dir" "$failed_dir" >/dev/null 2>&1; then
+    else
+      move_to_unused_path "$publish_dir" "$failed_dir" >/dev/null 2>&1 || true
       first_rollback_ok=0
+      if [[ ! -e "$publish_dir" && -d "$failed_dir" ]]; then
+        failed_copy_identity=
+        if failed_copy_identity=$(directory_identity "$failed_dir") \
+            && [[ "$failed_copy_identity" == "$candidate_identity" ]]; then
+          first_rollback_ok=1
+        fi
+      fi
     fi
     if (( first_rollback_ok )); then
       publication_created=0
+      first_publication_indeterminate=0
     else
       cleanup_safe=0
       print -u2 -- "first publication could not be rolled back; preserving repository locks for recovery"
     fi
+  fi
+  if (( first_publication_indeterminate )); then
+    cleanup_safe=0
+    print -u2 -- "first-publication recovery state is indeterminate; preserving repository locks and transaction paths for recovery"
   fi
   privileged rmdir -- "$probe_a" "$probe_b" >/dev/null 2>&1 || true
   if (( cleanup_safe && destination_lock_owned )); then
@@ -439,11 +462,37 @@ if [[ -e "$publish_dir" ]]; then
   [[ "$publication_state" == swapped ]] \
     || die "could not atomically exchange candidate and published repositories (status ${exchange_status})"
 else
+  candidate_identity=$(directory_identity "$candidate_dir")
+  promotion_status=0
+  promotion_complete=0
+  promotion_no_effect=0
   publication_created=1
-  if ! privileged mv -- "$candidate_dir" "$publish_dir"; then
-    publication_created=0
-    die "could not promote candidate repository"
+  first_publication_indeterminate=1
+  move_to_unused_path "$candidate_dir" "$publish_dir" \
+    || promotion_status=$?
+  if [[ ! -e "$candidate_dir" && -d "$publish_dir" ]]; then
+    current_publish_identity=
+    if current_publish_identity=$(directory_identity "$publish_dir") \
+        && [[ "$current_publish_identity" == "$candidate_identity" ]]; then
+      promotion_complete=1
+      first_publication_indeterminate=0
+    fi
+  elif [[ ! -e "$publish_dir" && -d "$candidate_dir" ]]; then
+    current_candidate_identity=
+    if current_candidate_identity=$(directory_identity "$candidate_dir") \
+        && [[ "$current_candidate_identity" == "$candidate_identity" ]]; then
+      promotion_no_effect=1
+      publication_created=0
+      first_publication_indeterminate=0
+    fi
   fi
+  (( promotion_complete || promotion_status )) || promotion_status=1
+  if (( promotion_no_effect )); then
+    publication_created=0
+    die "could not promote candidate repository (status ${promotion_status})"
+  fi
+  (( promotion_complete )) \
+    || die "could not identify the repository after first publication promotion (status ${promotion_status})"
 fi
 
 if (( test_mode )) && [[ ${ARCH_PKGS_PUBLISH_TEST_SIGNAL_AFTER_PROMOTION:-0} == 1 ]]; then
@@ -483,11 +532,39 @@ if (( ! post_promotion_verified )); then
       || die "published verification failed and the restored repository could not be identified"
     [[ "$publication_state" == original ]] \
       || die "published verification failed and the previous repository could not be restored (status ${restore_status})"
-    privileged mv -- "$candidate_dir" "$failed_dir"
+    restored_failed_copy_status=0
+    restored_failed_copy_retained=0
+    move_to_unused_path "$candidate_dir" "$failed_dir" \
+      || restored_failed_copy_status=$?
+    if [[ ! -e "$candidate_dir" && -d "$failed_dir" ]]; then
+      restored_failed_copy_identity=
+      if restored_failed_copy_identity=$(directory_identity "$failed_dir") \
+          && [[ "$restored_failed_copy_identity" == "$candidate_identity" ]]; then
+        restored_failed_copy_retained=1
+      fi
+    fi
+    (( restored_failed_copy_retained || restored_failed_copy_status )) \
+      || restored_failed_copy_status=1
+    (( restored_failed_copy_retained )) \
+      || die "previous repository was restored but failed candidate retention could not be identified (status ${restored_failed_copy_status}); candidate: $candidate_dir; failed destination: $failed_dir"
     die "published repository failed post-promotion verification; previous repository restored; failed copy retained at $failed_dir"
   fi
-  privileged mv -- "$publish_dir" "$failed_dir"
-  publication_created=0
+  failed_copy_status=0
+  first_publication_indeterminate=1
+  move_to_unused_path "$publish_dir" "$failed_dir" \
+    || failed_copy_status=$?
+  if [[ ! -e "$publish_dir" && -d "$failed_dir" ]]; then
+    failed_copy_identity=
+    if failed_copy_identity=$(directory_identity "$failed_dir") \
+        && [[ "$failed_copy_identity" == "$candidate_identity" ]]; then
+      publication_created=0
+      first_publication_indeterminate=0
+    fi
+  fi
+  (( ! first_publication_indeterminate || failed_copy_status )) \
+    || failed_copy_status=1
+  (( ! first_publication_indeterminate )) \
+    || die "published verification failed and the failed repository could not be identified (status ${failed_copy_status}); published: $publish_dir; failed destination: $failed_dir"
   die "published repository failed post-promotion verification; no previous repository existed; failed copy retained at $failed_dir"
 fi
 
@@ -495,7 +572,8 @@ if (( had_previous )); then
   retention_status=0
   retention_complete=0
   publication_state=verified_unretained
-  privileged mv -- "$candidate_dir" "$previous_dir" || retention_status=$?
+  move_to_unused_path "$candidate_dir" "$previous_dir" \
+    || retention_status=$?
   if (( test_mode )) \
       && [[ ${ARCH_PKGS_PUBLISH_TEST_SIGNAL_DURING_RETENTION_FINALIZATION:-0} == 1 ]]; then
     kill -TERM $$
