@@ -1281,6 +1281,105 @@ class PacmanRepoPublicationTests(unittest.TestCase):
             self.assertEqual(len(failed), 1)
             self.assertTrue((failed[0] / "new.pkg.tar.zst").is_file())
 
+    def test_signal_during_verified_first_finalization_keeps_published_repo(self):
+        with tempfile.TemporaryDirectory(dir="/tmp") as temporary:
+            root = Path(temporary)
+            repo = root / "repo"
+            publish = root / "published"
+            repo.mkdir()
+            (repo / "fixture.db.tar.zst").write_bytes(b"new database")
+            (repo / "new.pkg.tar.zst").write_bytes(b"new package")
+            environment = os.environ.copy()
+            for key in list(environment):
+                if key.startswith("BASH_FUNC_"):
+                    del environment[key]
+            environment["ARCH_PKGS_PUBLISH_TEST_MODE"] = "1"
+            environment["ARCH_PKGS_PUBLISH_TEST_SIGNAL_DURING_FIRST_FINALIZATION"] = (
+                "1"
+            )
+
+            result = subprocess.run(
+                [
+                    "zsh",
+                    str(PUBLISH),
+                    "--repo-dir",
+                    str(repo),
+                    "--repo-name",
+                    "fixture",
+                    "--publish-dir",
+                    str(publish),
+                ],
+                cwd=REPO_ROOT,
+                env=environment,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 143)
+            self.assertEqual(
+                (publish / "fixture.db.tar.zst").read_bytes(), b"new database"
+            )
+            self.assertTrue((publish / "new.pkg.tar.zst").is_file())
+            self.assertFalse(list(root.glob(".published.failed.*")))
+            self.assertFalse((root / ".published.publish.lock").exists())
+            self.assertFalse(Path(f"{repo}.writer.lock").exists())
+
+    def test_signal_during_retention_finalization_keeps_verified_publication(self):
+        with tempfile.TemporaryDirectory(dir="/tmp") as temporary:
+            root = Path(temporary)
+            repo = root / "repo"
+            publish = root / "published"
+            repo.mkdir()
+            publish.mkdir()
+            (repo / "fixture.db.tar.zst").write_bytes(b"new database")
+            (repo / "new.pkg.tar.zst").write_bytes(b"new package")
+            (publish / "fixture.db.tar.zst").write_bytes(b"old database")
+            (publish / "old.pkg.tar.zst").write_bytes(b"old package")
+            environment = os.environ.copy()
+            for key in list(environment):
+                if key.startswith("BASH_FUNC_"):
+                    del environment[key]
+            environment["ARCH_PKGS_PUBLISH_TEST_MODE"] = "1"
+            environment[
+                "ARCH_PKGS_PUBLISH_TEST_SIGNAL_DURING_RETENTION_FINALIZATION"
+            ] = "1"
+
+            result = subprocess.run(
+                [
+                    "zsh",
+                    str(PUBLISH),
+                    "--repo-dir",
+                    str(repo),
+                    "--repo-name",
+                    "fixture",
+                    "--publish-dir",
+                    str(publish),
+                ],
+                cwd=REPO_ROOT,
+                env=environment,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 143)
+            self.assertEqual(
+                (publish / "fixture.db.tar.zst").read_bytes(), b"new database"
+            )
+            self.assertTrue((publish / "new.pkg.tar.zst").is_file())
+            previous = list(root.glob("published.previous.*"))
+            self.assertEqual(len(previous), 1)
+            self.assertEqual(
+                (previous[0] / "fixture.db.tar.zst").read_bytes(), b"old database"
+            )
+            self.assertTrue((previous[0] / "old.pkg.tar.zst").is_file())
+            self.assertFalse(list(root.glob(".published.candidate.*")))
+            self.assertFalse((root / ".published.publish.lock").exists())
+            self.assertFalse(Path(f"{repo}.writer.lock").exists())
+
     def test_failed_first_publication_rollback_preserves_both_locks(self):
         with tempfile.TemporaryDirectory(dir="/tmp") as temporary:
             root = Path(temporary)

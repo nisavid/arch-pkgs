@@ -434,6 +434,7 @@ if (( test_mode )) && [[ ${ARCH_PKGS_PUBLISH_TEST_SIGNAL_AFTER_PROMOTION:-0} == 
   kill -TERM $$
 fi
 
+signal_deferral=1
 post_promotion_verified=1
 write_repo_manifest "$publish_dir" "$published_manifest" \
   || post_promotion_verified=0
@@ -443,6 +444,7 @@ if (( post_promotion_verified )) \
 fi
 
 if (( ! post_promotion_verified )); then
+  finish_signal_deferral
   if (( had_previous )); then
     restore_status=0
     identity_status=0
@@ -474,11 +476,24 @@ if (( ! post_promotion_verified )); then
 fi
 
 if (( had_previous )); then
-  privileged mv -- "$candidate_dir" "$previous_dir"
-  publication_state=original
+  retention_status=0
+  privileged mv -- "$candidate_dir" "$previous_dir" || retention_status=$?
+  if (( test_mode )) \
+      && [[ ${ARCH_PKGS_PUBLISH_TEST_SIGNAL_DURING_RETENTION_FINALIZATION:-0} == 1 ]]; then
+    kill -TERM $$
+  fi
+  (( ! retention_status )) && publication_state=original
+  finish_signal_deferral
+  (( ! retention_status )) \
+    || die "verified repository was published but the previous repository could not be retained"
   print -- "Retained previous pacman repo: $previous_dir"
 else
+  if (( test_mode )) \
+      && [[ ${ARCH_PKGS_PUBLISH_TEST_SIGNAL_DURING_FIRST_FINALIZATION:-0} == 1 ]]; then
+    kill -TERM $$
+  fi
   publication_created=0
+  finish_signal_deferral
 fi
 print -- "Published verified pacman repo: $publish_dir"
 print -- "Verified repository-manifest SHA-256: $staging_manifest_sha256"
