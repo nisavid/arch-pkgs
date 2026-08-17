@@ -6,6 +6,8 @@ import textwrap
 import unittest
 from pathlib import Path
 
+import yaml
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CHECKER = REPO_ROOT / "tools" / "check_repo_consistency.py"
@@ -627,6 +629,86 @@ class RepositoryConsistencyTests(unittest.TestCase):
 
 
 class RepositoryConsistencyWorkflowTests(unittest.TestCase):
+    def dependency_install_script(self):
+        workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+        steps = workflow["jobs"]["consistency"]["steps"]
+        return next(
+            step["run"]
+            for step in steps
+            if step.get("name") == "Install test dependencies"
+        )
+
+    def run_dependency_install_script(self, pacman_body):
+        with tempfile.TemporaryDirectory(dir="/tmp") as tempdir:
+            root = Path(tempdir)
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            count_file = root / "pacman-attempts"
+            argument_file = root / "pacman-arguments"
+            pacman = bin_dir / "pacman"
+            pacman.write_text(
+                "#!/usr/bin/bash\n"
+                'arguments=("$@")\n'
+                'printf \'%q\' "${arguments[0]}" >> "${PACMAN_ARGUMENT_FILE}"\n'
+                'for argument in "${arguments[@]:1}"; do\n'
+                '  printf \' %q\' "${argument}" >> "${PACMAN_ARGUMENT_FILE}"\n'
+                "done\n"
+                'printf \'\\n\' >> "${PACMAN_ARGUMENT_FILE}"\n'
+                "count=0\n"
+                'if [[ -f "${PACMAN_ATTEMPT_FILE}" ]]; then\n'
+                '  IFS= read -r count < "${PACMAN_ATTEMPT_FILE}"\n'
+                "fi\n"
+                "((count += 1))\n"
+                'printf \'%s\\n\' "${count}" > "${PACMAN_ATTEMPT_FILE}"\n'
+                + pacman_body,
+                encoding="utf-8",
+            )
+            pacman.chmod(0o755)
+            sleep = bin_dir / "sleep"
+            sleep.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            sleep.chmod(0o755)
+            environment = os.environ.copy()
+            environment["PATH"] = f"{bin_dir}:/usr/bin"
+            environment["PACMAN_ATTEMPT_FILE"] = str(count_file)
+            environment["PACMAN_ARGUMENT_FILE"] = str(argument_file)
+
+            result = subprocess.run(
+                ["/usr/bin/bash", "-c", self.dependency_install_script()],
+                capture_output=True,
+                text=True,
+                env=environment,
+                timeout=5,
+                check=False,
+            )
+
+            return (
+                result,
+                int(count_file.read_text(encoding="utf-8")),
+                argument_file.read_text(encoding="utf-8").splitlines(),
+            )
+
+    def test_workflow_retries_transient_dependency_sync_failures(self):
+        result, attempts, arguments = self.run_dependency_install_script(
+            '[[ "${count}" -ge 2 ]]\n'
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(attempts, 2)
+        self.assertEqual(
+            arguments,
+            ["-Syyu --noconfirm git jq python python-yaml rsync zsh"] * attempts,
+        )
+
+    def test_workflow_dependency_sync_retry_is_bounded(self):
+        result, attempts, arguments = self.run_dependency_install_script("exit 1\n")
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(attempts, 4)
+        self.assertEqual(
+            arguments,
+            ["-Syyu --noconfirm git jq python python-yaml rsync zsh"] * attempts,
+        )
+
     def test_workflow_runs_stable_unprivileged_gate_on_prs_and_main(self):
         text = WORKFLOW.read_text(encoding="utf-8")
 

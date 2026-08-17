@@ -21,7 +21,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          pacman -Syu --noconfirm git jq python python-yaml rsync zsh
+          for attempt in 1 2 3 4; do
+            if pacman -Syyu --noconfirm git jq python python-yaml rsync zsh; then
+              break
+            fi
+            if [[ "${attempt}" == 4 ]]; then
+              exit 1
+            fi
+            sleep "$((attempt * 15))"
+          done
 
       - name: Check out repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
