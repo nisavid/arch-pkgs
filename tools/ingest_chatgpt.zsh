@@ -15,10 +15,11 @@ repo_name=nisavid
 dry_run=0
 accepted_baseline=${repo_root}/packages/chatgpt/fallback-baseline-2026-08-16.json
 test_signal_after_backup=${ARCH_PKGS_INGEST_TEST_SIGNAL_AFTER_BACKUP:-0}
+test_signal_during_lock=${ARCH_PKGS_INGEST_TEST_SIGNAL_DURING_LOCK_ACQUISITION:-0}
 [[ "$test_signal_after_backup" == 0 || "$test_signal_after_backup" == 1 ]] \
   || { print -u2 -- "ARCH_PKGS_INGEST_TEST_SIGNAL_AFTER_BACKUP must be 0 or 1"; exit 2; }
-(( ! test_signal_after_backup )) || [[ "$repo_root" == /tmp/* ]] \
-  || { print -u2 -- "ingest interruption injection is restricted to /tmp"; exit 2; }
+[[ "$test_signal_during_lock" == 0 || "$test_signal_during_lock" == 1 ]] \
+  || { print -u2 -- "ARCH_PKGS_INGEST_TEST_SIGNAL_DURING_LOCK_ACQUISITION must be 0 or 1"; exit 2; }
 
 usage() {
   cat <<EOF
@@ -152,6 +153,10 @@ while (( $# )); do
       ;;
   esac
 done
+
+(( ! test_signal_after_backup && ! test_signal_during_lock )) \
+  || [[ "$repo_dir" == /tmp/* ]] \
+  || die "ingest interruption injection is restricted to repository directories under /tmp"
 
 for command_name in awk bsdtar env git jq mktemp python3 repo-add repo-remove \
   sed sha256sum stat zstd; do
@@ -493,8 +498,7 @@ signal_deferral=1
 if mkdir -- "$lock_dir" 2>/dev/null; then
   lock_acquired=1
 fi
-if (( lock_acquired )) \
-    && [[ ${ARCH_PKGS_INGEST_TEST_SIGNAL_DURING_LOCK_ACQUISITION:-0} == 1 ]]; then
+if (( lock_acquired && test_signal_during_lock )); then
   kill -TERM $$
 fi
 (( lock_acquired )) && temporary_paths+=("$lock_dir")
