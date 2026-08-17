@@ -1,7 +1,7 @@
 # Maintainer: Braulio Oliveira <brauliobo@gmail.com>
 
 pkgname=thorium-browser-updated
-pkgver=149.0.7827.114
+pkgver=149.0.7827.155
 pkgrel=4
 pkgdesc="Chromium fork focused on high performance and security, built from source"
 arch=('x86_64')
@@ -83,14 +83,14 @@ conflicts=('thorium-browser' 'thorium-browser-bin' 'thorium-browser-updated-bin'
 options=('!lto' '!strip' '!debug')
 install="${pkgname}.install"
 source=(
-  "thorium::git+https://github.com/brauliobo/thorium.git#tag=M149.0.7827.114-updated"
+  "thorium::git+https://github.com/brauliobo/thorium.git#tag=M149.0.7827.155-updated"
   "depot_tools::git+https://chromium.googlesource.com/chromium/tools/depot_tools.git"
   "chromium-$pkgver.tar.xz::https://commondatastorage.googleapis.com/chromium-browser-official/chromium-$pkgver.tar.xz"
 )
 sha256sums=(
   'SKIP'
   'SKIP'
-  'abad81ea3e1367b024d58d29b6ffd51643d30e13436cd1b95875e318756e3878'
+  '502c21f4c4040baff631c8bd0a57258ec317a5c62ca90761607f5530eaa5f2f7'
 )
 
 _jobs=6
@@ -98,12 +98,14 @@ _jobs=6
 prepare() {
   export CR_DIR="$srcdir/chromium/src"
   export HOME="$srcdir/home"
+  export XDG_CACHE_HOME="$srcdir/cache"
+  export CCACHE_DIR="$srcdir/ccache"
   export PATH="$srcdir/depot_tools:$PATH"
   export DEPOT_TOOLS_UPDATE=0
   local cr_root="$srcdir/chromium"
   local chromium_archive_dir="$srcdir/chromium-$pkgver"
 
-  mkdir -p "$HOME"
+  mkdir -p "$HOME" "$XDG_CACHE_HOME" "$CCACHE_DIR"
   ln -sfn "$srcdir/depot_tools" "$HOME/depot_tools"
   sed -i \
     -e 's@git -C "${patch_dir}" apply --check "${patch_file}"@git -C "${patch_dir}" apply --check --recount "${patch_file}"@' \
@@ -111,7 +113,15 @@ prepare() {
     -e 's@git -C "${patch_dir}" apply --check --reverse "${patch_file}"@git -C "${patch_dir}" apply --check --reverse --recount "${patch_file}"@' \
     -e 's@cp -r -v src/google_apis ${CR_SRC_DIR}/ &&@copy_optional_overlay src/google_apis \&\&@' \
     -e 's@cp -r -v src/services ${CR_SRC_DIR}/ &&@copy_optional_overlay src/services \&\&@' \
+    -e 's@^tput sgr0$@tput sgr0 || true@' \
     "$srcdir/thorium/setup.sh"
+  sed -i \
+    -e 's@mkdir -p "$RPMBUILD_DIR/RPMS"@mkdir -p "$RPMBUILD_DIR/RPMS" "$RPMBUILD_DIR/tmp" "$RPMBUILD_DIR/rpmdb"@' \
+    -e '/--define "_topdir $RPMBUILD_DIR" \\/a\    --define "_tmppath $RPMBUILD_DIR/tmp" \\\n    --define "_dbpath $RPMBUILD_DIR/rpmdb" \\\n    --define "_rpmlock_path $RPMBUILD_DIR/rpmdb/.rpm.lock" \\' \
+    -e 's@rpm -qpR "${OUTPUTDIR}/${PKGNAME}.${ARCHITECTURE}.rpm"@rpm --dbpath "$RPMBUILD_DIR/rpmdb" -qpR "${OUTPUTDIR}/${PKGNAME}.${ARCHITECTURE}.rpm"@' \
+    "$srcdir/thorium/src/chrome/installer/linux/rpm/build.sh"
+  sed -i 's@cp -a "@cp -a --no-preserve=ownership "@' \
+    "$srcdir/thorium/src/chrome/installer/linux/rpm/thorium.spec.template"
   sed -i '/^@@ -225,7 +228,7 @@/,$d' "$srcdir/thorium/other/keyboard_shortcuts.patch"
   sed -i '/^diff --git a\/ui\/webui\/resources\/BUILD\.gn/,$d' "$srcdir/thorium/other/thorium_webui.patch"
   sed -i '/build\/config\/nacl\/config\.gni/d' "$srcdir/thorium/src/sandbox/linux/BUILD.gn"
@@ -152,7 +162,6 @@ EOF
   cd "$CR_DIR"
   "$srcdir/depot_tools/ensure_bootstrap"
   build/linux/sysroot_scripts/install-sysroot.py --arch=amd64
-  python3 v8/tools/builtins-pgo/download_profiles.py --depot-tools="$HOME/depot_tools" --force download
 
   cd "$srcdir/thorium"
   ./setup.sh
@@ -171,16 +180,12 @@ old = """  if [ -r "${OUTPUTDIR}/chrome_100_percent.pak" ]; then
     install -m 644 "${OUTPUTDIR}/ui_resources_100_percent.pak" "${STAGEDIR}/${INSTALLDIR}/"
     install -m 644 "${OUTPUTDIR}/resources/inspector_overlay/inspector_overlay_resources.grd" "${STAGEDIR}/${INSTALLDIR}/resources/inspector_overlay/"
     install -m 644 "${OUTPUTDIR}/resources/inspector_overlay/main.js" "${STAGEDIR}/${INSTALLDIR}/resources/inspector_overlay/"
-    install -m 755 "${OUTPUTDIR}/thorium_shell" "${STAGEDIR}/${INSTALLDIR}/"
     install -m ${SHLIB_PERMS} "${OUTPUTDIR}/libffmpeg.so" "${STAGEDIR}/${INSTALLDIR}/"
     install -m ${SHLIB_PERMS} "${OUTPUTDIR}/libffmpeg.so" "${STAGEDIR}/${INSTALLDIR}/lib"
     # install -m ${SHLIB_PERMS} "${OUTPUTDIR}/libblink_test_plugin.so" "${STAGEDIR}/${INSTALLDIR}/lib"
     install -m ${SHLIB_PERMS} "${OUTPUTDIR}/ClearKeyCdm/_platform_specific/linux_x64/libclearkeycdm.so" "${STAGEDIR}/${INSTALLDIR}/lib"
-    install -m 644 "${OUTPUTDIR}/thorium_shell.png" "${STAGEDIR}/${INSTALLDIR}/"
     install -m 644 "${OUTPUTDIR}/thorium.svg" "${STAGEDIR}/${INSTALLDIR}/"
     # install -m 644 "${OUTPUTDIR}/thor_ver" "${STAGEDIR}/${INSTALLDIR}/"
-    install -m 644 "${OUTPUTDIR}/thorium-shell.desktop" "${STAGEDIR}/usr/share/applications/"
-    install -m 755 "${OUTPUTDIR}/thorium-shell" "${STAGEDIR}/usr/bin/"
     install -m 755 "${OUTPUTDIR}/chromedriver" "${STAGEDIR}/${INSTALLDIR}/"
     install -m 755 "${OUTPUTDIR}/pak" "${STAGEDIR}/usr/bin/"
     install -m 644 "${OUTPUTDIR}/initial_preferences" "${STAGEDIR}/${INSTALLDIR}/"
@@ -236,7 +241,6 @@ elif new not in text:
 path = Path("chrome/installer/linux/rpm/thorium.spec.template")
 text = path.read_text()
 text = text.replace("/usr/bin/thorium-shell\n", "")
-text = text.replace("/usr/share/applications/thorium-shell.desktop\n", "")
 path.write_text(text)
 PY
   grep -q 'system_loopback_as_aec_reference_supported' media/media_options.gni ||
@@ -278,6 +282,7 @@ PY
     sed \
       -e 's@^chrome_pgo_phase = .*@chrome_pgo_phase = 0@' \
       -e 's@^pgo_data_path = .*@pgo_data_path = ""@' \
+      -e 's@^v8_enable_builtins_optimization = .*@v8_enable_builtins_optimization = false@' \
       "$srcdir/thorium/args.gn"
   )"
   gn_args+=$'\ncc_wrapper = "ccache"'
@@ -287,6 +292,8 @@ PY
 build() {
   export CR_DIR="$srcdir/chromium/src"
   export HOME="$srcdir/home"
+  export XDG_CACHE_HOME="$srcdir/cache"
+  export CCACHE_DIR="$srcdir/ccache"
   export PATH="$srcdir/depot_tools:$PATH"
   export DEPOT_TOOLS_UPDATE=0
   export NINJA_SUMMARIZE_BUILD=1
@@ -343,12 +350,12 @@ package() {
   rpm="${rpms[0]}"
 
   cd "$srcdir"
-  rpm2cpio "$rpm" | bsdtar -xf -
+  rpm2cpio "$rpm" | bsdtar --no-same-owner -xf -
 
   install -dm755 "$pkgdir/opt"
   mv opt/chromium.org/thorium "$pkgdir/opt/thorium-browser"
-  cp -a usr "$pkgdir/"
-  cp -a etc "$pkgdir/" 2>/dev/null || true
+  cp -a --no-preserve=ownership usr "$pkgdir/"
+  cp -a --no-preserve=ownership etc "$pkgdir/" 2>/dev/null || true
 
   rm -rf \
     "$pkgdir/etc/cron.daily" \
