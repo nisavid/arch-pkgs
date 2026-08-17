@@ -336,7 +336,7 @@ first_publication_indeterminate=0
 cleanup_publication() {
   local exit_status=$?
   local cleanup_safe=1
-  local failed_copy_identity
+  local rollback_copy_identity
   local first_rollback_ok=1
 
   if (( had_previous )) && [[ "$publication_state" == indeterminate ]]; then
@@ -366,9 +366,9 @@ cleanup_publication() {
       move_to_unused_path "$publish_dir" "$failed_dir" >/dev/null 2>&1 || true
       first_rollback_ok=0
       if [[ ! -e "$publish_dir" && -d "$failed_dir" ]]; then
-        failed_copy_identity=
-        if failed_copy_identity=$(directory_identity "$failed_dir") \
-            && [[ "$failed_copy_identity" == "$candidate_identity" ]]; then
+        rollback_copy_identity=
+        if rollback_copy_identity=$(directory_identity "$failed_dir") \
+            && [[ "$rollback_copy_identity" == "$candidate_identity" ]]; then
           first_rollback_ok=1
         fi
       fi
