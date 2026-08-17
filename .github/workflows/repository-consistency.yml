@@ -1,0 +1,48 @@
+name: Repository Consistency
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  consistency:
+    name: Repository consistency
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    container:
+      image: archlinux:base-devel
+    steps:
+      - name: Install test dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          pacman -Syu --noconfirm git jq python python-yaml rsync zsh
+
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      - name: Verify required test tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          for command in bsdtar git makepkg python3 repo-add repo-remove rsync zsh zstd; do
+            command -v "${command}"
+          done
+          python3 -c 'import yaml'
+
+      - name: Run repository consistency gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          useradd --create-home --shell /bin/bash consistency
+          chown -R consistency:consistency "${GITHUB_WORKSPACE}"
+          runuser -u consistency -- \
+            env HOME=/home/consistency \
+            python3 tools/check_repo_consistency.py

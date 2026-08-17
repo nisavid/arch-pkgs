@@ -10,7 +10,7 @@ The accepted fallback is `chatgpt 26.810.52044-1` from annotated tag
 Its public, path-free provenance tuple is recorded in
 [`fallback-baseline-2026-08-16.json`](fallback-baseline-2026-08-16.json).
 
-## Maintenance baseline
+## Maintenance Baseline
 
 - `authoritative_reference`: the exact tagged package output and provenance
   tooling in [`nisavid/chatgpt-linux`](https://github.com/nisavid/chatgpt-linux/tree/dd3d1397f544752ea1170af8393cd59379373f52).

@@ -56,19 +56,44 @@ Before writing a new `packages/<name>/PKGBUILD`:
 
 ## Package README Metadata
 
-Every onboarded package should include a maintenance baseline section with:
+Every `accepted-current` or `deferred` package in the checked refresh index must
+have a package README with exactly one nonempty entry for each of these fields:
 
-- `authoritative_reference`
-- `advisory_references`
-- `divergence_notes`
-- `update_notes`
+```markdown
+## Maintenance Baseline
 
-The section should answer:
+- `authoritative_reference`: <the package recipe or upstream source to diff first>
+- `advisory_references`: <nearby packages and upstream material worth scouting>
+- `divergence_notes`: <deliberate local differences, or an explicit statement that there are none>
+- `update_notes`: <the mandatory update and validation checks>
+```
 
-- what package or upstream source to diff first
-- what nearby packages are worth scouting
-- which divergences are deliberate
-- which validation gates are mandatory after an update
+The values may continue on indented lines when a field needs a list. Use `none`
+only when review established that there is no relevant advisory reference or no
+deliberate divergence; do not leave a value blank. A retired package is exempt
+because its disposition and preservation-aware removal boundary live in the
+refresh index and decision record rather than a maintained baseline.
+
+The four fields answer different questions:
+
+- `authoritative_reference` identifies the first package or upstream source to
+  compare and its compatibility lane.
+- `advisory_references` identifies other useful packaging, service, dependency,
+  or platform sources without treating them as authoritative.
+- `divergence_notes` states the local source, dependency, integration, privacy,
+  or service behavior that an update must preserve or deliberately replace.
+- `update_notes` states the freshness checks and lane-specific build, payload,
+  migration, runtime, privacy, or hardware gates required after an update.
+
+The repository consistency checker enforces field presence and basic shape:
+
+```bash
+python3 tools/check_repo_consistency.py
+```
+
+It does not decide whether the selected reference, divergence, or acceptance
+gate is correct. That remains human package review; this policy is not a
+generalized package-policy engine.
 
 ## Guardrails
 
