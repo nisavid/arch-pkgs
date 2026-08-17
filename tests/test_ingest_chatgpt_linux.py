@@ -418,6 +418,62 @@ class ChatGPTLinuxIngestTests(unittest.TestCase):
         self.assertEqual(sentinel.read_bytes(), b"last known good")
         self.assertEqual(sorted(path.name for path in self.repo.iterdir()), ["keep.txt"])
 
+    def test_unsupported_cp_reflink_preflight_leaves_repository_unchanged(self):
+        sentinel = self.repo / "keep.txt"
+        sentinel.write_bytes(b"last known good")
+        fake_bin = self.root / "unsupported-cp-bin"
+        fake_bin.mkdir()
+        copy_invoked = self.root / "copy-invoked"
+        fake_cp = fake_bin / "cp"
+        fake_cp.write_text(
+            "#!/bin/sh\n"
+            "if [ \"${1-}\" = --help ]; then\n"
+            "  printf '%s\\n' 'Usage: cp SOURCE DESTINATION'\n"
+            "  exit 0\n"
+            "fi\n"
+            f"touch {str(copy_invoked)!r}\n"
+            "exit 99\n",
+            encoding="utf-8",
+        )
+        fake_cp.chmod(0o755)
+        environment = os.environ.copy()
+        for key in list(environment):
+            if key.startswith("BASH_FUNC_"):
+                del environment[key]
+        environment["PATH"] = f"{fake_bin}:{environment['PATH']}"
+
+        result = self._run_ingest(check=False, environment=environment)
+
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stderr, "ingest requires cp with --reflink support\n")
+        self.assertFalse(copy_invoked.exists())
+        self.assertEqual(sentinel.read_bytes(), b"last known good")
+        self.assertEqual(sorted(path.name for path in self.repo.iterdir()), ["keep.txt"])
+        self.assertFalse(Path(f"{self.repo}.writer.lock").exists())
+
+    def test_missing_ingest_prerequisite_leaves_repository_unchanged(self):
+        sentinel = self.repo / "keep.txt"
+        sentinel.write_bytes(b"last known good")
+        prerequisite_bin = self.root / "prerequisite-bin"
+        prerequisite_bin.mkdir()
+        for command_name in ("awk", "bsdtar", "cp", "env", "git", "grep", "zsh"):
+            command_path = shutil.which(command_name)
+            self.assertIsNotNone(command_path)
+            (prerequisite_bin / command_name).symlink_to(command_path)
+        environment = os.environ.copy()
+        for key in list(environment):
+            if key.startswith("BASH_FUNC_"):
+                del environment[key]
+        environment["PATH"] = str(prerequisite_bin)
+
+        result = self._run_ingest(check=False, environment=environment)
+
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stderr, "missing required command: install\n")
+        self.assertEqual(sentinel.read_bytes(), b"last known good")
+        self.assertEqual(sorted(path.name for path in self.repo.iterdir()), ["keep.txt"])
+        self.assertFalse(Path(f"{self.repo}.writer.lock").exists())
+
     def test_live_exported_bash_functions_are_removed_before_repo_tools(self):
         fake_bin = self.root / "sanitize-bin"
         fake_bin.mkdir()
@@ -649,10 +705,17 @@ class PacmanRepoPublicationTests(unittest.TestCase):
             self.assertFalse(Path(f"{repo}.writer.lock").exists())
 
     def test_dry_run_plans_verified_candidate_and_previous_repository(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            repo = Path(temporary) / "repo"
+        with tempfile.TemporaryDirectory(dir="/tmp") as temporary:
+            root = Path(temporary)
+            repo = root / "repo"
+            publish = root / "published"
             repo.mkdir()
             (repo / "fixture.db.tar.zst").write_bytes(b"database")
+            environment = os.environ.copy()
+            for key in list(environment):
+                if key.startswith("BASH_FUNC_"):
+                    del environment[key]
+            environment["ARCH_PKGS_PUBLISH_TEST_MODE"] = "1"
 
             result = subprocess.run(
                 [
@@ -664,9 +727,10 @@ class PacmanRepoPublicationTests(unittest.TestCase):
                     "--repo-name",
                     "fixture",
                     "--publish-dir",
-                    "/srv/pacman/fixture/x86_64",
+                    str(publish),
                 ],
                 cwd=REPO_ROOT,
+                env=environment,
                 text=True,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -678,6 +742,53 @@ class PacmanRepoPublicationTests(unittest.TestCase):
         self.assertIn("verify the candidate manifest before promotion", result.stdout)
         self.assertIn("atomically exchange the candidate", result.stdout)
         self.assertIn("compare its manifest again", result.stdout)
+
+    def test_test_mode_rejects_symlinked_publish_path_without_mutation(self):
+        with tempfile.TemporaryDirectory(dir="/tmp") as temporary:
+            root = Path(temporary)
+            repo = root / "repo"
+            trusted_destination_parent = root / "trusted-destination-parent"
+            publish_parent = root / "publish-parent"
+            publish = publish_parent / "published"
+            repo.mkdir()
+            trusted_destination_parent.mkdir()
+            publish_parent.symlink_to(trusted_destination_parent, target_is_directory=True)
+            (repo / "fixture.db.tar.zst").write_bytes(b"database")
+            environment = os.environ.copy()
+            for key in list(environment):
+                if key.startswith("BASH_FUNC_"):
+                    del environment[key]
+            environment["ARCH_PKGS_PUBLISH_TEST_MODE"] = "1"
+
+            result = subprocess.run(
+                [
+                    "zsh",
+                    str(PUBLISH),
+                    "--repo-dir",
+                    str(repo),
+                    "--repo-name",
+                    "fixture",
+                    "--publish-dir",
+                    str(publish),
+                ],
+                cwd=REPO_ROOT,
+                env=environment,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 2)
+            self.assertEqual(
+                result.stderr,
+                "publish dir must not contain symlink components under "
+                f"/tmp: {publish_parent}\n",
+            )
+            self.assertFalse(publish.exists())
+            self.assertEqual(list(trusted_destination_parent.iterdir()), [])
+            self.assertFalse(Path(f"{repo}.writer.lock").exists())
+            self.assertFalse((trusted_destination_parent / ".published.publish.lock").exists())
 
     def test_failed_post_promotion_verification_restores_previous_repository(self):
         with tempfile.TemporaryDirectory(dir="/tmp") as temporary:

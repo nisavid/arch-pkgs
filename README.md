@@ -5,8 +5,8 @@ Personal Arch Linux packages for a local AI application stack.
 This repository collects packages that are useful enough to keep close, patched,
 and installable through a local pacman repository. It is not a public distro or a
 general AUR mirror. It is a small workspace for reproducible local packages:
-ChatGPT desktop app packaging, vector storage, Haystack services, their Python
-dependencies, and an experimental GPU inspection tool.
+exact verified ChatGPT desktop artifact ingest, vector storage, Haystack
+services, their Python dependencies, and an experimental GPU inspection tool.
 It also keeps a source-build Thorium Browser recipe when a local browser package
 needs the fixed tarball/tag build path.
 
@@ -99,8 +99,10 @@ The full local-repo setup, including the pacman stanza, is in
 
 ## Repository Map
 
-- `packages/<name>/` contains each Arch package: `PKGBUILD`, `.SRCINFO`, patches,
+- Ordinary `packages/<name>/` lanes contain `PKGBUILD`, `.SRCINFO`, patches,
   service files, config defaults, and package-local notes.
+  [`packages/chatgpt/`](packages/chatgpt/) is the exact verified artifact-ingest
+  exception.
 - `repo/x86_64/` is ignored, rebuildable local-repo staging output.
 - `tools/update_pacman_repo.zsh` refreshes `repo/x86_64/` from the current
   package archives reported by `makepkg --packagelist`.

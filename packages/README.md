@@ -41,6 +41,11 @@ available locally in the desired shape:
 
 ## Build And Publish
 
+This workflow applies to ordinary package lanes with a `PKGBUILD`; it does not
+apply to [`chatgpt`](chatgpt/). Stage that immutable artifact lane only with
+[`tools/ingest_chatgpt.zsh`](../tools/ingest_chatgpt.zsh), following its
+package-local README and accepted baseline.
+
 Build a package archive from its package directory:
 
 ```bash
