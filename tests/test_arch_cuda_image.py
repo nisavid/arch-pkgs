@@ -89,6 +89,8 @@ class ArchCudaImageTests(unittest.TestCase):
                 "--cached",
                 "--others",
                 "--exclude-standard",
+                "-z",
+                "--",
                 "*.zsh",
             ],
             cwd=REPO_ROOT,
@@ -96,10 +98,11 @@ class ArchCudaImageTests(unittest.TestCase):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             check=True,
-        ).stdout.splitlines()
+        ).stdout.split("\0")
         scripts = sorted(
-            {script for script in scripts if (REPO_ROOT / script).is_file()}
+            {script for script in scripts if script and (REPO_ROOT / script).is_file()}
         )
+        self.assertTrue(scripts, "no .zsh scripts were discovered")
         subprocess.run(
             ["zsh", "-n", *scripts],
             cwd=REPO_ROOT,

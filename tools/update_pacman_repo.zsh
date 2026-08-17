@@ -63,8 +63,6 @@ done
   exit 2
 }
 
-mkdir -p -- "$repo_dir"
-
 typeset -a package_paths
 typeset -A targeted_names
 typeset -A staged_paths
@@ -93,6 +91,59 @@ for package_dir in "${package_dirs[@]}"; do
     targeted_names[$package_name]=1
   done
 done
+
+repo_parent=${repo_dir:h}
+mkdir -p -- "$repo_parent"
+writer_lock=${repo_dir}.writer.lock
+writer_lock_owned=0
+signal_deferral=0
+pending_signal=0
+cleanup_writer_lock() {
+  local exit_status=$?
+  if (( writer_lock_owned )); then
+    rmdir -- "$writer_lock" >/dev/null 2>&1 || true
+  fi
+  return $exit_status
+}
+handle_signal() {
+  local signal_status=$1
+
+  if (( signal_deferral )); then
+    (( pending_signal )) || pending_signal=$signal_status
+    return 0
+  fi
+  exit $signal_status
+}
+finish_signal_deferral() {
+  local signal_status
+
+  signal_deferral=0
+  if (( pending_signal )); then
+    signal_status=$pending_signal
+    pending_signal=0
+    exit $signal_status
+  fi
+}
+trap cleanup_writer_lock EXIT
+trap 'handle_signal 129' HUP
+trap 'handle_signal 130' INT
+trap 'handle_signal 143' TERM
+
+writer_lock_acquired=0
+signal_deferral=1
+if mkdir -- "$writer_lock" 2>/dev/null; then
+  writer_lock_acquired=1
+fi
+if (( writer_lock_acquired )) \
+    && [[ ${ARCH_PKGS_UPDATE_TEST_SIGNAL_DURING_LOCK_ACQUISITION:-0} == 1 ]]; then
+  kill -TERM $$
+fi
+(( writer_lock_acquired )) && writer_lock_owned=1
+finish_signal_deferral
+(( writer_lock_acquired )) \
+  || die "another repository writer appears to be active: $writer_lock"
+
+mkdir -p -- "$repo_dir"
 
 repo_db=${repo_dir}/${repo_name}.db.tar.zst
 

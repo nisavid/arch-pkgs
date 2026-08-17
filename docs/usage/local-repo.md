@@ -49,6 +49,10 @@ The helper asks each package directory for its current `makepkg --packagelist`
 output, stages those archives, removes older repo entries for the same package
 names, and leaves unrelated packages alone.
 
+The ordinary updater, exact-artifact ingest, and publisher share one
+repository-writer lock. They fail closed instead of snapshotting or promoting
+staging while another writer is active.
+
 When publishing an application package with local dependencies, such as
 `hayhooks`, build and refresh the dependency package directories too.
 
@@ -89,6 +93,12 @@ destination, and compares the promoted destination with staging. It restores the
 old repository on any post-promotion verification failure and retains the old
 repository as a timestamped previous copy after success. Keep that copy until
 the installed package passes acceptance.
+
+Publication requires GNU coreutils 9.5 or newer and probes the target filesystem
+for atomic-exchange support before promotion. By default it permits at most two
+retained previous repositories. Set `ARCH_PKGS_PUBLISH_RETENTION` to another
+positive bound when needed; reaching the bound fails closed and never deletes a
+rollback copy automatically.
 
 ## Enable The Repo In Pacman
 
