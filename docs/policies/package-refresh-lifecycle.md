@@ -127,13 +127,15 @@ becomes an implicit pass.
 The `packages/chatgpt/` immutable-ingest lane is the explicit exception to
 local building. Follow its package README and `tools/ingest_chatgpt.zsh`; do not
 invent a `PKGBUILD`, run `makepkg`, or pass it to
-`tools/update_pacman_repo.zsh`. For terminal accepted-only publication, omit the
-seed when ChatGPT is the only repository entry. Otherwise seed ingest only from
-a freshly materialized repository whose complete database and archive set is
-bound to the explicit promotion manifest. Do not reuse the live repository as
-a seed merely because its internal hashes verify. If current tooling cannot
-materialize and prove that accepted-only seed, create an implementation ticket
-and stop before publication.
+`tools/update_pacman_repo.zsh`. For terminal accepted-only publication with
+ChatGPT as the only entry, omit the seed, use an absent or proven-empty dedicated
+staging directory, and reconcile the complete result with the explicit
+promotion manifest. Otherwise seed ingest only from a freshly materialized
+repository whose complete database and archive set is bound to that manifest.
+Do not reuse the live repository as a seed merely because its internal hashes
+verify. If current tooling cannot enforce empty staging or materialize and prove
+the accepted-only seed, create an implementation ticket and stop before
+publication.
 
 ## Accepted-only publication
 

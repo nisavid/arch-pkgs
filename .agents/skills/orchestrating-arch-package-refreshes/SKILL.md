@@ -91,11 +91,13 @@ and later transitions follow dependency order.
 For the `packages/chatgpt/` immutable-ingest exception, name and follow both its
 README and `tools/ingest_chatgpt.zsh`; never invent a recipe or pass it to the
 ordinary repo updater. In terminal accepted-only publication, omit seeding when
-ChatGPT is the only entry. Otherwise seed only from a freshly materialized
-repository whose every archive and database entry is bound to the explicit
-promotion manifest. A verified live repository is not sufficient seed evidence.
-If current tooling cannot produce that manifest-approved seed, open an
-implementation ticket and stop before publication.
+ChatGPT is the only entry, use an absent or proven-empty dedicated staging
+directory, and verify the complete result against the promotion manifest.
+Otherwise seed only from a freshly materialized repository whose every archive
+and database entry is bound to that manifest. A verified live repository is not
+sufficient seed evidence. If current tooling cannot enforce the empty-staging
+precondition or produce the manifest-approved seed, open an implementation
+ticket and stop before publication.
 
 Use `implement` with `tdd` for one approved execution ticket at a time,
 `maintaining-arch-packages` for package files, and `code-review` before a

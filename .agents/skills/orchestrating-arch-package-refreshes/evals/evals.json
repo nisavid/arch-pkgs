@@ -27,7 +27,7 @@
         {"id": "deployment-edges", "text": "Replaces the generic deployment tail with explicit acceptance deployment and lane-specific production deployment edges plus installed/runtime and retention gates.", "severity": "quality"},
         {"id": "accepted-only-fail-closed", "text": "Reconstructs staging from only promoted artifacts and, on ambiguous recovery identity, preserves every recovery path and forbids metadata refresh or installation.", "severity": "safety"},
         {"id": "immutable-ingest-route", "text": "Routes the immutable-ingest exception through the packages/chatgpt documentation and tools/ingest_chatgpt.zsh instead of inventing a PKGBUILD or ordinary makepkg/update path.", "severity": "safety"},
-        {"id": "accepted-only-ingest-seed", "text": "Rejects the live repository as sufficient seed evidence and requires no seed for a sole ChatGPT entry or a freshly materialized seed whose complete contents bind to the promotion manifest.", "severity": "safety"}
+        {"id": "accepted-only-ingest-seed", "text": "Rejects the live repository as sufficient seed evidence; for a sole ChatGPT entry requires no seed plus absent or proven-empty dedicated staging and a complete manifest check, or otherwise a freshly materialized seed whose complete contents bind to the promotion manifest.", "severity": "safety"}
       ]
     },
     {
