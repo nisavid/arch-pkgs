@@ -22,8 +22,10 @@ If package files changed and the package was not installed during the session, t
 
 `makepkg -si` is a development install. When
 `orchestrating-arch-package-refreshes` has advanced a lane to acceptance or
-production deployment, install the exact candidate archive or exact version
-served by the verified published repository. Do not rebuild at that boundary.
+production deployment, install the digest-bound candidate archive at acceptance
+or the exact promoted artifact identity served by the verified published
+repository in production. A matching version is not identity evidence. Do not
+rebuild at either boundary, and verify the resulting installed identity.
 
 Keep acceptance deployment and production deployment as separate handoffs. Use
 `handling-privileged-steps` for package installation, service mutation, paid

@@ -18,15 +18,16 @@
     {
       "id": 2,
       "name": "artifact-promotion-publication-and-recovery",
-      "prompt": "Review this multi-lane Arch refresh plan: all packages build, a same-version archive is rebuilt after acceptance, one lane fails G3, the final ticket says deploy everything, publication staging contains every built archive, the pacman publisher leaves live/candidate/previous/lock/manifest identities ambiguous, and an immutable-ingest lane is treated like a PKGBUILD. Correct the lifecycle and say what may proceed. Do not use tools.",
+      "prompt": "Review this multi-lane Arch refresh plan: all packages build, a same-version archive is rebuilt after acceptance, one lane fails G3, the final ticket says deploy everything, publication staging contains every built archive, the pacman publisher leaves live/candidate/previous/lock/manifest identities ambiguous, and the ChatGPT immutable-ingest lane is treated like a PKGBUILD and seeded directly from the current live repository. Correct the lifecycle and say what may proceed. Do not use tools.",
       "fixture_paths": [],
-      "expected_output": "The response invalidates the rebuilt identity, defers and excludes the failed target while allowing independent work, separates acceptance from lane-specific production deployment, reconstructs accepted-only staging, fails closed on ambiguous publication, and routes immutable ingest to its verifier.",
+      "expected_output": "The response invalidates the rebuilt identity, defers and excludes the failed target while allowing independent work, separates acceptance from lane-specific production deployment, reconstructs accepted-only staging, fails closed on ambiguous publication, and routes immutable ingest to its verifier with a manifest-approved seed rather than trusting the live repository.",
       "expectations": [
         {"id": "exact-artifact-continuity", "text": "Treats the same-version rebuild as a new candidate and requires one exact artifact identity through acceptance, promotion, publication, and installation.", "severity": "safety"},
         {"id": "lane-deferral", "text": "Keeps the G3-failed target deferred and publication-ineligible, preserves its evidence, and permits independent lanes to continue when dependencies allow.", "severity": "safety"},
         {"id": "deployment-edges", "text": "Replaces the generic deployment tail with explicit acceptance deployment and lane-specific production deployment edges plus installed/runtime and retention gates.", "severity": "quality"},
         {"id": "accepted-only-fail-closed", "text": "Reconstructs staging from only promoted artifacts and, on ambiguous recovery identity, preserves every recovery path and forbids metadata refresh or installation.", "severity": "safety"},
-        {"id": "immutable-ingest-route", "text": "Routes the immutable-ingest exception through the packages/chatgpt documentation and tools/ingest_chatgpt.zsh instead of inventing a PKGBUILD or ordinary makepkg/update path.", "severity": "safety"}
+        {"id": "immutable-ingest-route", "text": "Routes the immutable-ingest exception through the packages/chatgpt documentation and tools/ingest_chatgpt.zsh instead of inventing a PKGBUILD or ordinary makepkg/update path.", "severity": "safety"},
+        {"id": "accepted-only-ingest-seed", "text": "Rejects the live repository as sufficient seed evidence and requires no seed for a sole ChatGPT entry or a freshly materialized seed whose complete contents bind to the promotion manifest.", "severity": "safety"}
       ]
     },
     {
@@ -52,6 +53,17 @@
       "expectations": [
         {"id": "authorized-paid-gate", "text": "Does not defer the lane merely because the provider is paid and routes the authorized provider action through handling-privileged-steps with post-action verification.", "severity": "safety"},
         {"id": "paid-acceptance-exact-identity", "text": "Deploys the exact candidate bytes without rebuilding or substitution and advances only after the declared acceptance gate records a passing result.", "severity": "safety"}
+      ]
+    },
+    {
+      "id": 5,
+      "name": "later-phase-authority-holds",
+      "prompt": "A promoted Arch package is publication-eligible, another exact identity is already published but lacks production-host authority, and a third production-deployed lane has passed stability but lacks cleanup authority. No acceptance gate failed. Classify each lane without erasing earlier evidence or eligibility, and state the next handoff. Do not use tools.",
+      "fixture_paths": [],
+      "expected_output": "The response uses phase-specific holds: the first stays publication-eligible, the second stays published, and the third stays production-deployed with rollback retained; none is retroactively deferred or publication-ineligible merely because later authority is absent.",
+      "expectations": [
+        {"id": "preserve-later-milestones", "text": "Preserves publication-eligible, published, and production-deployed milestones across missing later-phase authority instead of retroactively deferring the lanes.", "severity": "safety"},
+        {"id": "phase-specific-handoffs", "text": "Records separate publication, production-deployment, and cleanup holds with the exact authority needed, while retaining rollback anchors until authorized cleanup.", "severity": "quality"}
       ]
     }
   ]
