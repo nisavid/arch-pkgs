@@ -348,9 +348,12 @@ class QdrantLaneContractTests(unittest.TestCase):
             )
 
         def run_preflight(
-            path: Path, *, map_fixture_owner_to_root: bool = True
+            path: Path,
+            *,
+            map_fixture_owner_to_root: bool = True,
+            force_fakeroot: bool = False,
         ) -> subprocess.CompletedProcess[str]:
-            if map_fixture_owner_to_root and use_user_namespace:
+            if map_fixture_owner_to_root and use_user_namespace and not force_fakeroot:
                 command = [
                     "unshare",
                     "--user",
@@ -360,7 +363,7 @@ class QdrantLaneContractTests(unittest.TestCase):
                     str(path),
                 ]
             elif map_fixture_owner_to_root:
-                return run_with_fakeroot(path, owner=0, group=os.getgid())
+                return run_with_fakeroot(path, owner=0, group=0)
             else:
                 command = [str(SECRET_PREFLIGHT), str(path)]
             return subprocess.run(
@@ -384,6 +387,13 @@ class QdrantLaneContractTests(unittest.TestCase):
 
             accepted = run_preflight(valid)
             self.assertEqual(accepted.returncode, 0, accepted.stderr)
+            if shutil.which("fakeroot"):
+                accepted_fakeroot = run_preflight(valid, force_fakeroot=True)
+                self.assertEqual(
+                    accepted_fakeroot.returncode,
+                    0,
+                    accepted_fakeroot.stderr,
+                )
 
             content_cases = {
                 "empty": "",
