@@ -88,16 +88,12 @@ installation, and service mutations through `handling-privileged-steps` and
 verify the result. Coupled candidates may run in parallel; composed acceptance
 and later transitions follow dependency order.
 
-For the `packages/chatgpt/` immutable-ingest exception, name and follow both its
-README and `tools/ingest_chatgpt.zsh`; never invent a recipe or pass it to the
-ordinary repo updater. In terminal accepted-only publication, omit seeding when
-ChatGPT is the only entry, use an absent or proven-empty dedicated staging
-directory, and verify the complete result against the promotion manifest.
-Otherwise seed only from a freshly materialized repository whose every archive
-and database entry is bound to that manifest. A verified live repository is not
-sufficient seed evidence. If current tooling cannot enforce the empty-staging
-precondition or produce the manifest-approved seed, open an implementation
-ticket and stop before publication.
+The retired ChatGPT fallback is not an active lane. Follow
+[`docs/maintainers/chatgpt-retirement.md`](../../../docs/maintainers/chatgpt-retirement.md):
+exclude it from candidate production and accepted-only publication, never
+recreate its recipe or ingest path, and use the dedicated source-to-candidate
+retirement operation for any remaining repository copy. Ordinary refresh and
+cleanup work cannot release its protected private rollback evidence.
 
 Use `implement` with `tdd` for one approved execution ticket at a time,
 `maintaining-arch-packages` for package files, and `code-review` before a

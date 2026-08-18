@@ -5,23 +5,18 @@ like normal Arch packages during install, repair, and upgrade.
 
 The workflow has four parts:
 
-1. Build package archives with `makepkg`, or verify an artifact-ingest lane.
+1. Build package archives with `makepkg`.
 2. Refresh checkout-local repo metadata under `repo/x86_64/`.
 3. Publish that repo to a pacman-visible path.
 4. Install with `pacman` or an AUR helper.
 
 ## Before You Start
 
-Install the Arch packaging tools and artifact-ingest prerequisites on the build
-host:
+Install the Arch packaging tools on the build host:
 
 ```bash
 sudo pacman -S --needed base-devel git jq libarchive python rsync zsh zstd
 ```
-
-The ChatGPT artifact-ingest lane uses GNU `cp` with `--reflink` support and
-`bsdtar` from `libarchive`. Its `repo-add` and `repo-remove` commands come from
-`pacman`, which `base-devel` installs.
 
 The examples below use `/srv/pacman/nisavid/x86_64` as the published repo path.
 That path is outside the checkout so pacman can read it without depending on a
@@ -54,35 +49,12 @@ The helper asks each package directory for its current `makepkg --packagelist`
 output, stages those archives, removes older repo entries for the same package
 names, and leaves unrelated packages alone.
 
-The ordinary updater, exact-artifact ingest, and publisher share one
-repository-writer lock. They fail closed instead of snapshotting or promoting
-staging while another writer is active.
+The ordinary updater and publisher share one repository-writer lock. They fail
+closed instead of snapshotting or promoting staging while another writer is
+active.
 
 When publishing an application package with local dependencies, such as
 `hayhooks`, build and refresh the dependency package directories too.
-
-Artifact-ingest lanes have their own verifier. For an ordinary incremental
-ChatGPT ingest outside a lifecycle-managed terminal accepted-only publication,
-pass the complete verified published repository as the seed so unrelated
-packages remain present, then run the exact ingest command documented in
-[`packages/chatgpt/README.md`](../../packages/chatgpt/README.md):
-
-```bash
-tools/ingest_chatgpt.zsh \
-  --artifact /path/to/chatgpt.pkg.tar.zst \
-  --verification-record /path/to/verification-record.json \
-  --record-sha256 RECORD_SHA256 \
-  --source-dir /path/to/chatgpt-linux \
-  --seed-repo-dir /srv/pacman/nisavid/x86_64
-```
-
-Run the staged verification in the package-local README before publication.
-
-The helper reads the seed while holding the shared repository-writer lock and
-accepts it only when checkout-local staging is otherwise empty. An existing
-seed supplies the complete repository. A supplied seed path must exist; omit
-the option to initialize the first repository. This keeps seeding and ingest in
-one guarded transaction.
 
 Never publish a partial staging directory: the publisher mirrors staging and
 removes destination files that are absent from it.
@@ -94,16 +66,12 @@ and reconcile every staged entry before running the publisher. The updater and
 publisher preserve and promote repository contents; they do not decide whether
 an artifact passed its lane's acceptance and promotion gates.
 
-For ChatGPT in that terminal path, do not seed ingest directly from the live
-repository. When ChatGPT is the only accepted entry, use an absent or
-proven-empty dedicated `--repo-dir`, omit the seed, and reconcile the complete
-result with the promotion manifest. Otherwise first materialize a seed whose
-complete database and archive set matches that manifest, then pass that
-directory to `tools/ingest_chatgpt.zsh`. The current helper copies an existing
-`--repo-dir` even when no seed is supplied, so omission alone does not establish
-empty staging. Stop and open a tooling ticket if the helper cannot enforce the
-empty-staging precondition or the accepted-only seed cannot be constructed and
-verified without rebuilding or importing an ineligible artifact.
+The former ChatGPT fallback lane is retired. Do not reconstruct it through the
+ordinary updater. To withdraw a retained ChatGPT producer from a complete
+repository, follow
+[`docs/maintainers/chatgpt-retirement.md`](../maintainers/chatgpt-retirement.md)
+and construct a separate reviewed candidate with `tools/retire_chatgpt.zsh`
+before publication.
 
 ## Publish A Pacman-Visible Copy
 

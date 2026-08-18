@@ -124,18 +124,15 @@ At a later boundary, preserve the current milestone and record a publication,
 production-deployment, or cleanup hold. No unavailable or unauthorized action
 becomes an implicit pass.
 
-The `packages/chatgpt/` immutable-ingest lane is the explicit exception to
-local building. Follow its package README and `tools/ingest_chatgpt.zsh`; do not
-invent a `PKGBUILD`, run `makepkg`, or pass it to
-`tools/update_pacman_repo.zsh`. For terminal accepted-only publication with
-ChatGPT as the only entry, omit the seed, use an absent or proven-empty dedicated
-staging directory, and reconcile the complete result with the explicit
-promotion manifest. Otherwise seed ingest only from a freshly materialized
-repository whose complete database and archive set is bound to that manifest.
-Do not reuse the live repository as a seed merely because its internal hashes
-verify. If current tooling cannot enforce empty staging or materialize and prove
-the accepted-only seed, create an implementation ticket and stop before
-publication.
+The retired ChatGPT fallback is not a package lane and is never eligible for a
+refresh or accepted-only publication manifest. Do not recreate its catalog row,
+recipe, or ingest path from the retained historical acceptance record. Existing
+repository copies are withdrawn only through the exact source-to-candidate
+operation in
+[`docs/maintainers/chatgpt-retirement.md`](../maintainers/chatgpt-retirement.md).
+Its designated private fallback and recovery snapshot remain protected until
+the separately authorized M4 workflow releases them; ordinary refresh or
+retention cleanup cannot do so.
 
 ## Accepted-only publication
 

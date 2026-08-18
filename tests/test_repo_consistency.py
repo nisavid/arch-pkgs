@@ -12,6 +12,10 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CHECKER = REPO_ROOT / "tools" / "check_repo_consistency.py"
 WORKFLOW = REPO_ROOT / ".github" / "workflows" / "repository-consistency.yml"
+CHATGPT_RETIREMENT_EVIDENCE_RELATIVE = (
+    "docs/maintainers/evidence/chatgpt-fallback-baseline-2026-08-16.json"
+)
+CHATGPT_RETIREMENT_EVIDENCE = REPO_ROOT / CHATGPT_RETIREMENT_EVIDENCE_RELATIVE
 
 
 class RepositoryConsistencyTests(unittest.TestCase):
@@ -68,6 +72,10 @@ class RepositoryConsistencyTests(unittest.TestCase):
             ),
         )
         self.write("tools/example.zsh", "#!/usr/bin/env zsh\nprint -r -- ok\n")
+        self.write(
+            CHATGPT_RETIREMENT_EVIDENCE_RELATIVE,
+            CHATGPT_RETIREMENT_EVIDENCE.read_text(encoding="utf-8"),
+        )
         self.write("tests/__init__.py", "")
         self.write("tests/test_fixture.py", "import unittest\n")
         self.write(
@@ -181,33 +189,149 @@ class RepositoryConsistencyTests(unittest.TestCase):
         )
         self.assertNotIn("Traceback", result.stderr)
 
-    def test_chatgpt_identity_requires_object_package_metadata(self):
-        baseline_readme = (self.repo / "packages/example/README.md").read_text(
-            encoding="utf-8"
+    def test_retired_chatgpt_package_lane_cannot_be_reintroduced(self):
+        self.write("packages/chatgpt/README.md", "# retired lane\n")
+
+        result = self.run_checker()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "packages/chatgpt: retired package lane must remain absent",
+            result.stderr,
         )
-        for name in ("PKGBUILD", ".SRCINFO", ".generated-srcinfo", "README.md"):
-            (self.repo / "packages/example" / name).unlink()
-        catalog = self.repo / "packages/README.md"
-        catalog.write_text(
-            catalog.read_text(encoding="utf-8")
-            .replace("[`example`](example/)", "[`chatgpt`](chatgpt/)")
-            .replace("| `example` | 1.2.3-4 |", "| `chatgpt` | 1.0-1 |"),
-            encoding="utf-8",
+
+    def test_retired_legacy_producer_lane_cannot_be_reintroduced(self):
+        self.write("packages/codex-app/PKGBUILD", "pkgname=codex-app\n")
+
+        result = self.run_checker()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "packages/codex-app: retired ChatGPT producer lane must remain absent",
+            result.stderr,
         )
-        self.write("packages/chatgpt/README.md", baseline_readme)
+
+    def test_official_chatgpt_package_lane_cannot_be_reintroduced(self):
         self.write(
-            "packages/chatgpt/fallback-baseline-fixture.json",
-            '{"package": []}\n',
+            "packages/chatgpt-desktop-bin/PKGBUILD",
+            "pkgname=chatgpt-desktop-bin\n",
         )
 
         result = self.run_checker()
 
         self.assertEqual(result.returncode, 1)
         self.assertIn(
-            "packages/chatgpt/fallback-baseline-fixture.json: package must be an object",
+            "packages/chatgpt-desktop-bin: local ChatGPT package lane must remain absent",
             result.stderr,
         )
-        self.assertNotIn("Traceback", result.stderr)
+
+    def test_retired_chatgpt_catalog_row_cannot_be_reintroduced(self):
+        catalog = self.repo / "packages/README.md"
+        catalog.write_text(
+            catalog.read_text(encoding="utf-8")
+            + "| [`chatgpt`](chatgpt/) | `chatgpt` | 1.0-1 | retired | historical | 2026-08-18 | Retired | no |\n",
+            encoding="utf-8",
+        )
+
+        result = self.run_checker()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "packages/README.md: retired ChatGPT catalog row must remain absent: chatgpt",
+            result.stderr,
+        )
+
+    def test_official_chatgpt_catalog_row_cannot_be_reintroduced(self):
+        catalog = self.repo / "packages/README.md"
+        catalog.write_text(
+            catalog.read_text(encoding="utf-8")
+            + "| [`chatgpt-desktop-bin`](chatgpt-desktop-bin/) | `chatgpt-desktop-bin` | 1.0-1 | retired | external | 2026-08-18 | Settled external producer | no |\n",
+            encoding="utf-8",
+        )
+
+        result = self.run_checker()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "packages/README.md: local ChatGPT package catalog row must remain absent",
+            result.stderr,
+        )
+
+    def test_retired_chatgpt_package_identity_cannot_hide_behind_an_alias(self):
+        catalog = self.repo / "packages/README.md"
+        catalog.write_text(
+            catalog.read_text(encoding="utf-8")
+            + "| [`desktop-app`](desktop-app/) | `chatgpt` | 1.0-1 | accepted-current | current | 2026-08-18 | Accepted | yes |\n",
+            encoding="utf-8",
+        )
+
+        result = self.run_checker()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "packages/README.md: retired ChatGPT producer identity must remain absent: chatgpt",
+            result.stderr,
+        )
+
+    def test_retired_chatgpt_ingest_helper_cannot_be_reintroduced(self):
+        self.write("tools/ingest_chatgpt.zsh", "#!/usr/bin/env zsh\n")
+
+        result = self.run_checker()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "tools/ingest_chatgpt.zsh: retired ingest helper must remain absent",
+            result.stderr,
+        )
+
+    def test_retired_chatgpt_ingest_helper_cannot_be_renamed(self):
+        self.write("tools/ingest_chatgpt_linux.zsh", "#!/usr/bin/env zsh\n")
+
+        result = self.run_checker()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "tools/ingest_chatgpt_linux.zsh: retired ChatGPT ingest helper must remain absent",
+            result.stderr,
+        )
+
+    def test_retired_chatgpt_ingest_helper_cannot_change_language(self):
+        self.write("tools/ingest_chatgpt.py", "print('retired')\n")
+
+        result = self.run_checker()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "tools/ingest_chatgpt.py: retired ChatGPT ingest helper must remain absent",
+            result.stderr,
+        )
+
+    def test_chatgpt_retirement_evidence_must_remain_present(self):
+        (self.repo / CHATGPT_RETIREMENT_EVIDENCE_RELATIVE).unlink()
+
+        result = self.run_checker()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            f"{CHATGPT_RETIREMENT_EVIDENCE_RELATIVE}: exact historical evidence is missing",
+            result.stderr,
+        )
+
+    def test_chatgpt_retirement_evidence_digest_must_remain_exact(self):
+        evidence = self.repo / CHATGPT_RETIREMENT_EVIDENCE_RELATIVE
+        evidence.write_text(
+            evidence.read_text(encoding="utf-8") + "\n",
+            encoding="utf-8",
+        )
+
+        result = self.run_checker()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            f"{CHATGPT_RETIREMENT_EVIDENCE_RELATIVE}: "
+            "historical evidence digest does not match the retained baseline",
+            result.stderr,
+        )
 
     def test_catalog_must_cover_each_package_lane_once(self):
         self.write(

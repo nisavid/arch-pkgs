@@ -1,19 +1,15 @@
 # Package Catalog
 
-Each directory under `packages/` is a self-contained Arch package lane. Normal
-lanes carry a `PKGBUILD`, `.SRCINFO`, service assets, patches, and local notes.
-The `chatgpt` lane is the explicit exception: it accepts an exact package
-artifact and provenance record, so it has no local `PKGBUILD` or `.SRCINFO`.
+Each directory under `packages/` is a self-contained Arch package lane with a
+`PKGBUILD`, `.SRCINFO`, service assets, patches, and local notes as needed.
 
 ## Refresh Index
 
 This is the checked human record for the current repository refresh. It was
-reconciled on 2026-08-17 against the complete dated upstream sweep and the
+reconciled on 2026-08-18 against the complete dated upstream sweep and the
 subsequent package-lane decisions. The packaged version is mechanical truth
-from `.SRCINFO`, except for the immutable `chatgpt` lane, where the tracked
-artifact baseline is authoritative. A review date records the latest human
-target or disposition review; it is not an assertion that no newer release
-exists.
+from `.SRCINFO`. A review date records the latest human target or disposition
+review; it is not an assertion that no newer release exists.
 
 The dispositions have deliberately narrow meanings:
 
@@ -27,12 +23,12 @@ The dispositions have deliberately narrow meanings:
 Publication eligibility refers to the terminal clean refresh manifest, not to
 whether an old archive exists or a recipe can be built. Every deferred lane in
 this refresh is excluded until a later acceptance record explicitly promotes
-it. The empty legacy `packages/codex-app/` directory is not a package lane: it
-has no recipe or immutable artifact baseline and therefore has no catalog row.
+it. The retired ChatGPT fallback is not a package lane or catalog row; its
+public historical evidence is documented in
+[`docs/maintainers/chatgpt-retirement.md`](../docs/maintainers/chatgpt-retirement.md).
 
 | Directory | Package | Packaged version | Disposition | Reviewed target or cursor | Review date | Acceptance state or next gate | Publication eligible |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| [`chatgpt`](chatgpt/) | `chatgpt` | 26.810.52044-1 | accepted-current | [`fallback-baseline-2026-08-16`](https://github.com/nisavid/chatgpt-linux/tree/fallback-baseline-2026-08-16) at `dd3d1397f544752ea1170af8393cd59379373f52` | 2026-08-17 | Exact ingest, repository publication, fallback installation, and host acceptance passed; retain the fallback only until the separate parity and sunsetting decision releases it. | yes |
 | [`ctranslate2`](ctranslate2/) | `ctranslate2`, `python-ctranslate2` | 4.7.2-1 | deferred | [CTranslate2 4.8.1](https://github.com/nisavid/arch-pkgs/issues/26#issuecomment-5258698835) | 2026-08-11 | Excluded; pass the Open WebUI speech G0-G2 package, payload, offline-runtime, and Faster Whisper checks. | no |
 | [`hayhooks`](hayhooks/) | `hayhooks` | 1.19.2-1 | deferred | [Hayhooks 1.23.0](https://github.com/nisavid/arch-pkgs/issues/27#issuecomment-5259162959) | 2026-08-11 | Excluded; pass the Haystack 3 package gates, Qdrant-backed G4 service gate, v2-to-v3 migration, and rollback drill. | no |
 | [`haystack-ai`](haystack-ai/) | `python-haystack-ai` | 2.29.0-1 | deferred | [Haystack 3.0.0](https://github.com/nisavid/arch-pkgs/issues/27#issuecomment-5259162959) | 2026-08-11 | Excluded; pass the Haystack 3 package gates, Qdrant-backed G4 service gate, v2-to-v3 migration, and rollback drill. | no |
@@ -64,10 +60,11 @@ python3 tools/check_repo_consistency.py
 ```
 
 The checker verifies catalog coverage, row shape, package identity and version,
-required baseline-field shape, `.SRCINFO` agreement, tracked Zsh syntax, pinned
-workflow actions, and the committed unit tests. It does not query providers,
-select candidates, build packages, or decide whether lane-specific acceptance
-evidence is sufficient; those remain explicit maintainer review.
+required baseline-field shape, `.SRCINFO` agreement, retired ChatGPT source
+boundaries, tracked Zsh syntax, pinned workflow actions, and the committed unit
+tests. It does not query providers, select candidates, build packages, or decide
+whether lane-specific acceptance evidence is sufficient; those remain explicit
+maintainer review.
 
 ## Build And Publish
 
@@ -83,11 +80,6 @@ lifecycle publication steps. After promotion, follow the
 [`accepted-only publication`](../docs/policies/package-refresh-lifecycle.md#accepted-only-publication)
 and [`publisher`](../docs/usage/local-repo.md#publish-a-pacman-visible-copy)
 procedures with the exact accepted artifacts and without rebuilding them.
-
-This workflow applies to ordinary package lanes with a `PKGBUILD`; it does not
-apply to [`chatgpt`](chatgpt/). Stage that immutable artifact lane only with
-[`tools/ingest_chatgpt.zsh`](../tools/ingest_chatgpt.zsh), following its
-package-local README and accepted baseline.
 
 Build a package archive from its package directory:
 

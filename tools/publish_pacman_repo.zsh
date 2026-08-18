@@ -6,6 +6,7 @@ setopt errexit nounset pipefail
 script_dir=${0:A:h}
 script_name=${0:t}
 repo_root=${script_dir:h}
+repository_manifest_tool=${script_dir}/repository_manifest.py
 repo_dir=${repo_root}/repo/x86_64
 repo_name=nisavid
 publish_dir=
@@ -44,50 +45,7 @@ need_command() {
 
 write_repo_manifest() {
   local directory=$1 output=$2
-  python3 - "$directory" >"$output" <<'PY'
-import hashlib
-import json
-import os
-import stat
-import sys
-from pathlib import Path
-
-root = Path(sys.argv[1])
-entries = []
-for path in sorted(root.iterdir(), key=lambda item: os.fsencode(item.name)):
-    # Pacman repository publication is intentionally flat; never recurse.
-    metadata = path.lstat()
-    common = {
-        "gid": metadata.st_gid,
-        "mode": f"{stat.S_IMODE(metadata.st_mode):04o}",
-        "name": path.name,
-        "uid": metadata.st_uid,
-    }
-    if path.is_symlink():
-        target = os.readlink(path)
-        if "/" in target or target in ("", ".", ".."):
-            raise SystemExit(f"unsafe repository symlink: {path.name} -> {target}")
-        if not (root / target).is_file():
-            raise SystemExit(f"repository symlink target is missing: {path.name} -> {target}")
-        entries.append({**common, "target": target, "type": "symlink"})
-    elif path.is_file():
-        digest = hashlib.sha256()
-        with path.open("rb") as source:
-            for chunk in iter(lambda: source.read(1024 * 1024), b""):
-                digest.update(chunk)
-        entries.append(
-            {
-                **common,
-                "sha256": digest.hexdigest(),
-                "size": metadata.st_size,
-                "type": "file",
-            }
-        )
-    else:
-        raise SystemExit(f"unsupported repository entry: {path.name}")
-
-print(json.dumps({"entries": entries, "schemaVersion": 2}, indent=2, sort_keys=True))
-PY
+  python3 "$repository_manifest_tool" "$directory" >"$output"
 }
 
 directory_identity() {
@@ -205,6 +163,8 @@ fi
 publish_dir=${publish_dir:a}
 
 if (( ! dry_run )); then
+  [[ -f "$repository_manifest_tool" ]] \
+    || die "missing repository manifest tool: $repository_manifest_tool"
   (( test_mode )) || need_command sudo
   need_command rsync
   need_command python3

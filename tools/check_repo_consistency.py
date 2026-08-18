@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
-import json
+import hashlib
 import re
 import subprocess
 import sys
@@ -29,12 +29,7 @@ def check_package_pairs(repo: Path) -> list[str]:
         has_pkgbuild = (package_dir / "PKGBUILD").is_file()
         has_srcinfo = (package_dir / ".SRCINFO").is_file()
         relative = package_dir.relative_to(repo).as_posix()
-        if package_dir.name == "chatgpt":
-            if has_pkgbuild or has_srcinfo:
-                errors.append(
-                    f"{relative}: immutable artifact lane must not contain PKGBUILD or .SRCINFO"
-                )
-        elif not (has_pkgbuild and has_srcinfo):
+        if not (has_pkgbuild and has_srcinfo):
             errors.append(f"{relative}: PKGBUILD and .SRCINFO must both exist")
     return errors
 
@@ -42,7 +37,7 @@ def check_package_pairs(repo: Path) -> list[str]:
 def check_srcinfo(repo: Path) -> list[str]:
     errors: list[str] = []
     for package_dir in sorted((repo / "packages").iterdir()):
-        if not package_dir.is_dir() or package_dir.name == "chatgpt":
+        if not package_dir.is_dir():
             continue
         pkgbuild = package_dir / "PKGBUILD"
         srcinfo = package_dir / ".SRCINFO"
@@ -72,6 +67,96 @@ BASELINE_FIELDS = (
     "divergence_notes",
     "update_notes",
 )
+CHATGPT_RETIREMENT_EVIDENCE = Path(
+    "docs/maintainers/evidence/chatgpt-fallback-baseline-2026-08-16.json"
+)
+CHATGPT_RETIREMENT_EVIDENCE_SHA256 = (
+    "9002ee0c06f45c64f3fe08bd85fc4f7d74f962a8246f4ece9c6753477028f220"
+)
+RETIRED_CHATGPT_PRODUCER_NAMES = {"chatgpt", "codex-app", "codex-desktop"}
+FORBIDDEN_LOCAL_CHATGPT_LANE_NAMES = RETIRED_CHATGPT_PRODUCER_NAMES | {
+    "chatgpt-desktop-bin"
+}
+
+
+def check_retired_chatgpt_sources(repo: Path) -> list[str]:
+    errors: list[str] = []
+    evidence = repo / CHATGPT_RETIREMENT_EVIDENCE
+    if not evidence.is_file():
+        errors.append(
+            f"{CHATGPT_RETIREMENT_EVIDENCE.as_posix()}: "
+            "exact historical evidence is missing"
+        )
+    elif hashlib.sha256(evidence.read_bytes()).hexdigest() != (
+        CHATGPT_RETIREMENT_EVIDENCE_SHA256
+    ):
+        errors.append(
+            f"{CHATGPT_RETIREMENT_EVIDENCE.as_posix()}: "
+            "historical evidence digest does not match the retained baseline"
+        )
+    retired_lane_names: set[str] = set()
+    for path in repository_paths(repo):
+        relative = path.relative_to(repo)
+        if (
+            len(relative.parts) >= 3
+            and relative.parts[0] == "packages"
+            and relative.parts[1] in FORBIDDEN_LOCAL_CHATGPT_LANE_NAMES
+        ):
+            retired_lane_names.add(relative.parts[1])
+    for name in sorted(retired_lane_names):
+        if name == "chatgpt":
+            errors.append("packages/chatgpt: retired package lane must remain absent")
+        elif name == "chatgpt-desktop-bin":
+            errors.append(
+                "packages/chatgpt-desktop-bin: "
+                "local ChatGPT package lane must remain absent"
+            )
+        else:
+            errors.append(
+                f"packages/{name}: retired ChatGPT producer lane must remain absent"
+            )
+    rows = catalog_rows(repo)
+    for name in sorted(rows.keys() & FORBIDDEN_LOCAL_CHATGPT_LANE_NAMES):
+        if name == "chatgpt-desktop-bin":
+            errors.append(
+                "packages/README.md: local ChatGPT package catalog row "
+                "must remain absent"
+            )
+        else:
+            errors.append(
+                f"packages/README.md: retired ChatGPT catalog row must remain absent: {name}"
+            )
+    catalog_identities = {
+        identity
+        for matching_rows in rows.values()
+        for row in matching_rows
+        if len(row) >= 2
+        for identity in re.findall(r"`([^`]+)`", row[1])
+    }
+    for identity in sorted(catalog_identities & FORBIDDEN_LOCAL_CHATGPT_LANE_NAMES):
+        if identity == "chatgpt-desktop-bin":
+            errors.append(
+                "packages/README.md: local ChatGPT package identity "
+                f"must remain absent: {identity}"
+            )
+        else:
+            errors.append(
+                "packages/README.md: retired ChatGPT producer identity "
+                f"must remain absent: {identity}"
+            )
+    retired_ingest_helpers = sorted(
+        path.relative_to(repo).as_posix()
+        for path in repository_paths(repo)
+        if re.fullmatch(r"tools/ingest_chatgpt[^/]*", path.relative_to(repo).as_posix())
+    )
+    for relative in retired_ingest_helpers:
+        if relative == "tools/ingest_chatgpt.zsh":
+            errors.append(f"{relative}: retired ingest helper must remain absent")
+        else:
+            errors.append(
+                f"{relative}: retired ChatGPT ingest helper must remain absent"
+            )
+    return errors
 
 
 def repository_paths(repo: Path) -> list[Path]:
@@ -229,33 +314,7 @@ def srcinfo_identity(repo: Path, srcinfo: Path) -> tuple[list[str], str]:
 
 
 def package_identity(repo: Path, package_name: str) -> tuple[list[str], str]:
-    package_dir = repo / "packages" / package_name
-    if package_name != "chatgpt":
-        return srcinfo_identity(repo, package_dir / ".SRCINFO")
-    baselines = sorted(package_dir.glob("fallback-baseline-*.json"))
-    if len(baselines) != 1:
-        raise ValueError(
-            f"packages/chatgpt: expected one fallback baseline; found {len(baselines)}"
-        )
-    relative = baselines[0].relative_to(repo).as_posix()
-    try:
-        baseline = json.loads(baselines[0].read_text(encoding="utf-8"))
-    except json.JSONDecodeError as error:
-        raise ValueError(f"{relative}: invalid JSON: {error.msg}") from error
-    if not isinstance(baseline, dict):
-        raise ValueError(f"{relative}: baseline must be an object")
-    package = baseline.get("package")
-    if not isinstance(package, dict):
-        raise ValueError(f"{relative}: package must be an object")
-    identity: dict[str, str] = {}
-    for key in ("name", "version"):
-        value = package.get(key)
-        if not isinstance(value, str) or not value.strip():
-            raise ValueError(
-                f"{relative}: package.{key} must be a nonempty string"
-            )
-        identity[key] = value
-    return [identity["name"]], identity["version"]
+    return srcinfo_identity(repo, repo / "packages" / package_name / ".SRCINFO")
 
 
 def check_catalog_identity(repo: Path) -> list[str]:
@@ -263,16 +322,14 @@ def check_catalog_identity(repo: Path) -> list[str]:
     for package_name, matching_rows in sorted(catalog_rows(repo).items()):
         if len(matching_rows) != 1 or not (repo / "packages" / package_name).is_dir():
             continue
-        if package_name != "chatgpt" and not (
-            repo / "packages" / package_name / ".SRCINFO"
-        ).is_file():
+        if not (repo / "packages" / package_name / ".SRCINFO").is_file():
             continue
         row = matching_rows[0]
         if len(row) < 3:
             continue
         try:
             expected_names, expected_version = package_identity(repo, package_name)
-        except (KeyError, ValueError, json.JSONDecodeError) as error:
+        except (KeyError, ValueError) as error:
             errors.append(str(error))
             continue
         catalog_names = sorted(re.findall(r"`([^`]+)`", row[1]))
@@ -428,7 +485,8 @@ def main() -> int:
         if result.returncode != 0:
             return result.returncode
 
-    errors = check_package_pairs(repo)
+    errors = check_retired_chatgpt_sources(repo)
+    errors.extend(check_package_pairs(repo))
     errors.extend(check_srcinfo(repo))
     errors.extend(check_catalog_coverage(repo))
     errors.extend(check_catalog_identity(repo))
