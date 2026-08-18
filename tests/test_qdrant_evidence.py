@@ -1,9 +1,14 @@
 import copy
 import hashlib
 import json
+import os
 import re
+import stat
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 EVIDENCE_ROOT = REPO_ROOT / "docs" / "maintainers" / "evidence" / "qdrant-1.19.0-1"
@@ -32,6 +37,220 @@ def nested_strings(value):
     elif isinstance(value, list):
         for nested_value in value:
             yield from nested_strings(nested_value)
+
+
+def controlled_git_environment() -> dict[str, str]:
+    environment = os.environ.copy()
+    for key in tuple(environment):
+        if key.startswith("GIT_CONFIG_") or key in {
+            "GIT_CEILING_DIRECTORIES",
+            "GIT_COMMON_DIR",
+            "GIT_DIR",
+            "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+            "GIT_INDEX_FILE",
+            "GIT_ICASE_PATHSPECS",
+            "GIT_GLOB_PATHSPECS",
+            "GIT_LITERAL_PATHSPECS",
+            "GIT_NAMESPACE",
+            "GIT_NOGLOB_PATHSPECS",
+            "GIT_OBJECT_DIRECTORY",
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+            "GIT_PREFIX",
+            "GIT_TEMPLATE_DIR",
+            "GIT_WORK_TREE",
+        }:
+            environment.pop(key)
+    environment.update(
+        {
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CONFIG_SYSTEM": os.devnull,
+        }
+    )
+    return environment
+
+
+def repository_path_is_ignored(
+    clean_git_dir: Path, ignore_work_tree: Path, relative_path: str
+) -> bool:
+    result = subprocess.run(
+        [
+            "git",
+            "-c",
+            f"core.excludesFile={os.devnull}",
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "core.ignoreCase=false",
+            "-c",
+            "core.untrackedCache=false",
+            f"--git-dir={clean_git_dir}",
+            f"--work-tree={ignore_work_tree}",
+            "check-ignore",
+            "--no-index",
+            "-q",
+            "--",
+            relative_path,
+        ],
+        env=controlled_git_environment(),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode not in (0, 1):
+        raise subprocess.CalledProcessError(
+            result.returncode,
+            result.args,
+            output=result.stdout,
+            stderr=result.stderr,
+        )
+    return result.returncode == 0
+
+
+def reject_nonignored_nonregular_entries(
+    repo_root: Path,
+    clean_git_dir: Path,
+    ignore_work_tree: Path,
+    owned_paths: list[str],
+    discovered_files: set[str],
+) -> None:
+    def contains_discovered_file(relative_path: str) -> bool:
+        prefix = f"{relative_path.rstrip('/')}/"
+        return relative_path in discovered_files or any(
+            discovered.startswith(prefix) for discovered in discovered_files
+        )
+
+    pending = [repo_root / relative_root for relative_root in owned_paths]
+    while pending:
+        directory = pending.pop()
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                path = Path(entry.path)
+                relative_path = path.relative_to(repo_root).as_posix()
+                ignored = repository_path_is_ignored(
+                    clean_git_dir, ignore_work_tree, relative_path
+                )
+                if entry.is_symlink():
+                    if contains_discovered_file(relative_path) or not ignored:
+                        raise ValueError(
+                            f"owned source entry is not a regular file: {relative_path}"
+                        )
+                elif entry.is_dir(follow_symlinks=False):
+                    if contains_discovered_file(relative_path) or not ignored:
+                        pending.append(path)
+                elif not entry.is_file(follow_symlinks=False) and (
+                    contains_discovered_file(relative_path) or not ignored
+                ):
+                    raise ValueError(
+                        f"owned source entry is not a regular file: {relative_path}"
+                    )
+
+
+def repository_source_files(repo_root: Path, owned_paths: list[str]) -> set[str]:
+    ignore_rules_file = repo_root / ".gitignore"
+    if not stat.S_ISREG(ignore_rules_file.lstat().st_mode):
+        raise ValueError("repository ignore rules file is not a real regular file")
+
+    for relative_root in owned_paths:
+        owned_root = repo_root / relative_root
+        if owned_root.is_symlink() or not owned_root.is_dir():
+            raise ValueError(
+                f"owned source root is not a real directory: {relative_root}"
+            )
+
+    git_dir_result = subprocess.run(
+        ["git", "-C", str(repo_root), "rev-parse", "--absolute-git-dir"],
+        env=controlled_git_environment(),
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    git_dir = Path(git_dir_result.stdout.strip()).resolve(strict=True)
+    if not git_dir.is_dir():
+        raise ValueError("repository Git directory is not a directory")
+
+    result = subprocess.run(
+        [
+            "git",
+            "--literal-pathspecs",
+            f"--git-dir={git_dir}",
+            f"--work-tree={repo_root}",
+            "-c",
+            f"core.excludesFile={os.devnull}",
+            "-c",
+            "core.fsmonitor=false",
+            "-c",
+            "core.ignoreCase=false",
+            "-c",
+            "core.untrackedCache=false",
+            "ls-files",
+            "--cached",
+            "--others",
+            "--exclude-from=.gitignore",
+            "-z",
+            "--",
+            *owned_paths,
+        ],
+        cwd=repo_root,
+        env=controlled_git_environment(),
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    discovered_files = {
+        relative_path for relative_path in result.stdout.split("\0") if relative_path
+    }
+
+    with tempfile.TemporaryDirectory(dir="/tmp") as matcher_root_name:
+        matcher_root = Path(matcher_root_name)
+        clean_git_dir = matcher_root / "git"
+        empty_template = matcher_root / "empty-template"
+        ignore_work_tree = matcher_root / "work"
+        empty_template.mkdir()
+        ignore_work_tree.mkdir()
+        (ignore_work_tree / ".gitignore").write_bytes(
+            (repo_root / ".gitignore").read_bytes()
+        )
+        subprocess.run(
+            [
+                "git",
+                "init",
+                "--bare",
+                "-q",
+                f"--template={empty_template}",
+                str(clean_git_dir),
+            ],
+            env=controlled_git_environment(),
+            text=True,
+            capture_output=True,
+            check=True,
+        )
+        reject_nonignored_nonregular_entries(
+            repo_root,
+            clean_git_dir,
+            ignore_work_tree,
+            owned_paths,
+            discovered_files,
+        )
+
+    for relative_path in discovered_files:
+        components = Path(relative_path).parts
+        path = repo_root
+        for index, component in enumerate(components):
+            path /= component
+            mode = path.lstat().st_mode
+            expected_type = (
+                stat.S_ISREG if index == len(components) - 1 else stat.S_ISDIR
+            )
+            if not expected_type(mode):
+                raise ValueError(
+                    f"owned source entry is not a regular file: {relative_path}"
+                )
+        if path.is_symlink() or not path.is_file():
+            raise ValueError(
+                f"owned source entry is not a regular file: {relative_path}"
+            )
+    return discovered_files
 
 
 class QdrantEvidenceContractTests(unittest.TestCase):
@@ -145,6 +364,7 @@ class QdrantEvidenceContractTests(unittest.TestCase):
         ].items():
             with self.subTest(source=relative_path):
                 path = REPO_ROOT / relative_path
+                self.assertFalse(path.is_symlink())
                 self.assertTrue(path.is_file())
                 self.assertEqual(path.stat().st_size, contract["size"])
                 self.assertEqual(sha256(path), contract["sha256"])
@@ -158,16 +378,43 @@ class QdrantEvidenceContractTests(unittest.TestCase):
             acceptance["repository_source"]["complete_source_inventory_bound_by"],
             sha256(g0_g1_path),
         )
-        discovered_files = set()
-        for relative_root in g0_g1["repository_source_tree"]["owned_paths"]:
-            owned_root = REPO_ROOT / relative_root
-            self.assertTrue(owned_root.is_dir())
-            for path in owned_root.rglob("*"):
-                with self.subTest(owned_entry=str(path.relative_to(REPO_ROOT))):
-                    self.assertFalse(path.is_symlink())
-                    self.assertTrue(path.is_file() or path.is_dir())
-                if path.is_file():
-                    discovered_files.add(str(path.relative_to(REPO_ROOT)))
+        discovered_files = repository_source_files(
+            REPO_ROOT,
+            g0_g1["repository_source_tree"]["owned_paths"],
+        )
+        inventory_discovery = g0_g1["repository_source_tree"]["inventory_discovery"]
+        self.assertEqual(
+            inventory_discovery["mode"],
+            "git-tracked-plus-untracked-nonignored",
+        )
+        self.assertEqual(
+            inventory_discovery["command"],
+            "git --literal-pathspecs --git-dir=<git dir> --work-tree=<repo root> "
+            "-c core.excludesFile=/dev/null -c core.fsmonitor=false "
+            "-c core.ignoreCase=false -c core.untrackedCache=false ls-files --cached "
+            "--others --exclude-from=.gitignore -z -- <owned paths>",
+        )
+        self.assertEqual(inventory_discovery["ignore_rules_file"], ".gitignore")
+        self.assertTrue(
+            inventory_discovery["tracked_files_remain_included_when_ignored"]
+        )
+        self.assertTrue(
+            inventory_discovery["ignored_build_cache_and_package_outputs_are_excluded"]
+        )
+        self.assertTrue(inventory_discovery["ambient_git_excludes_are_excluded"])
+        self.assertTrue(inventory_discovery["unbound_nested_ignore_files_are_excluded"])
+        self.assertTrue(
+            inventory_discovery["repository_selector_environment_is_cleared"]
+        )
+        self.assertTrue(inventory_discovery["git_dir_and_work_tree_are_explicit"])
+        self.assertTrue(inventory_discovery["pathspecs_are_literal"])
+        self.assertFalse(inventory_discovery["fsmonitor"])
+        self.assertFalse(inventory_discovery["untracked_cache"])
+        self.assertTrue(inventory_discovery["git_template_is_controlled"])
+        self.assertFalse(inventory_discovery["ignore_case"])
+        self.assertTrue(
+            inventory_discovery["discovered_entries_must_be_real_regular_files"]
+        )
         self.assertEqual(
             set(g0_g1["repository_source_tree"]["owned_files"]),
             discovered_files,
@@ -219,6 +466,168 @@ class QdrantEvidenceContractTests(unittest.TestCase):
             web_ui_verification["required_package_metadata_regressions_passed"]
         )
         self.assertTrue(web_ui_verification["end_to_end_archive_regressions_passed"])
+
+    def test_source_inventory_excludes_ignored_generated_outputs(self):
+        with tempfile.TemporaryDirectory(dir="/tmp") as tempdir:
+            fixture = Path(tempdir)
+            fixture_git_environment = controlled_git_environment()
+            package_root = fixture / "packages/qdrant-web-ui"
+            package_root.mkdir(parents=True)
+            (fixture / ".gitignore").write_text(
+                "packages/*/__pycache__/\n"
+                "packages/*/src/\n"
+                "packages/*/pkg/\n"
+                "packages/*/*.pkg.tar.*\n"
+                "packages/*/verify-package.py\n"
+                "packages/*/HIDDEN.contract\n",
+                encoding="utf-8",
+            )
+            (package_root / "verify-package.py").write_text("pass\n", encoding="utf-8")
+            (package_root / "local-contract.txt").write_text(
+                "review me\n", encoding="utf-8"
+            )
+            (package_root / "ambient.contract").write_text(
+                "review me too\n", encoding="utf-8"
+            )
+            (package_root / "hidden.contract").write_text(
+                "case-sensitive source\n", encoding="utf-8"
+            )
+            (package_root / "__pycache__").mkdir()
+            (package_root / "__pycache__/verify-package.cpython-314.pyc").write_bytes(
+                b"generated"
+            )
+            (package_root / "src").mkdir()
+            (package_root / "src/upstream.js").write_text(
+                "generated\n", encoding="utf-8"
+            )
+            (package_root / "src/tracked.py").write_text("tracked\n", encoding="utf-8")
+            (package_root / "pkg").mkdir()
+            (package_root / "pkg/payload").write_text("generated\n", encoding="utf-8")
+            (package_root / "qdrant-web-ui-0.2.16-1-any.pkg.tar.zst").write_bytes(
+                b"generated"
+            )
+            subprocess.run(
+                ["git", "init", "-q", str(fixture)],
+                env=fixture_git_environment,
+                check=True,
+            )
+            (fixture / "packages/.gitignore").write_text(
+                "qdrant-web-ui/ambient.contract\n",
+                encoding="utf-8",
+            )
+            (fixture / ".git/info/exclude").write_text(
+                "local-contract.txt\nunexpected-fifo\n",
+                encoding="utf-8",
+            )
+            ambient_excludes = fixture / "ambient-excludes"
+            ambient_excludes.write_text("*.contract\n", encoding="utf-8")
+            ambient_template = fixture / "ambient-template"
+            (ambient_template / "info").mkdir(parents=True)
+            (ambient_template / "info/exclude").write_text(
+                "unexpected-fifo\n",
+                encoding="utf-8",
+            )
+            subprocess.run(
+                ["git", "config", "core.excludesFile", str(ambient_excludes)],
+                cwd=fixture,
+                env=fixture_git_environment,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "config", "core.ignoreCase", "true"],
+                cwd=fixture,
+                env=fixture_git_environment,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "add", ".gitignore"],
+                cwd=fixture,
+                env=fixture_git_environment,
+                check=True,
+            )
+            subprocess.run(
+                [
+                    "git",
+                    "add",
+                    "-f",
+                    "packages/qdrant-web-ui/verify-package.py",
+                    "packages/qdrant-web-ui/src/tracked.py",
+                ],
+                cwd=fixture,
+                env=fixture_git_environment,
+                check=True,
+            )
+            redirected_work_tree = fixture / "redirected-work-tree"
+            redirected_work_tree.mkdir()
+            subprocess.run(
+                ["git", "config", "core.worktree", str(redirected_work_tree)],
+                cwd=fixture,
+                env=fixture_git_environment,
+                check=True,
+            )
+            fsmonitor_marker = fixture / "fsmonitor-invoked"
+            fsmonitor_hook = fixture / "fsmonitor-hook"
+            fsmonitor_hook.write_text(
+                "#!/bin/sh\n" f"touch {fsmonitor_marker}\n" "exit 1\n",
+                encoding="utf-8",
+            )
+            fsmonitor_hook.chmod(0o755)
+            subprocess.run(
+                ["git", "config", "core.fsmonitor", str(fsmonitor_hook)],
+                cwd=fixture,
+                env=fixture_git_environment,
+                check=True,
+            )
+            subprocess.run(
+                ["git", "config", "core.untrackedCache", "true"],
+                cwd=fixture,
+                env=fixture_git_environment,
+                check=True,
+            )
+
+            expected_source_files = {
+                "packages/qdrant-web-ui/ambient.contract",
+                "packages/qdrant-web-ui/hidden.contract",
+                "packages/qdrant-web-ui/local-contract.txt",
+                "packages/qdrant-web-ui/src/tracked.py",
+                "packages/qdrant-web-ui/verify-package.py",
+            }
+            self.assertEqual(
+                repository_source_files(fixture, ["packages/qdrant-web-ui"]),
+                expected_source_files,
+            )
+            self.assertFalse(fsmonitor_marker.exists())
+
+            (package_root / "unexpected-link").symlink_to("verify-package.py")
+            with self.assertRaisesRegex(ValueError, "not a regular file"):
+                repository_source_files(fixture, ["packages/qdrant-web-ui"])
+            (package_root / "unexpected-link").unlink()
+
+            os.mkfifo(package_root / "unexpected-fifo")
+            with mock.patch.dict(
+                os.environ,
+                {"GIT_TEMPLATE_DIR": str(ambient_template)},
+            ), self.assertRaisesRegex(ValueError, "not a regular file"):
+                repository_source_files(fixture, ["packages/qdrant-web-ui"])
+            (package_root / "unexpected-fifo").unlink()
+
+            os.mkfifo(package_root / "pkg/ignored-fifo")
+            self.assertEqual(
+                repository_source_files(fixture, ["packages/qdrant-web-ui"]),
+                expected_source_files,
+            )
+
+            (fixture / ".gitignore").rename(fixture / "bound-ignore-copy")
+            (fixture / ".gitignore").symlink_to("bound-ignore-copy")
+            with self.assertRaisesRegex(ValueError, "not a real regular file"):
+                repository_source_files(fixture, ["packages/qdrant-web-ui"])
+            (fixture / ".gitignore").unlink()
+            (fixture / "bound-ignore-copy").rename(fixture / ".gitignore")
+
+            (package_root / "src").rename(fixture / "outside-src")
+            (package_root / "src").symlink_to("../../outside-src")
+            with self.assertRaisesRegex(ValueError, "not a regular file"):
+                repository_source_files(fixture, ["packages/qdrant-web-ui"])
 
     def test_accepted_build_boundary_and_future_reconstruction_are_distinct(self):
         g0_g1 = self.documents["g0-g1.json"]

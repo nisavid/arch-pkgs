@@ -4,6 +4,23 @@
   "repository_source_tree": {
     "base_commit": "6f0dc146ab4b533e43cff683ab0e0958f4604896",
     "status": "uncommitted review candidate",
+    "inventory_discovery": {
+      "mode": "git-tracked-plus-untracked-nonignored",
+      "command": "git --literal-pathspecs --git-dir=<git dir> --work-tree=<repo root> -c core.excludesFile=/dev/null -c core.fsmonitor=false -c core.ignoreCase=false -c core.untrackedCache=false ls-files --cached --others --exclude-from=.gitignore -z -- <owned paths>",
+      "ignore_rules_file": ".gitignore",
+      "ignore_case": false,
+      "fsmonitor": false,
+      "untracked_cache": false,
+      "tracked_files_remain_included_when_ignored": true,
+      "ignored_build_cache_and_package_outputs_are_excluded": true,
+      "ambient_git_excludes_are_excluded": true,
+      "unbound_nested_ignore_files_are_excluded": true,
+      "repository_selector_environment_is_cleared": true,
+      "git_dir_and_work_tree_are_explicit": true,
+      "pathspecs_are_literal": true,
+      "git_template_is_controlled": true,
+      "discovered_entries_must_be_real_regular_files": true
+    },
     "owned_paths": [
       "containers/qdrant-builder",
       "packages/qdrant",
