@@ -28,15 +28,20 @@ class QdrantLaneContractTests(unittest.TestCase):
     def read(self, relative_path: str) -> str:
         return (REPO_ROOT / relative_path).read_text(encoding="utf-8")
 
-    def load_web_ui_verifier(self):
-        spec = importlib.util.spec_from_file_location(
-            "qdrant_web_ui_verify_package", WEB_UI_VERIFIER
-        )
-        self.assertIsNotNone(spec)
-        self.assertIsNotNone(spec.loader)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        return module
+    def load_web_ui_verifier(self, source_path: Path = WEB_UI_VERIFIER):
+        original_dont_write_bytecode = sys.dont_write_bytecode
+        try:
+            sys.dont_write_bytecode = True
+            spec = importlib.util.spec_from_file_location(
+                "qdrant_web_ui_verify_package", source_path
+            )
+            self.assertIsNotNone(spec)
+            self.assertIsNotNone(spec.loader)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            return module
+        finally:
+            sys.dont_write_bytecode = original_dont_write_bytecode
 
     def write_minimal_web_ui_archive_root(
         self,
@@ -899,6 +904,31 @@ class QdrantLaneContractTests(unittest.TestCase):
         self.assertIn('web_root / "cloud/data.json": b"null\\n"', verifier)
         self.assertIn(".INSTALL", verifier)
         self.assertIn("unexpected package install hook", verifier)
+
+    def test_web_ui_verifier_loading_does_not_mutate_the_source_inventory(self):
+        with tempfile.TemporaryDirectory(dir="/tmp") as tempdir:
+            fixture = Path(tempdir)
+            verifier_path = fixture / "verify-package.py"
+            shutil.copyfile(WEB_UI_VERIFIER, verifier_path)
+            before = sorted(
+                str(path.relative_to(fixture)) for path in fixture.rglob("*")
+            )
+
+            original_cache_prefix = sys.pycache_prefix
+            original_dont_write_bytecode = sys.dont_write_bytecode
+            try:
+                sys.pycache_prefix = None
+                sys.dont_write_bytecode = False
+                verifier = self.load_web_ui_verifier(verifier_path)
+            finally:
+                sys.pycache_prefix = original_cache_prefix
+                sys.dont_write_bytecode = original_dont_write_bytecode
+
+            self.assertTrue(callable(verifier.validate_archive_members))
+            after = sorted(
+                str(path.relative_to(fixture)) for path in fixture.rglob("*")
+            )
+            self.assertEqual(after, before)
 
     def test_web_ui_verifier_rejects_archive_and_extracted_tree_links(self):
         verifier = self.load_web_ui_verifier()
