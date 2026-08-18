@@ -9,7 +9,12 @@ Use this skill when a package in this repo has changed and the user needs the ex
 
 ## Completion rule
 
-If package files changed and the package was not installed during the session, the final response must include the exact command needed to build and install the changed package from this repo.
+For a standalone development install, if package files changed and the package
+was not installed during the session, the final response must include the exact
+command needed to build and install the changed package from this repo. For an
+orchestrated acceptance or production deployment, include the assigned
+digest-bound artifact handoff and installation command instead; do not
+substitute a rebuild command.
 
 ## Default workflow
 
