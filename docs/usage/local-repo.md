@@ -86,6 +86,13 @@ one guarded transaction.
 Never publish a partial staging directory: the publisher mirrors staging and
 removes destination files that are absent from it.
 
+For a repository-wide or multi-lane terminal publication, first follow the
+[`package refresh lifecycle`](../policies/package-refresh-lifecycle.md).
+Reconstruct staging from empty against the explicit accepted-artifact manifest
+and reconcile every staged entry before running the publisher. The updater and
+publisher preserve and promote repository contents; they do not decide whether
+an artifact passed its lane's acceptance and promotion gates.
+
 ## Publish A Pacman-Visible Copy
 
 Create the published path once:
@@ -197,6 +204,11 @@ paru -S qdrant
 ```
 
 ## Refresh After A Rebuild
+
+This section is a development refresh path. Once a lifecycle candidate has been
+accepted, do not rebuild it here. Stage and install the exact accepted identity,
+or open an implementation ticket when the current tooling cannot do so without
+rebuilding.
 
 After rebuilding a package, refresh staging, publish it, and reload pacman's
 package lists:

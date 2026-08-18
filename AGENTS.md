@@ -26,6 +26,10 @@ Your job is not to make a package build once. Your job is to leave behind packag
 ## Package maintenance expectations
 
 - For the package-change workflow and discovery sequence, use `.agents/skills/maintaining-arch-packages/`.
+- For repository-wide or multi-lane refreshes, dormant refresh re-entry,
+  accepted-only publication, or controlled production deployment, use
+  `.agents/skills/orchestrating-arch-package-refreshes/` before package-lane
+  work.
 - When adding a new maintained package or changing a package baseline, follow
   `docs/policies/reference-packages.md` before writing local package files.
 - Review upstream release notes and installation docs before changing package behavior.

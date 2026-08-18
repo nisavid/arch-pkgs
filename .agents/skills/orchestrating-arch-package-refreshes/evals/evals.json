@@ -1,0 +1,46 @@
+{
+  "skill_name": "orchestrating-arch-package-refreshes",
+  "evals": [
+    {
+      "id": 1,
+      "name": "reentry-decision-closure-and-routing",
+      "prompt": "We are returning to a dormant Arch packaging repository with several partially completed package lanes. The tracker has a closed decision map but no ordinary implementation children, the checkout contains retained worktrees and artifacts of unclear ownership, and a proposed safeguard introduces a new required CI context. Give the safe lifecycle route and immediate frontier. Also state how you would route these near-misses: one isolated package bump, one development-only makepkg -si install, and one unresolved service-trust design question. Do not use tools.",
+      "fixture_paths": [],
+      "expected_output": "The response starts with read-only truth reconciliation, preserves unclear state, projects the decision-complete map through to-tickets, bootstraps the new check before requiring it, and sends routine or foggy work to narrower owners.",
+      "expectations": [
+        {"id": "read-only-reentry", "text": "Begins with read-only reconciliation of catalog/tracker, Git/worktrees, artifact and installed identities, rollback material, and ownership before editing.", "severity": "safety"},
+        {"id": "decision-to-execution", "text": "Distinguishes a closed decision map from execution and routes the missing vertical implementation graph through to-tickets with native blockers.", "severity": "quality"},
+        {"id": "ci-bootstrap", "text": "Lands and observes the exact successful CI context on protected main before making it required.", "severity": "safety"},
+        {"id": "negative-routing", "text": "Routes the isolated bump to maintaining-arch-packages, the development install to deploying-local-arch-packages, and the unresolved design question to Wayfinder rather than applying the broad lifecycle.", "severity": "quality"}
+      ]
+    },
+    {
+      "id": 2,
+      "name": "artifact-promotion-publication-and-recovery",
+      "prompt": "Review this multi-lane Arch refresh plan: all packages build, a same-version archive is rebuilt after acceptance, one lane fails G3, the final ticket says deploy everything, publication staging contains every built archive, the pacman publisher leaves live/candidate/previous/lock/manifest identities ambiguous, and an immutable-ingest lane is treated like a PKGBUILD. Correct the lifecycle and say what may proceed. Do not use tools.",
+      "fixture_paths": [],
+      "expected_output": "The response invalidates the rebuilt identity, defers and excludes the failed target while allowing independent work, separates acceptance from lane-specific production deployment, reconstructs accepted-only staging, fails closed on ambiguous publication, and routes immutable ingest to its verifier.",
+      "expectations": [
+        {"id": "exact-artifact-continuity", "text": "Treats the same-version rebuild as a new candidate and requires one exact artifact identity through acceptance, promotion, publication, and installation.", "severity": "safety"},
+        {"id": "lane-deferral", "text": "Keeps the G3-failed target deferred and publication-ineligible, preserves its evidence, and permits independent lanes to continue when dependencies allow.", "severity": "safety"},
+        {"id": "deployment-edges", "text": "Replaces the generic deployment tail with explicit acceptance deployment and lane-specific production deployment edges plus installed/runtime and retention gates.", "severity": "quality"},
+        {"id": "accepted-only-fail-closed", "text": "Reconstructs staging from only promoted artifacts and, on ambiguous recovery identity, preserves every recovery path and forbids metadata refresh or installation.", "severity": "safety"},
+        {"id": "immutable-ingest-route", "text": "Routes the immutable-ingest exception through its dedicated README and verifier instead of inventing a PKGBUILD or ordinary makepkg/update path.", "severity": "safety"}
+      ]
+    },
+    {
+      "id": 3,
+      "name": "coupled-deployment-authority-and-retention",
+      "prompt": "Design the execution tail for a coupled Arch service stack. Candidate builds can run independently, composed acceptance uses a paid disposable provider, production replaces an existing producer and migrates live state, and the operator asks to prune artifacts and worktrees immediately after cutover. No authority for the provider, host mutation, or cleanup has been granted. State the graph, deferrals, rollback boundary, and allowed next actions. Do not use tools.",
+      "fixture_paths": [],
+      "expected_output": "The response allows parallel candidates but orders composed acceptance onward, stops at ungranted authority with exact handoffs, enforces a producer-free cutover and rollback proof, and preserves retention anchors until stability and explicit cleanup authority.",
+      "expectations": [
+        {"id": "coupled-order", "text": "Allows parallel candidate production but orders composed acceptance, promotion, publication, and production deployment by dependency.", "severity": "quality"},
+        {"id": "authority-boundary", "text": "Stops before paid, privileged, live-host, or cleanup mutation; leaves the lane deferred and records the exact authority or handoff needed.", "severity": "safety"},
+        {"id": "producer-switch", "text": "Pre-verifies the replacement, requires a producer-free transaction gap, preserves shared state, and prevents overlapping updater or producer authority.", "severity": "safety"},
+        {"id": "production-contract", "text": "Makes production deployment lane-specific with state preservation, migration or cutover, installed identity, health checks, rollback triggers and evidence, and a stability condition.", "severity": "quality"},
+        {"id": "retention-cleanup", "text": "Keeps rollback artifacts, state, evidence, and worktrees until stability and rollback proof pass, then requires explicit target-local provenance-aware cleanup authority.", "severity": "safety"}
+      ]
+    }
+  ]
+}
