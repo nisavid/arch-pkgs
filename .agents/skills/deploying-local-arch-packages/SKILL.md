@@ -13,6 +13,12 @@ If package files changed and the package was not installed during the session, t
 
 ## Default workflow
 
+Use this workflow only for a standalone development build or install. For a
+repository-wide or multi-lane refresh, enter
+`orchestrating-arch-package-refreshes` first and use this skill only after that
+lifecycle assigns the package mechanics; do not use `makepkg -si` to bypass
+candidate acceptance or promotion.
+
 1. Verify the package with `makepkg --verifysource`.
 2. Build it with `makepkg -f` or install it with `makepkg -si`.
 3. If the install is handed off to the user, give the exact command using the package directory under `packages/`.
