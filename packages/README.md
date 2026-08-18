@@ -77,6 +77,13 @@ use `orchestrating-arch-package-refreshes` before building or publishing. A
 successful build does not change a lane's disposition. Terminal staging must
 match the explicit manifest of accepted, publication-eligible identities.
 
+The build and staging commands below are development-candidate operations
+only. They may create or stage new bytes, so they are neither acceptance nor
+lifecycle publication steps. After promotion, follow the
+[`accepted-only publication`](../docs/policies/package-refresh-lifecycle.md#accepted-only-publication)
+and [`publisher`](../docs/usage/local-repo.md#publish-a-pacman-visible-copy)
+procedures with the exact accepted artifacts and without rebuilding them.
+
 This workflow applies to ordinary package lanes with a `PKGBUILD`; it does not
 apply to [`chatgpt`](chatgpt/). Stage that immutable artifact lane only with
 [`tools/ingest_chatgpt.zsh`](../tools/ingest_chatgpt.zsh), following its

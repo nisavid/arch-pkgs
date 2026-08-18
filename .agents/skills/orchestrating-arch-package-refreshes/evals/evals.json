@@ -18,7 +18,7 @@
     {
       "id": 2,
       "name": "artifact-promotion-publication-and-recovery",
-      "prompt": "Review this multi-lane Arch refresh plan: all packages build, a same-version archive is rebuilt after acceptance, one lane fails G3, the final ticket says deploy everything, publication staging contains every built archive, the pacman publisher leaves live/candidate/previous/lock/manifest identities ambiguous, and the ChatGPT immutable-ingest lane is treated like a PKGBUILD and seeded directly from the current live repository. Correct the lifecycle and say what may proceed. Do not use tools.",
+      "prompt": "Review this multi-lane Arch refresh plan: all packages build, a same-version archive is rebuilt after acceptance, one lane fails its declared acceptance gate (G3), the final ticket says deploy everything, publication staging contains every built archive, the pacman publisher leaves live/candidate/previous/lock/manifest identities ambiguous, and the ChatGPT immutable-ingest lane is treated like a PKGBUILD and seeded directly from the current live repository. Correct the lifecycle and say what may proceed. Do not use tools.",
       "fixture_paths": [],
       "expected_output": "The response invalidates the rebuilt identity, defers and excludes the failed target while allowing independent work, separates acceptance from lane-specific production deployment, reconstructs accepted-only staging, fails closed on ambiguous publication, and routes immutable ingest to its verifier with a manifest-approved seed rather than trusting the live repository.",
       "expectations": [

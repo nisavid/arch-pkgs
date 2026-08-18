@@ -27,6 +27,20 @@ or the exact promoted artifact identity served by the verified published
 repository in production. A matching version is not identity evidence. Do not
 rebuild at either boundary, and verify the resulting installed identity.
 
+At acceptance, record the expected archive SHA-256 and literal archive path,
+verify that digest immediately before the package transaction, install those
+bytes without rebuilding, and run the lane's installed-payload and runtime
+verifier against that accepted identity. At production, first materialize the
+archive served by the verified published repository, prove that its SHA-256
+matches the promotion record, install those exact bytes, and run the lane's
+production verifier against the same identity. A repository manifest, package
+name, or version alone does not prove installed identity.
+
+Each lane or explicitly coupled deployment ticket must name the verifier and
+the installed payload or runtime evidence it emits. If no verifier can bind the
+installed state to the accepted archive digest, preserve the current state and
+open a tooling ticket; do not advance the acceptance or production milestone.
+
 Keep acceptance deployment and production deployment as separate handoffs. Use
 `handling-privileged-steps` for package installation, service mutation, paid
 providers, or live-host work, and verify the resulting installed identity after
