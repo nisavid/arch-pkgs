@@ -119,9 +119,12 @@ The publisher locks the destination, hashes staging, copies it into a candidate
 directory, verifies the candidate, atomically exchanges it with the current
 destination, and compares the promoted destination with staging. It restores the
 old repository on any post-promotion verification failure and retains the old
-repository as a timestamped previous copy after success. Keep that copy until
-the installed package passes acceptance. The verification manifest covers each
-entry's content or symlink target together with its mode, UID, and GID.
+repository as a timestamped previous copy after success. Installed acceptance
+is the minimum retention point for ordinary use. For a lifecycle-managed
+publication, keep that copy through the lane's stability condition, rollback
+proof, and explicit target-local cleanup authorization. The verification
+manifest covers each entry's content or symlink target together with its mode,
+UID, and GID.
 If the new repository is verified but retaining the previous copy fails, the
 publisher keeps the new repository live and preserves both transaction locks
 and any candidate or previous path that remains as explicit recovery state. In
@@ -243,8 +246,11 @@ archives, and require their own configured verify-and-regenerate workflow.
 
 ## Notes
 
-- `repo/x86_64/` is disposable staging output. Rebuild it from package
-  directories when in doubt.
+- In the development workflow, `repo/x86_64/` is disposable staging output and
+  may be rebuilt from package directories. Terminal lifecycle staging is
+  reconstructed from empty using only digest-bound promoted archives in the
+  explicit manifest. Stop and open an implementation ticket when current
+  tooling cannot stage those exact identities without rebuilding.
 - The repo uses `SigLevel = Optional TrustedOnly` to accept unsigned local
   packages while requiring any present signature to come from a fully trusted
   key.

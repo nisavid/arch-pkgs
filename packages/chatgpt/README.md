@@ -34,9 +34,9 @@ The ingest lane requires Zsh, GNU `cp` with `--reflink` support, `bsdtar`, Git,
 Arch packaging tools. The helper checks these prerequisites before it creates
 or changes checkout-local staging.
 
-For the first ingest into otherwise-empty checkout-local staging, run the
-helper with the retained evidence set, exact record digest, and complete
-published repository as the seed:
+For an ordinary incremental ingest outside a terminal multi-lane refresh, run
+the helper with the retained evidence set, exact record digest, and complete
+verified published repository as the seed when checkout-local staging is empty:
 
 ```zsh
 tools/ingest_chatgpt.zsh \
@@ -51,6 +51,15 @@ The seed is read while the helper holds the repository-writer lock. Omit
 `--seed-repo-dir` on later ingests after checkout-local staging already contains
 the complete repository, or to initialize the first repository. A supplied seed
 path must already exist as a directory.
+
+For terminal accepted-only publication, follow the
+[`package refresh lifecycle`](../../docs/policies/package-refresh-lifecycle.md)
+instead. Omit the seed when ChatGPT is the only accepted entry. Otherwise use
+only a freshly materialized seed whose complete repository database and archive
+set is bound to the explicit promotion manifest; a verified live repository is
+not sufficient evidence of publication eligibility. Stop and open an
+implementation ticket if current tooling cannot construct and prove that seed
+without rebuilding or importing an ineligible artifact.
 
 The helper first binds the record digest to the tracked baseline, then snapshots
 the artifact and evidence before parsing them. It compares the full accepted
