@@ -59,6 +59,10 @@ decision artifact, not an execution graph. Once the route is decision-complete,
 use `to-tickets` to project it into vertical implementation tickets with native
 blocking edges before broad implementation begins.
 
+Start each implementation lane from accepted protected `main`. Do not
+rehabilitate a stale bundled branch merely because it retains historical work;
+keep it as evidence until its provenance and retention status permit cleanup.
+
 Land repository-wide admission safeguards before package-lane changes. When a
 new protected check is part of those safeguards, merge the check first, observe
 its exact successful context on protected `main`, and only then require that
@@ -105,10 +109,12 @@ promotion, publication, installed acceptance, and retention release as separate
 facts.
 
 Paid providers, privileged hosts, live state, package installation, service
-mutation, and publication need task-specific authority. Prepare everything that
-remains valid without that action, then route the boundary through
-`handling-privileged-steps`. An unavailable or unauthorized gate remains
-deferred; it never becomes an implicit pass.
+mutation, and publication need task-specific authority. Their presence does not
+itself defer a lane. When authority is present, route the boundary through
+`handling-privileged-steps` and verify the result. Otherwise prepare everything
+that remains valid without the action and mark the lane deferred at that gate.
+An unavailable, unauthorized, failed, or inconclusive gate never becomes an
+implicit pass.
 
 The `packages/chatgpt/` immutable-ingest lane is the explicit exception to
 local building. Follow its package README and `tools/ingest_chatgpt.zsh`; do not

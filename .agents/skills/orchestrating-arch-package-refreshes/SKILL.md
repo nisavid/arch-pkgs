@@ -49,9 +49,12 @@ happened.
 
 ## Project the lifecycle graph
 
-Before package-lane work, project repository-wide admission safeguards. A new
-required CI context first lands and passes on protected `main`; protection may
-refer to it only after its exact context is observed.
+Before package-lane work, apply the branch-start and repository-admission rules
+in the policy's [re-entry section](../../../docs/policies/package-refresh-lifecycle.md#re-entry-and-decision-closure).
+Each implementation lane starts from accepted protected `main`, not from a
+stale branch retained as historical evidence. A new required CI context first
+lands and passes on protected `main`; protection may refer to it only after its
+exact context is observed.
 
 For every applicable lane or coupled series, require explicit graph nodes for:
 
@@ -63,18 +66,11 @@ For every applicable lane or coupled series, require explicit graph nodes for:
 6. installed/runtime acceptance and rollback proof; and
 7. retention release or continued preservation.
 
-Dependency-only packages may share a coupled stack's production edge only when
-the ticket names that relationship and its evidence. Reject a generic terminal
-"deploy everything" node. Production deployment must name state preservation,
-migration or cutover, dependencies, authority, health, rollback triggers,
-rollback evidence, and the stability condition.
-
-Before accepting the graph, render each applicable lane or coupled series as an
-edge sequence and check that it contains two separately named nodes:
-`acceptance deployment` and `production deployment`. Acceptance checks or a
-promotion node do not substitute for acceptance deployment. A terminal deploy
-node does not substitute for lane-specific production deployment. If either
-edge is missing or collapsed, the graph is not execution-ready.
+Audit the graph against the policy's
+[required ticket shape](../../../docs/policies/package-refresh-lifecycle.md#required-ticket-shape).
+In particular, render each lane or coupled series and reject it unless
+`acceptance deployment` and `production deployment` are separately named.
+Reject a generic terminal "deploy everything" node.
 
 Use `implement` with `tdd` for one approved execution ticket at a time and
 `maintaining-arch-packages` for package files. Use `code-review` before a
@@ -88,13 +84,14 @@ Track the lifecycle milestones defined by the policy:
 `candidate` → `acceptance-deployable` → `publication-eligible` → `published`
 → `production-deployed` → `retention-releasable`
 
-Keep artifact evidence, lane disposition, repository state, and deployed state
-as separate proof planes. Advance a milestone only when its exit evidence
-exists. Carry one immutable artifact identity across acceptance, promotion,
-publication, and installation. A rebuild or substitution, even at the same
-version, creates a new candidate.
+Keep the policy's artifact evidence, lane disposition, repository state, and
+deployed state as separate proof planes. Advance a milestone only when its exit
+evidence exists. Carry one immutable artifact identity across acceptance,
+promotion, publication, and installation. A rebuild or substitution, even at
+the same version, creates a new candidate.
 
-On a failed, inconclusive, unavailable, paid, privileged, or unauthorized gate:
+On a failed, inconclusive, or unavailable gate, or when a required paid,
+privileged, live-state, or cleanup action lacks authority:
 
 - preserve the candidate, evidence, state, and rollback material;
 - mark the affected target deferred and publication-ineligible;
@@ -103,39 +100,43 @@ On a failed, inconclusive, unavailable, paid, privileged, or unauthorized gate:
 - record the exact gate or authority needed to resume; and
 - continue independent lanes whose dependencies remain satisfied.
 
-Route password-gated, paid-provider, live-host, publication, installation, and
-service mutations through `handling-privileged-steps`. Never infer acceptance
-from inability to run a gate.
+When authority is present, route password-gated, paid-provider, live-host,
+publication, installation, and service mutations through
+`handling-privileged-steps` and verify the result. Never infer acceptance from
+inability to run a gate.
 
 Coupled lanes may produce candidates in parallel. Their composed acceptance,
 promotion, publication, and production deployment follow dependency order.
 
 ## Publish and deploy exact accepted identities
 
-Reconstruct staging from empty against an explicit manifest of promoted
-artifact identities. Reconcile every staged entry with that manifest; the repo
-updater and publisher do not decide acceptance. Route ordinary package archives
-through the current local-repository workflow only when it preserves the exact
-accepted bytes. If the tooling cannot stage an accepted ordinary archive
-without rebuilding, create an implementation ticket for that missing boundary.
+Apply the policy's
+[accepted-only publication](../../../docs/policies/package-refresh-lifecycle.md#accepted-only-publication)
+contract. Reconstruct staging from empty against an explicit manifest of
+promoted artifact identities; the repo updater and publisher do not decide
+acceptance. If ordinary tooling cannot stage an accepted archive without
+rebuilding, create an implementation ticket for that missing boundary.
 
 Route the `packages/chatgpt/` immutable-ingest exception through its README and
 `tools/ingest_chatgpt.zsh`; never invent a recipe or pass it to the ordinary
-repo updater.
+repo updater. Name both `packages/chatgpt/README.md` and
+`tools/ingest_chatgpt.zsh` explicitly in the lifecycle ledger or ticket.
 
 If repository recovery identity is ambiguous, preserve live, candidate,
 previous, lock, and manifest state; mark the repository unverified and forbid
 metadata refresh or installation until reconciled.
 
-Production deployment installs the exact published identity without rebuilding.
-For a producer switch, pre-verify the replacement, create a producer-free
-transaction gap, preserve shared state, and prevent overlapping update
-authorities. Verify installed identity, migration or cutover, runtime health,
-and rollback behavior before calling the lane production-deployed.
-
-Cleanup comes only after the stability condition and rollback proof pass and
-explicit authority names the targets. Use provenance-aware, target-local
-cleanup; preserve ambiguous artifacts, recovery state, branches, and worktrees.
+For deployment and cleanup, enforce the policy's
+[production boundary](../../../docs/policies/package-refresh-lifecycle.md#production-deployment-and-cleanup):
+install the exact published identity; pre-verify the replacement; serialize
+producer and updater authority through a producer-free switch; and keep the
+production edge lane-specific or explicitly dependency-coupled. That edge names
+state preservation or migration, installed identity, health, rollback triggers
+and evidence, and a stability condition. Release retention only after those
+gates pass plus explicit, provenance-aware, target-local cleanup authority.
+Before reporting the tail as execution-ready, confirm that the production
+ticket must define its stability condition and that cleanup is explicitly
+described as provenance-aware and target-local.
 
 ## Report the frontier
 
