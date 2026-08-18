@@ -5,11 +5,32 @@ storage:
   storage_path: /var/lib/qdrant/storage
   snapshots_path: /var/lib/qdrant/snapshots
   temp_path: /var/lib/qdrant/tmp
+  snapshots_config:
+    snapshots_storage: local
+  max_collections: 64
+  quotas:
+    enabled: true
+    max_resident_memory_percent: 80
+    max_disk_usage_percent: 85
+    release_margin_percent: 10
+  collection:
+    strict_mode:
+      enabled: true
+      max_query_limit: 1000
+      max_timeout: 120
+      unindexed_filtering_retrieve: true
+      unindexed_filtering_update: true
 
 service:
   host: 127.0.0.1
   http_port: 6333
   grpc_port: 6334
-  static_content_dir: /var/lib/qdrant/static
-  # api_key: change-me
-  # enable_tls: true
+  enable_cors: false
+  jwt_rbac: true
+  hide_jwt_dashboard: true
+  static_content_dir: /usr/share/qdrant/web-ui
+  enable_static_content: true
+  enable_snapshot_url_recovery: false
+
+cluster:
+  enabled: false

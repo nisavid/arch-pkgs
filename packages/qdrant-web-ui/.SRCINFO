@@ -1,0 +1,22 @@
+pkgbase = qdrant-web-ui
+	pkgdesc = Static dashboard assets for Qdrant
+	pkgver = 0.2.16
+	pkgrel = 1
+	url = https://github.com/qdrant/qdrant-web-ui
+	arch = any
+	license = Apache-2.0
+	makedepends = python
+	source = dist-qdrant-0.2.16.zip::https://github.com/qdrant/qdrant-web-ui/releases/download/v0.2.16/dist-qdrant.zip
+	source = qdrant-web-ui-0.2.16.tar.gz::https://codeload.github.com/qdrant/qdrant-web-ui/tar.gz/refs/tags/v0.2.16
+	source = patch-runtime-urls.py
+	source = cloud-data.json
+	source = web-ui-info.json
+	source = datasets.json
+	sha256sums = 4446f0cea024078011c78cd24a592c9b563656d15205818563fa6b22d394dd29
+	sha256sums = be85d9cffc5d5ad8122c4fe332cd6731cddcd508a61d77ee918626fc4d977577
+	sha256sums = f611bfdcc84c1c12a43a8f1a5a53ffeadde843a8b4714978c5d74c51205ca0f7
+	sha256sums = 38e0b9de817f645c4bec37c0d4a3e58baecccb040f5718dc069a72c7385a0bed
+	sha256sums = ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356
+	sha256sums = 37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570
+
+pkgname = qdrant-web-ui

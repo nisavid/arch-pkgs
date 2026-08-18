@@ -1,0 +1,675 @@
+{
+  "schema": "arch-pkgs.qdrant.acceptance.final3.v1",
+  "scope": "Public-safe top-level acceptance index for the exact Qdrant final3 source, package, runtime, browser, migration, recovery, and interruption evidence through G3. G4, publication, installation, service activation, and cutover remain outside this acceptance.",
+  "evidence_date": "2026-08-17",
+  "authority": {
+    "model": "closed-world exact-record binding",
+    "rule": "Only the seven records listed in authoritative_records have evidentiary authority for this index. A record with any other digest, size, schema, or role is rejected, superseded, incomplete, or outside scope regardless of an embedded disposition.",
+    "record_count": 7,
+    "all_records_public_copy_safe": true
+  },
+  "authoritative_records": {
+    "g0_g1": {
+      "name": "g0-g1.json",
+      "schema": "arch-pkgs.qdrant.g0-g1.final3.v1",
+      "sha256": "a0e7fc2d8fe0fda193567301ac55ed29c84ab109704891d83a52648053fc5e97",
+      "size": 43404,
+      "role": "Authoritative G0 source, provenance, builder, and release-delta evidence plus G1 exact package metadata and installed-payload evidence.",
+      "accepted_gate_scope": [
+        "G0",
+        "G1"
+      ]
+    },
+    "g2_unit": {
+      "name": "g2-unit.json",
+      "schema": "qdrant-g2-exact-unit-evidence/v1",
+      "sha256": "9bc7efeeeee3fe4ed1170f06bcc69b4e65a068dc0ec0305af8a57a9f24973453",
+      "size": 16340,
+      "disposition": "accepted",
+      "role": "Authoritative G2 package-installation, service, secret-preflight, API, client, network, resource-limit, restart, and cleanup evidence. It exact-binds the browser complement."
+    },
+    "g2_browser": {
+      "name": "g2-browser.json",
+      "schema": "qdrant-g2-browser-evidence/v1",
+      "sha256": "b800b7a51b162ba3cf0b1f77a89762ef7726c809ccff589a48ba4b9f449491d9",
+      "size": 4990,
+      "disposition": "accepted",
+      "role": "Authoritative G2 browser evidence for the exact server and Web UI packages: loopback-only isolation, no non-loopback egress, scoped JWT use, CSP and response headers, null cloud data, Monaco workers, graph WASM, browser cleanup, and absence of persisted credentials."
+    },
+    "g3_runtime_candidate": {
+      "name": "manifest.runtime-validated.json",
+      "schema": "qdrant-migration-evidence/v1",
+      "sha256": "3b30d5f979344fde4a1739889f1cab5890bf9b931bae62083f405daa1f22845d",
+      "size": 111970,
+      "disposition": "runtime_validated",
+      "role": "Immutable G3 runtime candidate before the separately verified promotion and transient-unit cleanup record were added."
+    },
+    "g3_interrupt_int": {
+      "name": "interrupt-INT.json",
+      "schema": "qdrant-migration-interrupt-receipt/v1",
+      "sha256": "9e6adf7f6b092a3208d988850cb8dc2ccd27793dbcdfd906ed11e4b74bcbb06f",
+      "size": 1642,
+      "disposition": "accepted",
+      "signal": "INT",
+      "conventional_exit_status": 130,
+      "role": "Authoritative fail-closed INT receipt: synchronized interruption after readiness, no candidate or accepted manifest, and complete owned-process, listener, unit, cgroup, client, and credential cleanup."
+    },
+    "g3_interrupt_term": {
+      "name": "interrupt-TERM.json",
+      "schema": "qdrant-migration-interrupt-receipt/v1",
+      "sha256": "5e2cc9a5ffee68ed790d323e46379fa4e960ae17ee3eb28e1bbb969270216aea",
+      "size": 1643,
+      "disposition": "accepted",
+      "signal": "TERM",
+      "conventional_exit_status": 143,
+      "role": "Authoritative fail-closed TERM receipt: synchronized interruption after readiness, no candidate or accepted manifest, and complete owned-process, listener, unit, cgroup, client, and credential cleanup."
+    },
+    "g3_accepted": {
+      "name": "manifest.json",
+      "schema": "qdrant-migration-evidence/v1",
+      "sha256": "e647fad4e69006fe90df33a52231ca6dc81de81ed41b6f33f69fc23cafcab918",
+      "size": 76440,
+      "disposition": "accepted",
+      "role": "Authoritative promoted G3 migration, snapshot, restore, corruption-rejection, retry, pressure, isolation, and final-cleanup evidence; all 42 required obligations are uniquely represented and pass."
+    }
+  },
+  "repository_source": {
+    "base_commit": "6f0dc146ab4b533e43cff683ab0e0958f4604896",
+    "status": "uncommitted review candidate",
+    "complete_source_inventory_bound_by": "a0e7fc2d8fe0fda193567301ac55ed29c84ab109704891d83a52648053fc5e97",
+    "frozen_files": {
+      "containers/qdrant-builder/Containerfile": {
+        "sha256": "df1ce8916a482f886f21ff03039f0741c1a6b3290be2321f0fc690ced5fb300f",
+        "size": 342
+      },
+      "packages/qdrant/PKGBUILD": {
+        "sha256": "319520bbfda127e98ecad6e8c81a4c5fd5ca42ee4aa182d3fa017ecf7e2c97c6",
+        "size": 6276
+      },
+      "packages/qdrant/.SRCINFO": {
+        "sha256": "5b341267cd4d3410fe51b3eb5d96461e20da3a0364bac661a9c76b1919e659e2",
+        "size": 1490
+      },
+      "packages/qdrant-migration/PKGBUILD": {
+        "sha256": "b41466d124fb428f6e21e414b9a5496d729e7c451ca4276020dc4d3dd53babb7",
+        "size": 4758
+      },
+      "packages/qdrant-migration/.SRCINFO": {
+        "sha256": "77bd05a15e7047ba5ec44f8d34f301d018cf469c11fa5423e4ecf9e0e18331fe",
+        "size": 760
+      },
+      "packages/qdrant-web-ui/PKGBUILD": {
+        "sha256": "21ee0e1666ed23947d5994291fa345b11acb21d021862f2fb81f319877a448a2",
+        "size": 2035
+      },
+      "packages/qdrant-web-ui/.SRCINFO": {
+        "sha256": "5a71cd412946774d65538e4aa47421eb7cbd87890d6544ef2a49d80484cd9a2a",
+        "size": 1039
+      },
+      "tools/validate_qdrant_migration.zsh": {
+        "sha256": "459e107bcfcab8dfec6f4aa4b867e9daba1e8dc7a979005ea1d11a1a70156ab2",
+        "size": 172631
+      },
+      "tests/test_qdrant_lane.py": {
+        "sha256": "4845c50cb1e7d0c3105e5139b81d651851051ce32ea575cd625709888e7a1d08",
+        "size": 111194
+      },
+      "tests/test_qdrant_evidence.py": {
+        "sha256": "d3b67ddbb769995aa998b0a14691e2da988a452f7bccbb7d302a0541838e25c1",
+        "size": 16217
+      },
+      "docs/maintainers/qdrant-migration-acceptance.md": {
+        "sha256": "0cba108d380d7bb14593bff3fe1884f8655baf88daae1b236458c1964aa79bb6",
+        "size": 35157
+      }
+    },
+    "review_control_hardening": {
+      "web_ui_verifier_sha256": "6690c834ab129d76bc0c19483143140a55fa4cc5d505bf8811c21001b880cf1a",
+      "exact_accepted_artifact_reverified": true,
+      "crafted_symlink_archive_rejected": true,
+      "noncanonical_archive_aliases_rejected": true,
+      "logical_path_collisions_rejected": true,
+      "numeric_root_ownership_enforced": true,
+      "out_of_root_hidden_payload_rejected": true,
+      "hostile_package_metadata_rejected": true,
+      "required_package_metadata_enforced": true,
+      "end_to_end_archive_regressions_passed": true,
+      "scope": "The stronger verifier rejects links, noncanonical or duplicate member paths, file-directory logical-path collisions, nonzero numeric ownership even when archive owner names say root, unsafe modes, missing or transaction-affecting package metadata, and every payload entry outside the declared package roots before inspection. It is not a package input, so package bytes, installed payloads, and G2/G3 runtime inputs remain unchanged."
+    }
+  },
+  "upstream_sources": {
+    "qdrant_1_19_0": {
+      "tag": "v1.19.0",
+      "annotated_tag_object": "af875b4bfd98103f7c0ee34fe4f25c5099893ca9",
+      "tag_verification": {
+        "verified": false,
+        "reason": "unsigned"
+      },
+      "resolved_commit": "74f3e85b9473c62560006c043e13737ce6b48412",
+      "commit_verification": "valid",
+      "archive_sha256": "e0c9a030ae47d95f7c739598343bd2529c817fe262c4e7b2a4f1070ff82a024e",
+      "archive_size": 6159766,
+      "cargo_lock_sha256": "ac6941c2dcf706eddda4a1926d987232a981685586b35d407cc2f72605442233",
+      "cargo_lock_size": 233513
+    },
+    "qdrant_1_18_3": {
+      "tag": "v1.18.3",
+      "annotated_tag_object": "3ea8cf7ce633256fb1b2a75b0de9d9ce60b22254",
+      "tag_verification": {
+        "verified": true,
+        "reason": "valid PGP signature"
+      },
+      "resolved_commit": "db8fa43fcb6aedec1e739487e17a99731b74590a",
+      "commit_verification": "valid",
+      "archive_sha256": "c5f918b4f37279ec00b22b718ca54bca7b43c9d17628b28b8eba363beceb0c96",
+      "archive_size": 5229711,
+      "cargo_lock_sha256": "dffa39a15c56c6653ba36f4eb6bfb27322fdb428927910b6991ade72fa064d0e",
+      "cargo_lock_size": 230171
+    },
+    "qdrant_web_ui_0_2_16": {
+      "tag": "v0.2.16",
+      "annotated_tag_object": "018e83a869a3d2b831e92664e8d33f51ec7981b1",
+      "tag_verification": {
+        "verified": false,
+        "reason": "unverified_email",
+        "signature_type": "SSH"
+      },
+      "resolved_commit": "d3f7a1174933ab637d9711ea45456d32b878b50e",
+      "commit_verification": "valid",
+      "release_asset_sha256": "4446f0cea024078011c78cd24a592c9b563656d15205818563fa6b22d394dd29",
+      "release_asset_size": 7179295,
+      "tagged_source_archive_sha256": "be85d9cffc5d5ad8122c4fe332cd6731cddcd508a61d77ee918626fc4d977577",
+      "tagged_source_archive_size": 5237074
+    },
+    "cargo_sbom_0_10_0": {
+      "archive_sha256": "4ffe4b49660f4f4331fb5efcf7074a318b10f5f8fd75e42351a7ca32c58c2723",
+      "archive_size": 20815,
+      "cargo_lock_sha256": "406626ccbde0bec46b88bc756511d02da8a38b7cda8a7164e9556200ee812dd0",
+      "cargo_lock_size": 32782
+    }
+  },
+  "builder": {
+    "containerfile_sha256": "df1ce8916a482f886f21ff03039f0741c1a6b3290be2321f0fc690ced5fb300f",
+    "containerfile_size": 342,
+    "base_image_digest": "docker.io/library/archlinux@sha256:ee205c220399524a683cf495d411691b921baed8ab47cdc6d732efa782fae484",
+    "built_image_repository_digest": "localhost/arch-pkgs-qdrant-builder@sha256:876d4b2bfe03167c6d29f368def3050d4b1d16b3f89deead8379b61ccada10b0",
+    "built_image_id_sha256": "e4c00aadeb4a4d52f48ebd3d2ea32ae9433a02761e925589b0a6d619a837166f",
+    "architecture": "amd64",
+    "os": "linux",
+    "user": "builder",
+    "uid": 1000,
+    "gid": 1000,
+    "podman_version": "6.1.0",
+    "makepkg_version": "7.1.0",
+    "rustc_version": "1.97.1",
+    "cargo_version": "1.97.1",
+    "final_build_contract": {
+      "exact_image_id": true,
+      "pull_policy": "never",
+      "network": "none",
+      "rootless_user_namespace_keep_id": true,
+      "fresh_lane_roots": true,
+      "fixed_lane_epochs": true,
+      "declared_candidate_count": 3,
+      "each_output_root_regular_archive_count": 1,
+      "debug_archives": 0,
+      "extra_archives": 0
+    }
+  },
+  "exact_artifact_tuple": {
+    "candidate_count": 3,
+    "payload_manifest_contract": "ASCII newline-terminated tab-separated records, sorted as complete lines with LC_ALL=C. Directory records are d, mode without a leading zero, and relative path. File records are f, mode without a leading zero, size, SHA-256, and relative path. Relative paths have no leading slash or ./ prefix; directory paths have no trailing slash. Package metadata is excluded, and the three candidates contain no symlink or special-file records.",
+    "qdrant": {
+      "package": {
+        "name": "qdrant",
+        "version": "1.19.0-1",
+        "architecture": "x86_64",
+        "sha256": "15f15fe2c0c774691bf3193bc8fc7883fa530c89db697f7c0bcc2720d231b011",
+        "size": 28018464
+      },
+      "pkginfo": {
+        "sha256": "22eb166c025fd9d517c47cd1e7e19b8a6000fbe60d1df49546f37716f3386aeb",
+        "size": 564
+      },
+      "buildinfo": {
+        "sha256": "052545fecdfa7473973aa9c1fb8a018a94851c3cff5e5cb9ac8369ba802f78f9",
+        "size": 7791,
+        "pkgbuild_sha256": "319520bbfda127e98ecad6e8c81a4c5fd5ca42ee4aa182d3fa017ecf7e2c97c6"
+      },
+      "mtree": {
+        "sha256": "79430e8e34f533a3c65629948eab185635decf2eda8700d90acaa7c1f369751f",
+        "size": 777
+      },
+      "payload_manifest": {
+        "sha256": "63559cb13aa861d94ec23536e4f12cb166830d52d965a66731044659a529f56c",
+        "size": 1139,
+        "entries": 22
+      },
+      "binary": {
+        "sha256": "bf24efd92208fab1a8f4769a56158280b458b7a42850095ac875824571005f8c",
+        "size": 72134360,
+        "mode": "0755",
+        "owner": "root:root",
+        "version_output": "qdrant 1.19.0"
+      },
+      "sbom": {
+        "sha256": "b63c0949816cb55a4405529c7d3a02e39bb6b1d03cd757d0f6361c34ce4a8015",
+        "size": 871192,
+        "mode": "0644",
+        "owner": "root:root",
+        "spdx_version": "SPDX-2.3"
+      }
+    },
+    "qdrant_migration": {
+      "package": {
+        "name": "qdrant-migration",
+        "version": "1.18.3-1",
+        "architecture": "x86_64",
+        "sha256": "591f16328fcff0fc0193353a65f4c783afc1d24258ae251d3a8927283276ce9e",
+        "size": 26721008
+      },
+      "pkginfo": {
+        "sha256": "7d09b328dd1df34a532d0f02ddefddb77542678125e42e583fa75bf79aa3f5a8",
+        "size": 493
+      },
+      "buildinfo": {
+        "sha256": "d2e8c2e90b8ab67a7251bf3e499b10ee822b9d08ffecf9591e509424edaf44e8",
+        "size": 7811,
+        "pkgbuild_sha256": "b41466d124fb428f6e21e414b9a5496d729e7c451ca4276020dc4d3dd53babb7"
+      },
+      "mtree": {
+        "sha256": "eba7248300bb4fd4680370b2ac8331b2013c4ba02d6e566663cb8d34f73f6fde",
+        "size": 474
+      },
+      "payload_manifest": {
+        "sha256": "6fda813b2799a3ff2bbc546f45e1a36e444396560df36d59cc90610e41c97591",
+        "size": 584,
+        "entries": 12
+      },
+      "binary": {
+        "sha256": "97c16f4582cc0b9f86c7b451d88f7ea8ca56a1e45582168241de7487d31546a7",
+        "size": 72145432,
+        "mode": "0755",
+        "owner": "root:root",
+        "version_output": "qdrant 1.18.3"
+      },
+      "sbom": {
+        "sha256": "bfa0f84bab76c4f9fb62834aff283c112d2228183ecc4ed363b95e99a874ae0a",
+        "size": 889305,
+        "mode": "0644",
+        "owner": "root:root",
+        "spdx_version": "SPDX-2.3"
+      }
+    },
+    "qdrant_web_ui": {
+      "package": {
+        "name": "qdrant-web-ui",
+        "version": "0.2.16-1",
+        "architecture": "any",
+        "sha256": "f3d46e6ff09b8eb87b1465ee6a17a7cc35c574596b7fbf30518d3bc1d42fe10a",
+        "size": 5719063
+      },
+      "pkginfo": {
+        "sha256": "fcc52b5ce15d13c896a4ac03884a9203da6518ac9bffc16d01ef3d32d03d7d00",
+        "size": 357
+      },
+      "buildinfo": {
+        "sha256": "cb30739c5be698b9775f08eec86d4181c7cbdc526b214083bcc58d475e4e9c44",
+        "size": 7802,
+        "pkgbuild_sha256": "21ee0e1666ed23947d5994291fa345b11acb21d021862f2fb81f319877a448a2"
+      },
+      "mtree": {
+        "sha256": "8e1867035ceb6d65375606f9abaa98930ef1a6ed0b3ce72684b914b6513a0f0a",
+        "size": 13185
+      },
+      "payload_manifest": {
+        "sha256": "5e664f74e5afaafad40047915664abcad0c351f9efd6d7a100f4b921d33a00fb",
+        "size": 32339,
+        "entries": 241
+      },
+      "binary": {
+        "present": false,
+        "reason": "Static architecture-independent dashboard assets"
+      },
+      "sbom": {
+        "sha256": "cc7aefe7c6e20b5b235090d3dc1dd621d8e522a8b7f9f160d5c9861f0db67b63",
+        "size": 810718,
+        "mode": "0644",
+        "owner": "root:root",
+        "spdx_version": "SPDX-2.3"
+      }
+    }
+  },
+  "retained_g3_input": {
+    "package": {
+      "name": "qdrant",
+      "version": "1.17.1-1",
+      "architecture": "x86_64",
+      "sha256": "d237ac6b804c7b4ec3f73f8ef57340ebaba62abff7853636286f140c8affd5cb",
+      "size": 25531392
+    },
+    "binary": {
+      "sha256": "1d9e300802fe1588c6b6aef5167c32f8d215b5d79c07eaf6699ea1a80d92bf72",
+      "size": 75336176,
+      "mode": "0755",
+      "owner": "root:root",
+      "version_output": "qdrant 1.17.1"
+    },
+    "configuration": {
+      "sha256": "23f9b7628f8886edf1d6dbd45216a3755eb28bcf00c1e38d391087de58c81bde",
+      "size": 296,
+      "mode": "0644",
+      "owner": "root:root"
+    },
+    "fixture_spec": {
+      "schema": "qdrant-migration-fixture/v2",
+      "sha256": "024db808afb36ea5fdc344193457c6a05a21c7279919d356c25b7bc2cb113d9e"
+    }
+  },
+  "cross_record_bindings": {
+    "record_integrity": {
+      "all_seven_sha256_size_schema_tuples_recomputed": true,
+      "all_embedded_dispositions_match": true
+    },
+    "artifact_identity": {
+      "qdrant_archive_equal_across_g0_g1_g2_unit_g2_browser": true,
+      "qdrant_binary_equal_across_g0_g1_g2_unit_g2_browser_g3": true,
+      "qdrant_sbom_equal_across_g0_g1_g2_unit_g2_browser": true,
+      "qdrant_payload_equal_across_g0_g1_g2_unit": true,
+      "web_ui_archive_and_sbom_equal_across_g0_g1_g2_unit_g2_browser": true,
+      "web_ui_installed_tree_equal_across_g2_unit_g2_browser": true,
+      "migration_archive_binary_sbom_and_payload_bound_by_g0_g1": true,
+      "migration_binary_equal_across_g0_g1_g3": true,
+      "retained_1_17_archive_and_binary_equal_across_g0_g1_g3_and_receipts": true,
+      "retained_1_17_config_equal_across_g0_g1_and_g3": true
+    },
+    "g2_complement": {
+      "unit_record_embeds_browser_schema": "qdrant-g2-browser-evidence/v1",
+      "unit_record_embeds_browser_sha256": "b800b7a51b162ba3cf0b1f77a89762ef7726c809ccff589a48ba4b9f449491d9",
+      "unit_record_embeds_browser_size": 4990,
+      "matches_authoritative_browser_record": true
+    },
+    "g3_tool_and_receipts": {
+      "tool_sha256": "459e107bcfcab8dfec6f4aa4b867e9daba1e8dc7a979005ea1d11a1a70156ab2",
+      "accepted_manifest_embeds_int_receipt_sha256": "9e6adf7f6b092a3208d988850cb8dc2ccd27793dbcdfd906ed11e4b74bcbb06f",
+      "accepted_manifest_embeds_term_receipt_sha256": "5e2cc9a5ffee68ed790d323e46379fa4e960ae17ee3eb28e1bbb969270216aea",
+      "both_receipts_bind_exact_tool_fixture_retained_archive_and_three_binary_hashes": true,
+      "both_receipts_match_authoritative_record_bytes": true
+    },
+    "g3_obligations": {
+      "required_count": 42,
+      "result_count": 42,
+      "required_ids_unique": true,
+      "result_ids_unique": true,
+      "sets_equal": true,
+      "all_status_pass": true
+    }
+  },
+  "g3_promotion": {
+    "candidate_sha256": "3b30d5f979344fde4a1739889f1cab5890bf9b931bae62083f405daa1f22845d",
+    "accepted_sha256": "e647fad4e69006fe90df33a52231ca6dc81de81ed41b6f33f69fc23cafcab918",
+    "disposition": {
+      "from": "runtime_validated",
+      "to": "accepted"
+    },
+    "added_paths": [
+      "cleanup.transient_unit",
+      "promotion_delta",
+      "runtime_candidate_sha256"
+    ],
+    "removed_paths": [],
+    "structural_verification": {
+      "method": "Delete the three declared added paths from the accepted record, restore disposition to runtime_validated, serialize both records as compact recursively key-sorted JSON with one trailing newline, and compare bytes.",
+      "candidate_normalized_sha256": "0499cb59cc94d4cfecb9b03c4f9c38a7dc5578607377713a9592cedebc8c4307",
+      "accepted_normalized_sha256": "0499cb59cc94d4cfecb9b03c4f9c38a7dc5578607377713a9592cedebc8c4307",
+      "exact_match": true
+    }
+  },
+  "supersession": {
+    "policy": "The authoritative record set is closed. Every earlier, rejected, intermediate, event-only, alternate-serialization, or otherwise unlisted record is non-authoritative and cannot affect this index.",
+    "earlier_g0_g1_records": [
+      {
+        "schema": "arch-pkgs.qdrant.g0-g1.v1",
+        "sha256": "ccdb5f2005015873954d55d96b83e152540b1b4484771a901f61bb3243757303",
+        "size": 18995,
+        "status": "superseded"
+      },
+      {
+        "schema": "arch-pkgs.qdrant.g0-g1.v2",
+        "sha256": "8cbeb80952e3dd2ad9d6319f36c905399676687bb8dbe16d3ef065fea8f7d810",
+        "size": 24444,
+        "status": "superseded"
+      },
+      {
+        "schema": "arch-pkgs.qdrant.g0-g1.v3",
+        "sha256": "65ee49fb79c829ce1f033545d6b547f9688b3ab50f67a2dd98d936a9c1f23c16",
+        "size": 29473,
+        "status": "superseded"
+      },
+      {
+        "schema": "arch-pkgs.qdrant.g0-g1.v4",
+        "sha256": "f2367182d5a310ac0be8f6385d7295418ca0d826ff6f32cfb7b825bd7f440dce",
+        "size": 30950,
+        "status": "superseded"
+      },
+      {
+        "schema": "arch-pkgs.qdrant.g0-g1.v5",
+        "sha256": "7461a7c42185cd4c218e26313b80c81ebdeca01220056b0861a467ceb785cb51",
+        "size": 31799,
+        "status": "superseded"
+      }
+    ],
+    "earlier_g2_records": [
+      {
+        "schema": "qdrant-g2-exact-unit-evidence/v1",
+        "sha256": "6d9ed1b86f13a9da9ede96e0213302c094577b25e847a3c91d6c7f7e61b891ae",
+        "size": 15864,
+        "status": "explicitly superseded by authoritative G2 unit record"
+      },
+      {
+        "schema": "qdrant-g2-exact-unit-evidence/v1",
+        "sha256": "d463ec7c14d0d1a760559b30cf72a824860bc759cd19df12f6d8e3a711c0fe36",
+        "size": 16336,
+        "status": "intermediate; unlisted and non-authoritative"
+      },
+      {
+        "schema": "qdrant-g2-browser-evidence/v1",
+        "sha256": "90d01244ad24e02e5aaa9a2a4f33a08a5f293969980c2a8b741ba10cf3801e43",
+        "size": 4663,
+        "status": "explicitly superseded by authoritative G2 browser record"
+      },
+      {
+        "schema": "qdrant-g2-browser-evidence/v1",
+        "sha256": "91e21f14d2f210d2ba088bacbb25eff1e237fb8035cd6f9ec01ac3de4f463e59",
+        "size": 4042,
+        "status": "intermediate; unlisted and non-authoritative"
+      }
+    ],
+    "earlier_g3_manifests": [
+      {
+        "schema": "qdrant-migration-evidence/v1",
+        "sha256": "ce1066b3f2981b0873d998dc9e0e81ae0dc1fe956f96fe6e82d1428b6d10929a",
+        "size": 52666,
+        "embedded_disposition": "accepted",
+        "status": "superseded"
+      },
+      {
+        "schema": "qdrant-migration-evidence/v1",
+        "sha256": "4d18fb260ea08ad8f2ac5d255c459880b8fcc6af058f74907ce2667f1291d015",
+        "size": 54585,
+        "embedded_disposition": "accepted",
+        "status": "superseded"
+      },
+      {
+        "schema": "qdrant-migration-evidence/v1",
+        "sha256": "2a0cbfdf9f4427e0977a51c3e575d6289a43064a35ad29e394e831059bccd2bd",
+        "size": 63258,
+        "embedded_disposition": "runtime_validated",
+        "status": "superseded"
+      },
+      {
+        "schema": "qdrant-migration-evidence/v1",
+        "sha256": "ae56e1c0441aca40825e12283d0da123d4d31ceb4e80e97cae709c0a6510995c",
+        "size": 47947,
+        "embedded_disposition": "accepted",
+        "status": "superseded"
+      },
+      {
+        "schema": "qdrant-migration-evidence/v1",
+        "sha256": "bf140d3ed76afb699d45268322e86b62c68548d65a0317390c46d7726bf31f97",
+        "size": 63258,
+        "embedded_disposition": "runtime_validated",
+        "status": "superseded"
+      },
+      {
+        "schema": "qdrant-migration-evidence/v1",
+        "sha256": "62ec799814c46c4ed6225729cf6892a42c01b7008f3e04d67af0ef6832f2c78f",
+        "size": 47947,
+        "embedded_disposition": "accepted",
+        "status": "superseded"
+      }
+    ],
+    "earlier_or_rejected_interrupt_receipts": [
+      {
+        "schema": "qdrant-migration-interrupt-receipt/v1",
+        "signal": "INT",
+        "sha256": "2a31d5f2e2f543f637feaa7d728e6a41e581786d4f9781fb4a7c8a8bb405acd7",
+        "size": 1426,
+        "embedded_disposition": "rejected",
+        "status": "rejected"
+      },
+      {
+        "schema": "qdrant-migration-interrupt-receipt/v1",
+        "signal": "INT",
+        "sha256": "638fece2eb221fc2a6a61c5c1295ae3f2e4b453910ddcb9326682d8797957850",
+        "size": 1426,
+        "embedded_disposition": "rejected",
+        "status": "rejected"
+      },
+      {
+        "schema": "qdrant-migration-interrupt-receipt/v1",
+        "signal": "INT",
+        "sha256": "b95712f91d1f3c1eea5b79e2635504a39263702cbebd8baf853d41dd76212ca5",
+        "size": 1642,
+        "embedded_disposition": "accepted",
+        "status": "superseded"
+      },
+      {
+        "schema": "qdrant-migration-interrupt-receipt/v1",
+        "signal": "INT",
+        "sha256": "a7d743e815727f48e029a62d7d48073b09b61be4c61a0f2e6131abbfcda47a62",
+        "size": 1642,
+        "embedded_disposition": "accepted",
+        "status": "superseded"
+      },
+      {
+        "schema": "qdrant-migration-interrupt-receipt/v1",
+        "signal": "TERM",
+        "sha256": "4313eddbd00f931c98bc32a65c4ffbd97784f6d5a5782268ac19a26aaf4feb5e",
+        "size": 1643,
+        "embedded_disposition": "accepted",
+        "status": "superseded"
+      },
+      {
+        "schema": "qdrant-migration-interrupt-receipt/v1",
+        "signal": "INT",
+        "sha256": "25402d4e111018d82eb5ceba2e9df11e5f2897b603bd30fd495e633e0e01f76c",
+        "size": 1105,
+        "embedded_disposition": "accepted",
+        "status": "unlisted and non-authoritative"
+      },
+      {
+        "schema": "qdrant-migration-interrupt-receipt/v1",
+        "signal": "TERM",
+        "sha256": "79d11d50e7bc8e974c1e1b2186920c3b435231a431f6810b2eedca5bcd40df9e",
+        "size": 1106,
+        "embedded_disposition": "accepted",
+        "status": "unlisted and non-authoritative"
+      },
+      {
+        "schema": "qdrant-migration-interrupt-receipt/v1",
+        "signal": "INT",
+        "sha256": "6f946e7876cff1edd9838e125c952686c08061b3a18b64c3bd5e9512264400e1",
+        "size": 1105,
+        "embedded_disposition": "accepted",
+        "status": "unlisted and non-authoritative"
+      },
+      {
+        "schema": "qdrant-migration-interrupt-receipt/v1",
+        "signal": "TERM",
+        "sha256": "4921781dd11b0394cec076c5bb68fa444d25160723ab3081fe41976810b9b7d4",
+        "size": 1106,
+        "embedded_disposition": "accepted",
+        "status": "unlisted and non-authoritative"
+      }
+    ],
+    "known_stale_event_only_run": {
+      "logical_run": "g3-final-g",
+      "event_count": 38,
+      "runtime_candidate_manifest": "absent",
+      "accepted_manifest": "absent",
+      "status": "incomplete and excluded"
+    },
+    "event_only_rule": "Any run with events but without both a selected immutable runtime candidate and its accepted promotion manifest is incomplete and excluded."
+  },
+  "gate_results": {
+    "G0": {
+      "status": "accepted",
+      "authority": "g0_g1"
+    },
+    "G1": {
+      "status": "accepted",
+      "authority": "g0_g1"
+    },
+    "G2": {
+      "status": "accepted",
+      "authority": [
+        "g2_unit",
+        "g2_browser"
+      ]
+    },
+    "G3": {
+      "status": "accepted",
+      "authority": [
+        "g3_runtime_candidate",
+        "g3_interrupt_int",
+        "g3_interrupt_term",
+        "g3_accepted"
+      ]
+    },
+    "G4": {
+      "status": "pending",
+      "authority": []
+    }
+  },
+  "disposition": {
+    "state": "g0-g3-accepted-g4-pending",
+    "publication_eligible": false,
+    "catalog_lanes": {
+      "qdrant": "deferred",
+      "qdrant-migration": "deferred",
+      "qdrant-web-ui": "deferred"
+    },
+    "live_actions": {
+      "package_installation_authorized": false,
+      "service_activation_authorized": false,
+      "service_restart_authorized": false,
+      "catalog_publication_authorized": false,
+      "producer_cutover_authorized": false
+    },
+    "next_gate": "G4 composed-service and publication decision",
+    "fail_closed": true
+  },
+  "privacy": {
+    "public_copy_safe": true,
+    "status": "passed recursive strict scan",
+    "scan_scope": "Every recursively nested string value plus the serialized document",
+    "rejected_classes": "Concrete temporary, home, privileged-account, process, checkout, cache, operator, machine identity, private-network, email, credential, access-token, bearer-token, and private-key values",
+    "record_locators": "Logical record names and cryptographic identities only; no concrete evidence-root path is reproduced.",
+    "credential_values_included": false,
+    "machine_local_paths_included": false,
+    "operator_identities_included": false,
+    "host_ids_included": false,
+    "private_network_addresses_included": false
+  }
+}
