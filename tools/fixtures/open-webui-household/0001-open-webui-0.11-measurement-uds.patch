@@ -1,0 +1,51 @@
+diff --git a/open_webui/__init__.py b/open_webui/__init__.py
+index 903aa4b..a2a92f8 100644
+--- a/open_webui/__init__.py
++++ b/open_webui/__init__.py
+@@ -31,9 +31,17 @@ def main(
+
+ @app.command()
+ def serve(
+-    host: str = '0.0.0.0',
+-    port: int = 8080,
++    host: Annotated[str | None, typer.Option('--host')] = None,
++    port: Annotated[int | None, typer.Option('--port')] = None,
++    uds: Annotated[Path | None, typer.Option('--uds')] = None,
+ ):
++    if uds is not None and (host is not None or port is not None):
++        raise typer.BadParameter('--uds is mutually exclusive with --host and --port')
++
++    if uds is None:
++        host = host or '0.0.0.0'
++        port = port or 8080
++
+     os.environ['FROM_INIT_PY'] = 'true'
+     if os.getenv('WEBUI_SECRET_KEY') is None:
+         typer.echo('Loading WEBUI_SECRET_KEY from file, not provided as an environment variable.')
+@@ -78,14 +86,18 @@ def serve(
+     # asyncio.run() respect the WindowsSelectorEventLoopPolicy set in db.py.
+     loop = 'none' if sys.platform == 'win32' else 'auto'
+
+-    uvicorn.run(
+-        'open_webui.main:app',
+-        host=host,
+-        port=port,
+-        forwarded_allow_ips='*',
+-        workers=UVICORN_WORKERS,
+-        loop=loop,
+-    )
++    options = {
++        'forwarded_allow_ips': '*',
++        'workers': UVICORN_WORKERS,
++        'loop': loop,
++    }
++    if uds is not None:
++        options['uds'] = str(uds)
++    else:
++        options['host'] = host
++        options['port'] = port
++
++    uvicorn.run('open_webui.main:app', **options)
+
+
+ @app.command()

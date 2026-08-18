@@ -33,6 +33,10 @@ database settings, and feature flags in `/etc/open-webui/open-webui.env`.
 
 ## Maintenance Baseline
 
+The current disposable native-RAG measurements and remaining acceptance gaps
+are recorded in
+[`docs/maintainers/open-webui-household-envelope.md`](../../docs/maintainers/open-webui-household-envelope.md).
+
 - `authoritative_reference`: upstream `open-webui/open-webui` tag `v0.11.0` at
   commit `f9590b8017199e56d5e953657e6498e3cef1d246`, with PyPI source archive
   SHA-256 `e28c4fa997bf0a678caa7a0db6441da2e0c33b9a4120677f959ec3e45fccf9e9`
@@ -55,9 +59,10 @@ database settings, and feature flags in `/etc/open-webui/open-webui.env`.
     entry remains under `/opt/open-webui`.
   - Install service assets, secure defaults, user creation, and state
     directories as package payloads without a networked bootstrap. The target
-    service has no Open WebUI TCP listener; it uses the normal Open WebUI
-    `serve` path over `/run/open-webui/open-webui.sock` behind same-host HTTPS
-    while preserving existing administrator choices and state.
+    is a genuinely fresh household runtime: it imports no former database,
+    configuration, secret, Chroma state, uploads, or cache. It has no Open
+    WebUI TCP listener and uses the normal Open WebUI `serve` path over
+    `/run/open-webui/open-webui.sock` behind same-host HTTPS.
 - `update_notes`:
   - Keep this lane deferred and excluded from publication until the complete
     Open WebUI G0-G4 contract passes; a source update or successful build is not
@@ -77,9 +82,10 @@ database settings, and feature flags in `/etc/open-webui/open-webui.env`.
     service hardening and identity, state/config/secret modes, effective
     persisted household access and privacy behavior, provider integration, and
     no unexpected egress.
-  - G4 must pass browser workflows, cross-user privacy negatives, resource
-    limits, both required migration fixtures, state preservation, and
-    whole-runtime backup/restore rollback.
+  - G4 must pass fresh initialization and commissioning, browser workflows,
+    native-RAG citations, cross-user privacy negatives, measured resource
+    limits, versioned vector-generation rebuild and cutover, and whole-runtime
+    backup/restore rollback with old-session invalidation.
 
 ## System ML Stack
 
