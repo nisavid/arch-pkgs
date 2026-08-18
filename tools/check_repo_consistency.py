@@ -106,6 +106,15 @@ def is_retired_chatgpt_tool_entry(relative: str) -> bool:
     return normalized is not None and has_retired_chatgpt_identity(normalized)
 
 
+def path_has_symlink_component(root: Path, path: Path) -> bool:
+    current = root
+    for part in path.relative_to(root).parts:
+        current /= part
+        if current.is_symlink():
+            return True
+    return False
+
+
 def check_retired_chatgpt_sources(repo: Path) -> list[str]:
     errors: list[str] = []
     evidence = repo / CHATGPT_RETIREMENT_EVIDENCE
@@ -113,6 +122,11 @@ def check_retired_chatgpt_sources(repo: Path) -> list[str]:
         errors.append(
             f"{CHATGPT_RETIREMENT_EVIDENCE.as_posix()}: "
             "exact historical evidence is missing"
+        )
+    elif path_has_symlink_component(repo, evidence):
+        errors.append(
+            f"{CHATGPT_RETIREMENT_EVIDENCE.as_posix()}: "
+            "historical evidence must be a regular file inside the checkout"
         )
     elif hashlib.sha256(evidence.read_bytes()).hexdigest() != (
         CHATGPT_RETIREMENT_EVIDENCE_SHA256

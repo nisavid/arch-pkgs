@@ -388,8 +388,8 @@ for command_name in awk bsdtar cmp cp cut date env mkdir mktemp mv python3 \
   readlink repo-remove rm sed sha256sum sort stat tar wc zstd; do
   need_command "$command_name"
 done
-[[ -f "$manifest_tool" && ! -L "$manifest_tool" && -x "$manifest_tool" ]] \
-  || die "repository manifest tool is not executable: $manifest_tool"
+[[ -f "$manifest_tool" && ! -L "$manifest_tool" ]] \
+  || die "repository manifest tool must be a regular non-symlink file: $manifest_tool"
 [[ -f "$owned_directory_tool" && ! -L "$owned_directory_tool" ]] \
   || die "repository owned-directory helper is unavailable: $owned_directory_tool"
 
