@@ -9,6 +9,12 @@ Use this skill when package files under `packages/*` will change.
 
 Do not use it for repo-policy-only, README-only, backlog-only, or review-only turns unless package files will also change.
 
+For a repository-wide or multi-lane refresh, use
+`orchestrating-arch-package-refreshes` first. After that lifecycle assigns an
+implementation lane, use this skill for the lane's package mechanics and
+verification. Do not infer promotion, publication eligibility, or deployment
+authority from a successful build.
+
 ## Start discovery
 
 For the package you are touching:

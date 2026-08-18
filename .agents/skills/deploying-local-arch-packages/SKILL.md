@@ -18,6 +18,18 @@ If package files changed and the package was not installed during the session, t
 3. If the install is handed off to the user, give the exact command using the package directory under `packages/`.
 4. If the package ships a `systemd` service, include the enable/start command when relevant.
 
+## Accepted artifact boundary
+
+`makepkg -si` is a development install. When
+`orchestrating-arch-package-refreshes` has advanced a lane to acceptance or
+production deployment, install the exact candidate archive or exact version
+served by the verified published repository. Do not rebuild at that boundary.
+
+Keep acceptance deployment and production deployment as separate handoffs. Use
+`handling-privileged-steps` for package installation, service mutation, paid
+providers, or live-host work, and verify the resulting installed identity after
+the operator completes the authorized action.
+
 ## Examples
 
 - `cd packages/qdrant && makepkg -si`

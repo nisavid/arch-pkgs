@@ -71,6 +71,12 @@ evidence is sufficient; those remain explicit maintainer review.
 
 ## Build And Publish
 
+For a repository-wide or multi-lane refresh, follow the
+[`package refresh lifecycle`](../docs/policies/package-refresh-lifecycle.md) and
+use `orchestrating-arch-package-refreshes` before building or publishing. A
+successful build does not change a lane's disposition. Terminal staging must
+match the explicit manifest of accepted, publication-eligible identities.
+
 This workflow applies to ordinary package lanes with a `PKGBUILD`; it does not
 apply to [`chatgpt`](chatgpt/). Stage that immutable artifact lane only with
 [`tools/ingest_chatgpt.zsh`](../tools/ingest_chatgpt.zsh), following its
