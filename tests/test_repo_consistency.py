@@ -422,6 +422,37 @@ class RepositoryConsistencyTests(unittest.TestCase):
             result.stderr,
         )
 
+    def test_chatgpt_retirement_evidence_must_not_be_a_symlink(self):
+        evidence = self.repo / CHATGPT_RETIREMENT_EVIDENCE_RELATIVE
+        external_evidence = Path(self.tempdir.name) / "retirement-evidence.json"
+        external_evidence.write_bytes(evidence.read_bytes())
+        evidence.unlink()
+        evidence.symlink_to(external_evidence)
+
+        result = self.run_checker()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            f"{CHATGPT_RETIREMENT_EVIDENCE_RELATIVE}: "
+            "historical evidence must be a regular file",
+            result.stderr,
+        )
+
+    def test_chatgpt_retirement_evidence_parent_must_not_be_a_symlink(self):
+        evidence = self.repo / CHATGPT_RETIREMENT_EVIDENCE_RELATIVE
+        external_parent = Path(self.tempdir.name) / "retirement-evidence-parent"
+        evidence.parent.rename(external_parent)
+        evidence.parent.symlink_to(external_parent, target_is_directory=True)
+
+        result = self.run_checker()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            f"{CHATGPT_RETIREMENT_EVIDENCE_RELATIVE}: "
+            "historical evidence must be a regular file inside the checkout",
+            result.stderr,
+        )
+
     def test_chatgpt_retirement_evidence_digest_must_remain_exact(self):
         evidence = self.repo / CHATGPT_RETIREMENT_EVIDENCE_RELATIVE
         evidence.write_text(

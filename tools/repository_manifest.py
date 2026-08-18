@@ -40,7 +40,7 @@ def repository_manifest(root: Path) -> dict:
             except FileNotFoundError:
                 raise SystemExit(
                     f"repository symlink target is missing: {path.name} -> {target}"
-                )
+                ) from None
             if not stat.S_ISREG(target_metadata.st_mode):
                 raise SystemExit(
                     "repository symlink target must be a direct regular file: "

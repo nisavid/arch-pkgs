@@ -1412,10 +1412,52 @@ class ChatGPTRetirementTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertEqual(
             result.stderr,
-            f"repository manifest tool is not executable: {manifest_link}\n",
+            "repository manifest tool must be a regular non-symlink file: "
+            f"{manifest_link}\n",
         )
         self.assertFalse(self.candidate.exists())
         self.assertFalse(Path(f"{self.candidate}.writer.lock").exists())
+
+    def test_retirement_accepts_a_regular_nonexecutable_manifest_tool(self):
+        self._seed_complete_repository()
+        isolated_tools = self.root / "isolated-tools"
+        isolated_tools.mkdir()
+        isolated_retire = isolated_tools / RETIRE.name
+        shutil.copy2(RETIRE, isolated_retire)
+        shutil.copy2(
+            REPO_ROOT / "tools" / "repository_owned_directory.py",
+            isolated_tools / "repository_owned_directory.py",
+        )
+        manifest_tool = isolated_tools / "repository_manifest.py"
+        shutil.copy2(REPO_ROOT / "tools" / "repository_manifest.py", manifest_tool)
+        manifest_tool.chmod(0o644)
+        source_manifest_bytes = (
+            json.dumps(_repository_manifest(self.source), indent=2, sort_keys=True)
+            + "\n"
+        ).encode()
+        manifest_path = self.root / "accepted-source-manifest.json"
+        manifest_path.write_bytes(source_manifest_bytes)
+
+        result = subprocess.run(
+            [
+                str(isolated_retire),
+                "--source-repo-dir",
+                str(self.source),
+                "--input-manifest",
+                str(manifest_path),
+                "--input-manifest-sha256",
+                _sha256(manifest_path),
+                "--repo-dir",
+                str(self.candidate),
+            ],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.candidate.is_dir())
 
     def test_signed_repository_indexes_are_rejected_without_mutation(self):
         self._seed_complete_repository()
