@@ -27,14 +27,22 @@ or the exact promoted artifact identity served by the verified published
 repository in production. A matching version is not identity evidence. Do not
 rebuild at either boundary, and verify the resulting installed identity.
 
-At acceptance, record the expected archive SHA-256 and literal archive path,
-verify that digest immediately before the package transaction, install those
-bytes without rebuilding, and run the lane's installed-payload and runtime
-verifier against that accepted identity. At production, first materialize the
-archive served by the verified published repository, prove that its SHA-256
-matches the promotion record, install those exact bytes, and run the lane's
-production verifier against the same identity. A repository manifest, package
-name, or version alone does not prove installed identity.
+Before hashing or installing at either boundary, copy or materialize the
+archive into a fresh, uniquely named handoff directory controlled by the
+transaction operator. Reject symlinks, record the resolved path, ownership, and
+mode, and make the directory and archive unwritable to every other principal
+for the whole transaction. Hash the staged archive after materialization,
+install that same literal path without rebuilding, then recheck its path,
+metadata, and SHA-256 after the transaction. A reusable or world-writable path
+is not an accepted handoff.
+
+At acceptance, require the handoff SHA-256 to equal the candidate record. At
+production, materialize the archive served by the verified published
+repository into a new handoff and require its SHA-256 to equal the promotion
+record. Pass that expected and observed digest to the lane's installed-payload
+and runtime verifier so its evidence binds to the same archive identity. A
+repository manifest, package name, or version alone does not prove installed
+identity.
 
 Each lane or explicitly coupled deployment ticket must name the verifier and
 the installed payload or runtime evidence it emits. If no verifier can bind the
