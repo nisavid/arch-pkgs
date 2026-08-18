@@ -28,13 +28,19 @@ implication.
 | `production-deployed` | The exact published identity is installed, migration or cutover completed, runtime acceptance passed, and rollback anchors remain available. | Observe the lane-specific stability condition. |
 | `retention-releasable` | The stability condition and rollback proof passed, and cleanup authority names the retained targets. | Perform target-local, provenance-aware cleanup. |
 
-`deferred` is a lane disposition, not proof that every older identity is
-unpublishable. A deferred target keeps its evidence and rollback material, is
-excluded from accepted-only publication, and names the gate needed to resume.
-A previously accepted identity remains publishable only when the catalog
-explicitly marks that exact identity publication-eligible. A failure or
-unavailable environment defers only the affected lane unless a dependency edge
-also blocks another lane.
+`deferred` is a pre-promotion lane disposition, not proof that every older
+identity is unpublishable. A deferred target keeps its evidence and rollback
+material, is excluded from accepted-only publication, and names the acceptance
+gate needed to resume. A previously accepted identity remains publishable only
+when the catalog explicitly marks that exact identity publication-eligible. A
+failed or unavailable acceptance environment defers only the affected lane
+unless a dependency edge also blocks another lane.
+
+Later authority gaps are phase-specific holds, not retroactive demotions.
+Missing publication authority preserves `publication-eligible`; missing
+production authority preserves `published`; and missing cleanup authority
+preserves `production-deployed` and its rollback anchors. Record the exact hold
+without erasing the evidence or eligibility already established.
 
 Artifact identity is continuous across the state transitions. Matching package
 names and versions do not make rebuilt archives equivalent to accepted bytes.
@@ -112,14 +118,22 @@ Paid providers, privileged hosts, live state, package installation, service
 mutation, and publication need task-specific authority. Their presence does not
 itself defer a lane. When authority is present, route the boundary through
 `handling-privileged-steps` and verify the result. Otherwise prepare everything
-that remains valid without the action and mark the lane deferred at that gate.
-An unavailable, unauthorized, failed, or inconclusive gate never becomes an
-implicit pass.
+that remains valid without the action. A missing, failed, or inconclusive
+acceptance boundary leaves the candidate deferred and publication-ineligible.
+At a later boundary, preserve the current milestone and record a publication,
+production-deployment, or cleanup hold. No unavailable or unauthorized action
+becomes an implicit pass.
 
 The `packages/chatgpt/` immutable-ingest lane is the explicit exception to
 local building. Follow its package README and `tools/ingest_chatgpt.zsh`; do not
 invent a `PKGBUILD`, run `makepkg`, or pass it to
-`tools/update_pacman_repo.zsh`.
+`tools/update_pacman_repo.zsh`. For terminal accepted-only publication, omit the
+seed when ChatGPT is the only repository entry. Otherwise seed ingest only from
+a freshly materialized repository whose complete database and archive set is
+bound to the explicit promotion manifest. Do not reuse the live repository as
+a seed merely because its internal hashes verify. If current tooling cannot
+materialize and prove that accepted-only seed, create an implementation ticket
+and stop before publication.
 
 ## Accepted-only publication
 

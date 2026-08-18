@@ -61,9 +61,10 @@ staging while another writer is active.
 When publishing an application package with local dependencies, such as
 `hayhooks`, build and refresh the dependency package directories too.
 
-Artifact-ingest lanes have their own verifier. For the ChatGPT fallback, pass
-the complete published repository as the seed so unrelated packages remain
-present, then run the exact ingest command documented in
+Artifact-ingest lanes have their own verifier. For an ordinary incremental
+ChatGPT ingest outside a terminal multi-lane refresh, pass the complete verified
+published repository as the seed so unrelated packages remain present, then run
+the exact ingest command documented in
 [`packages/chatgpt/README.md`](../../packages/chatgpt/README.md):
 
 ```bash
@@ -92,6 +93,13 @@ Reconstruct staging from empty against the explicit accepted-artifact manifest
 and reconcile every staged entry before running the publisher. The updater and
 publisher preserve and promote repository contents; they do not decide whether
 an artifact passed its lane's acceptance and promotion gates.
+
+For ChatGPT in that terminal path, do not seed ingest directly from the live
+repository. Omit the seed when ChatGPT is the only accepted entry. Otherwise
+first materialize a seed whose complete database and archive set matches the
+promotion manifest, then pass that directory to `tools/ingest_chatgpt.zsh`.
+Stop and open a tooling ticket if the accepted-only seed cannot be constructed
+and verified without rebuilding or importing an ineligible artifact.
 
 ## Publish A Pacman-Visible Copy
 
