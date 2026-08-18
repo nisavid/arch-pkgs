@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Remove a repository transaction directory only through its verified inode."""
+"""Clean a cooperating writer's repository transaction directory defensively.
+
+Traversal and content deletion stay descriptor-relative, and observed name or
+inode drift is rejected. The invoking UID remains inside the trust boundary:
+Linux has no operation that removes an opened directory by inode, so the final
+empty-directory removal is necessarily name-based.
+"""
 
 from __future__ import annotations
 
@@ -99,6 +105,9 @@ def remove_owned(path: str, expected: tuple[int, int], recursive: bool) -> None:
         elif os.listdir(owned_descriptor):
             raise OwnershipError("owned directory is not empty")
         require_named_identity(parent_descriptor, name, expected)
+        # The cooperative writer lock excludes repository tools here. The
+        # invoking UID is trusted because rmdir(2) cannot target the opened
+        # directory descriptor itself.
         os.rmdir(name, dir_fd=parent_descriptor)
     finally:
         os.close(owned_descriptor)

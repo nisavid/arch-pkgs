@@ -61,10 +61,10 @@ python3 tools/check_repo_consistency.py
 
 The checker verifies catalog coverage, row shape, package identity and version,
 required baseline-field shape, `.SRCINFO` agreement, retired ChatGPT source
-boundaries, tracked Zsh syntax, pinned workflow actions, and the committed unit
-tests. It does not query providers, select candidates, build packages, or decide
-whether lane-specific acceptance evidence is sufficient; those remain explicit
-maintainer review.
+boundaries, checkout Zsh syntax, pinned workflow actions, and the unit tests
+discovered in the checkout. It does not query providers, select candidates,
+build packages, or decide whether lane-specific acceptance evidence is
+sufficient; those remain explicit maintainer review.
 
 ## Build And Publish
 

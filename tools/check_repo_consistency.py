@@ -79,6 +79,33 @@ FORBIDDEN_LOCAL_CHATGPT_LANE_NAMES = RETIRED_CHATGPT_PRODUCER_NAMES | {
 }
 
 
+def normalized_tool_entry(relative: str) -> str | None:
+    path = Path(relative)
+    if not path.parts or path.parts[0] != "tools":
+        return None
+    return re.sub(r"[^a-z0-9]", "", "".join(path.parts[1:]).lower())
+
+
+def has_retired_chatgpt_identity(normalized: str) -> bool:
+    return (
+        "chatgpt" in normalized
+        or "codexapp" in normalized
+        or "codexdesktop" in normalized
+    )
+
+
+def is_retired_chatgpt_ingest_helper(relative: str) -> bool:
+    normalized = normalized_tool_entry(relative)
+    return normalized is not None and "ingest" in normalized and (
+        has_retired_chatgpt_identity(normalized)
+    )
+
+
+def is_retired_chatgpt_tool_entry(relative: str) -> bool:
+    normalized = normalized_tool_entry(relative)
+    return normalized is not None and has_retired_chatgpt_identity(normalized)
+
+
 def check_retired_chatgpt_sources(repo: Path) -> list[str]:
     errors: list[str] = []
     evidence = repo / CHATGPT_RETIREMENT_EVIDENCE
@@ -95,10 +122,10 @@ def check_retired_chatgpt_sources(repo: Path) -> list[str]:
             "historical evidence digest does not match the retained baseline"
         )
     retired_lane_names: set[str] = set()
-    for path in repository_paths(repo):
+    for path in repository_entries(repo):
         relative = path.relative_to(repo)
         if (
-            len(relative.parts) >= 3
+            len(relative.parts) >= 2
             and relative.parts[0] == "packages"
             and relative.parts[1] in FORBIDDEN_LOCAL_CHATGPT_LANE_NAMES
         ):
@@ -146,8 +173,12 @@ def check_retired_chatgpt_sources(repo: Path) -> list[str]:
             )
     retired_ingest_helpers = sorted(
         path.relative_to(repo).as_posix()
-        for path in repository_paths(repo)
-        if re.fullmatch(r"tools/ingest_chatgpt[^/]*", path.relative_to(repo).as_posix())
+        for path in repository_entries(repo)
+        if is_retired_chatgpt_ingest_helper(path.relative_to(repo).as_posix())
+        or (
+            path.is_symlink()
+            and is_retired_chatgpt_tool_entry(path.relative_to(repo).as_posix())
+        )
     )
     for relative in retired_ingest_helpers:
         if relative == "tools/ingest_chatgpt.zsh":
@@ -159,7 +190,7 @@ def check_retired_chatgpt_sources(repo: Path) -> list[str]:
     return errors
 
 
-def repository_paths(repo: Path) -> list[Path]:
+def repository_entries(repo: Path) -> list[Path]:
     result = subprocess.run(
         ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
         cwd=repo,
@@ -170,8 +201,12 @@ def repository_paths(repo: Path) -> list[Path]:
     return sorted(
         repo / relative_path
         for relative_path in result.stdout.split("\0")
-        if relative_path and (repo / relative_path).is_file()
+        if relative_path
     )
+
+
+def repository_paths(repo: Path) -> list[Path]:
+    return [path for path in repository_entries(repo) if path.is_file()]
 
 
 def check_zsh_syntax(repo: Path) -> list[str]:
@@ -464,7 +499,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--skip-tests",
         action="store_true",
-        help="skip the committed unit-test phase during focused checker development",
+        help="skip unit tests discovered in the checkout during focused checker development",
     )
     return parser.parse_args()
 

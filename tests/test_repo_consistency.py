@@ -200,6 +200,26 @@ class RepositoryConsistencyTests(unittest.TestCase):
             result.stderr,
         )
 
+    def test_retired_chatgpt_package_lane_cannot_hide_as_a_directory_symlink(self):
+        external_lane = Path(self.tempdir.name) / "retired-package"
+        external_lane.mkdir()
+        retired_lanes = {
+            "chatgpt": "retired package lane must remain absent",
+            "codex-app": "retired ChatGPT producer lane must remain absent",
+            "codex-desktop": "retired ChatGPT producer lane must remain absent",
+            "chatgpt-desktop-bin": "local ChatGPT package lane must remain absent",
+        }
+        for name in retired_lanes:
+            lane_path = self.repo / f"packages/{name}"
+            lane_path.parent.mkdir(parents=True, exist_ok=True)
+            lane_path.symlink_to(external_lane, target_is_directory=True)
+
+        result = self.run_checker()
+
+        self.assertEqual(result.returncode, 1)
+        for name, message in retired_lanes.items():
+            self.assertIn(f"packages/{name}: {message}", result.stderr)
+
     def test_retired_legacy_producer_lane_cannot_be_reintroduced(self):
         self.write("packages/codex-app/PKGBUILD", "pkgname=codex-app\n")
 
@@ -303,6 +323,91 @@ class RepositoryConsistencyTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn(
             "tools/ingest_chatgpt.py: retired ChatGPT ingest helper must remain absent",
+            result.stderr,
+        )
+
+    def test_retired_chatgpt_ingest_helper_cannot_reverse_reserved_words(self):
+        self.write("tools/chatgpt_ingest.zsh", "#!/usr/bin/env zsh\n")
+
+        result = self.run_checker()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "tools/chatgpt_ingest.zsh: retired ChatGPT ingest helper must remain absent",
+            result.stderr,
+        )
+
+    def test_retired_chatgpt_ingest_helper_cannot_hide_in_nested_paths(self):
+        retired_helpers = (
+            "tools/chatgpt-ingest/main.py",
+            "tools/chatgpt/ingest.zsh",
+            "tools/codex/desktop/ingest.py",
+        )
+        for relative in retired_helpers:
+            self.write(relative, "print('retired')\n")
+
+        result = self.run_checker()
+
+        self.assertEqual(result.returncode, 1)
+        for relative in retired_helpers:
+            self.assertIn(
+                f"{relative}: retired ChatGPT ingest helper must remain absent",
+                result.stderr,
+            )
+
+    def test_retired_chatgpt_ingest_helper_cannot_hide_as_a_directory_symlink(self):
+        external_helper = Path(self.tempdir.name) / "retired-helper"
+        external_helper.mkdir()
+        (external_helper / "main.py").write_text("print('retired')\n", encoding="utf-8")
+        helper_path = self.repo / "tools/chatgpt-ingest"
+        helper_path.parent.mkdir(parents=True, exist_ok=True)
+        helper_path.symlink_to(external_helper, target_is_directory=True)
+
+        result = self.run_checker()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "tools/chatgpt-ingest: retired ChatGPT ingest helper must remain absent",
+            result.stderr,
+        )
+
+    def test_retired_chatgpt_ingest_helper_cannot_hide_behind_identity_symlink(self):
+        external_helper = Path(self.tempdir.name) / "retired-helper"
+        external_helper.mkdir()
+        (external_helper / "ingest.zsh").write_text(
+            "#!/usr/bin/env zsh\n", encoding="utf-8"
+        )
+        helper_path = self.repo / "tools/chatgpt"
+        helper_path.parent.mkdir(parents=True, exist_ok=True)
+        helper_path.symlink_to(external_helper, target_is_directory=True)
+
+        result = self.run_checker()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "tools/chatgpt: retired ChatGPT ingest helper must remain absent",
+            result.stderr,
+        )
+
+    def test_retired_codex_app_ingest_helper_cannot_be_reintroduced(self):
+        self.write("tools/codex-app-ingest.py", "print('retired')\n")
+
+        result = self.run_checker()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "tools/codex-app-ingest.py: retired ChatGPT ingest helper must remain absent",
+            result.stderr,
+        )
+
+    def test_retired_codex_desktop_ingest_helper_cannot_be_reintroduced(self):
+        self.write("tools/ingest-codex-desktop.sh", "#!/bin/sh\n")
+
+        result = self.run_checker()
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn(
+            "tools/ingest-codex-desktop.sh: retired ChatGPT ingest helper must remain absent",
             result.stderr,
         )
 
@@ -731,7 +836,7 @@ class RepositoryConsistencyTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertIn("action must use a full commit SHA", result.stderr)
 
-    def test_default_gate_runs_committed_unit_tests(self):
+    def test_default_gate_runs_unit_tests_discovered_in_the_checkout(self):
         self.write(
             "tests/test_failure.py",
             textwrap.dedent(
