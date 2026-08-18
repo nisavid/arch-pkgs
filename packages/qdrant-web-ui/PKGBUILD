@@ -1,0 +1,53 @@
+pkgname=qdrant-web-ui
+pkgver=0.2.16
+pkgrel=1
+pkgdesc='Static dashboard assets for Qdrant'
+arch=('any')
+url='https://github.com/qdrant/qdrant-web-ui'
+license=('Apache-2.0')
+makedepends=('python')
+source=(
+  "dist-qdrant-${pkgver}.zip::https://github.com/qdrant/qdrant-web-ui/releases/download/v${pkgver}/dist-qdrant.zip"
+  "${pkgname}-${pkgver}.tar.gz::https://codeload.github.com/qdrant/qdrant-web-ui/tar.gz/refs/tags/v${pkgver}"
+  'patch-runtime-urls.py'
+  'cloud-data.json'
+  'web-ui-info.json'
+  'datasets.json'
+)
+sha256sums=('4446f0cea024078011c78cd24a592c9b563656d15205818563fa6b22d394dd29'
+            'be85d9cffc5d5ad8122c4fe332cd6731cddcd508a61d77ee918626fc4d977577'
+            'f611bfdcc84c1c12a43a8f1a5a53ffeadde843a8b4714978c5d74c51205ca0f7'
+            '38e0b9de817f645c4bec37c0d4a3e58baecccb040f5718dc069a72c7385a0bed'
+            'ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356'
+            '37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570')
+_license_sha256='c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4'
+
+prepare() {
+  python "${srcdir}/patch-runtime-urls.py" "${srcdir}/dist/assets"
+
+  printf '%s  %s\n' \
+    "${_license_sha256}" \
+    "${srcdir}/${pkgname}-${pkgver}/LICENSE" | sha256sum --check --status
+}
+
+package() {
+  install -d "${pkgdir}/usr/share/qdrant/web-ui"
+  cp -R --no-preserve=ownership \
+    "${srcdir}/dist/." \
+    "${pkgdir}/usr/share/qdrant/web-ui/"
+  find "${pkgdir}/usr/share/qdrant/web-ui" -type d -exec chmod 755 {} +
+  find "${pkgdir}/usr/share/qdrant/web-ui" -type f -exec chmod 644 {} +
+  install -Dm644 \
+    "${srcdir}/cloud-data.json" \
+    "${pkgdir}/usr/share/qdrant/web-ui/cloud/data.json"
+  install -Dm644 \
+    "${srcdir}/web-ui-info.json" \
+    "${pkgdir}/usr/share/qdrant/web-ui/web-ui-info.json"
+  install -Dm644 \
+    "${srcdir}/datasets.json" \
+    "${pkgdir}/usr/share/qdrant/web-ui/datasets.json"
+
+  install -Dm644 \
+    "${srcdir}/${pkgname}-${pkgver}/LICENSE" \
+    "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+}

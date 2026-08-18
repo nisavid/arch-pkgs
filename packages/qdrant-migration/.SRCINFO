@@ -1,0 +1,23 @@
+pkgbase = qdrant-migration
+	pkgdesc = Retained Qdrant binary for consecutive-minor migrations
+	pkgver = 1.18.3
+	pkgrel = 1
+	url = https://qdrant.tech
+	arch = x86_64
+	license = Apache-2.0
+	makedepends = cargo
+	makedepends = cmake
+	makedepends = mold
+	makedepends = clang
+	makedepends = jq
+	makedepends = protobuf
+	depends = gcc-libs
+	depends = glibc
+	options = !debug
+	options = !lto
+	source = qdrant-1.18.3.tar.gz::https://github.com/qdrant/qdrant/archive/v1.18.3.tar.gz
+	source = cargo-sbom-0.10.0.tar.gz::https://static.crates.io/crates/cargo-sbom/cargo-sbom-0.10.0.crate
+	sha256sums = c5f918b4f37279ec00b22b718ca54bca7b43c9d17628b28b8eba363beceb0c96
+	sha256sums = 4ffe4b49660f4f4331fb5efcf7074a318b10f5f8fd75e42351a7ca32c58c2723
+
+pkgname = qdrant-migration

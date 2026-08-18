@@ -1,0 +1,68 @@
+diff --git a/src/actix/web_ui.rs b/src/actix/web_ui.rs
+index d2b8c1a..9cf48d6 100644
+--- a/src/actix/web_ui.rs
++++ b/src/actix/web_ui.rs
+@@ -8,6 +8,7 @@ use actix_web::web;
+ use crate::settings::Settings;
+ 
+ const DEFAULT_STATIC_DIR: &str = "./static";
++const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; base-uri 'none'; connect-src 'self'; font-src 'self' data:; form-action 'self'; frame-ancestors 'none'; img-src 'self' data: blob:; object-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:";
+ pub const WEB_UI_PATH: &str = "/dashboard";
+ 
+ pub fn web_ui_folder(settings: &Settings) -> Option<String> {
+@@ -39,7 +40,16 @@ pub fn web_ui_folder(settings: &Settings) -> Option<String> {
+ 
+ pub fn web_ui_factory(static_folder: &str) -> impl HttpServiceFactory + use<> {
+     web::scope(WEB_UI_PATH)
+-        .wrap(DefaultHeaders::new().add(("X-Frame-Options", HeaderValue::from_static("DENY"))))
++        .wrap(
++            DefaultHeaders::new()
++                .add((
++                    "Content-Security-Policy",
++                    HeaderValue::from_static(CONTENT_SECURITY_POLICY),
++                ))
++                .add(("Referrer-Policy", HeaderValue::from_static("no-referrer")))
++                .add(("X-Content-Type-Options", HeaderValue::from_static("nosniff")))
++                .add(("X-Frame-Options", HeaderValue::from_static("DENY"))),
++        )
+         .service(actix_files::Files::new("/", static_folder).index_file("index.html"))
+ }
+ 
+@@ -52,11 +62,27 @@ mod tests {
+ 
+     use super::*;
+ 
++    fn assert_security_headers(headers: &HeaderMap) {
++        let content_security_policy = header::HeaderValue::from_static(CONTENT_SECURITY_POLICY);
++        assert_eq!(
++            headers.get("Content-Security-Policy"),
++            Some(&content_security_policy),
++        );
++        let referrer_policy = header::HeaderValue::from_static("no-referrer");
++        assert_eq!(headers.get("Referrer-Policy"), Some(&referrer_policy));
++        let x_content_type_options = header::HeaderValue::from_static("nosniff");
++        assert_eq!(
++            headers.get("X-Content-Type-Options"),
++            Some(&x_content_type_options),
++        );
++        let x_frame_options = header::HeaderValue::from_static("DENY");
++        assert_eq!(headers.get(header::X_FRAME_OPTIONS), Some(&x_frame_options),);
++    }
++
+     fn assert_html_custom_headers(headers: &HeaderMap) {
+         let content_type = header::HeaderValue::from_static("text/html; charset=utf-8");
+         assert_eq!(headers.get(header::CONTENT_TYPE), Some(&content_type));
+-        let x_frame_options = header::HeaderValue::from_static("DENY");
+-        assert_eq!(headers.get(header::X_FRAME_OPTIONS), Some(&x_frame_options),);
++        assert_security_headers(headers);
+     }
+ 
+     #[actix_web::test]
+@@ -101,6 +127,7 @@ mod tests {
+             headers.get(header::CONTENT_TYPE),
+             Some(&header::HeaderValue::from_static("image/x-icon")),
+         );
++        assert_security_headers(headers);
+         // Non-existing path (404 Not Found)
+         let fake_path = uuid::Uuid::new_v4().to_string();
+         let srv = test::init_service(App::new().service(web_ui_factory(&fake_path))).await;

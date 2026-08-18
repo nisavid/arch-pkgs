@@ -1,0 +1,10 @@
+FROM docker.io/library/archlinux@sha256:ee205c220399524a683cf495d411691b921baed8ab47cdc6d732efa782fae484
+
+RUN pacman -Syyu --noconfirm \
+    && pacman -S --needed --noconfirm cargo clang cmake jq mold protobuf python zsh \
+    && pacman -Scc --noconfirm
+
+RUN useradd --create-home --uid 1000 --user-group builder
+
+USER builder
+WORKDIR /build

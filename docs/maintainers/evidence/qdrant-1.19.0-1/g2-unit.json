@@ -1,0 +1,410 @@
+{
+  "schema": "qdrant-g2-exact-unit-evidence/v1",
+  "disposition": "accepted",
+  "scope": "fresh exact packaged systemd unit in a disposable rootless container",
+  "review": {
+    "contract": "issue-28-g0-g2",
+    "component": "exact-packaged-systemd-unit",
+    "adversarialReview": "clean",
+    "blockers": []
+  },
+  "artifacts": {
+    "qdrant": {
+      "source": {
+        "version": "1.19.0",
+        "annotatedTagObject": "af875b4bfd98103f7c0ee34fe4f25c5099893ca9",
+        "commit": "74f3e85b9473c62560006c043e13737ce6b48412",
+        "archiveSha256": "e0c9a030ae47d95f7c739598343bd2529c817fe262c4e7b2a4f1070ff82a024e"
+      },
+      "package": {
+        "name": "qdrant",
+        "version": "1.19.0-1",
+        "architecture": "x86_64",
+        "size": 28018464,
+        "sha256": "15f15fe2c0c774691bf3193bc8fc7883fa530c89db697f7c0bcc2720d231b011",
+        "pkgInfoSha256": "22eb166c025fd9d517c47cd1e7e19b8a6000fbe60d1df49546f37716f3386aeb",
+        "buildInfoSha256": "052545fecdfa7473973aa9c1fb8a018a94851c3cff5e5cb9ac8369ba802f78f9",
+        "mtreeSha256": "79430e8e34f533a3c65629948eab185635decf2eda8700d90acaa7c1f369751f"
+      },
+      "installed": {
+        "binarySize": 72134360,
+        "binarySha256": "bf24efd92208fab1a8f4769a56158280b458b7a42850095ac875824571005f8c",
+        "sbomSize": 871192,
+        "sbomSha256": "b63c0949816cb55a4405529c7d3a02e39bb6b1d03cd757d0f6361c34ce4a8015",
+        "configSha256": "800fd7130542e5d61bc869962e6d7d59de2bccad261811d54e9b6745ffc991f4",
+        "serviceSha256": "610312cbba4efffa1d5422ab75154605000d4a4d177f77437ca00e2926ef4114",
+        "secretHelperSha256": "6a364ce0a745c6f02d38f3c39fc71e91fd31a2f33e63442cfa64b251fab545cd",
+        "payloadManifestSha256": "63559cb13aa861d94ec23536e4f12cb166830d52d965a66731044659a529f56c"
+      }
+    },
+    "qdrantWebUi": {
+      "source": {
+        "version": "0.2.16",
+        "annotatedTagObject": "018e83a869a3d2b831e92664e8d33f51ec7981b1",
+        "commit": "d3f7a1174933ab637d9711ea45456d32b878b50e",
+        "releaseAssetSha256": "4446f0cea024078011c78cd24a592c9b563656d15205818563fa6b22d394dd29"
+      },
+      "package": {
+        "name": "qdrant-web-ui",
+        "version": "0.2.16-1",
+        "architecture": "any",
+        "size": 5719063,
+        "sha256": "f3d46e6ff09b8eb87b1465ee6a17a7cc35c574596b7fbf30518d3bc1d42fe10a"
+      },
+      "installedTree": {
+        "fileCount": 229,
+        "digestAlgorithm": "sha256-of-sorted-sha256-relative-path-lines",
+        "sha256": "b93d40367d5e2e30e3cac151adddbb934503218e8e44e798a7ed2807e03ac36b"
+      },
+      "sbomSha256": "cc7aefe7c6e20b5b235090d3dc1dd621d8e522a8b7f9f160d5c9861f0db67b63",
+      "cloudDataSha256": "38e0b9de817f645c4bec37c0d4a3e58baecccb040f5718dc069a72c7385a0bed"
+    }
+  },
+  "packageInstallation": {
+    "exactArchiveHashesVerifiedBeforeStart": true,
+    "exactArchiveSizesVerifiedBeforeStart": true,
+    "installedVersions": {
+      "qdrant": "1.19.0-1",
+      "qdrantWebUi": "0.2.16-1"
+    },
+    "pacmanIntegrity": {
+      "qdrantTotalFiles": 22,
+      "qdrantAlteredFiles": 0,
+      "qdrantWebUiTotalFiles": 241,
+      "qdrantWebUiAlteredFiles": 0
+    },
+    "installHooksAbsent": true,
+    "webUiRuntimeDependenciesAbsent": true,
+    "serverDependencyOnWebUi": "intentionally-unversioned-independent-cadence",
+    "acceptedArtifactSetBindsWebUiVersion": "0.2.16-1"
+  },
+  "pythonClient": {
+    "preflightBeforePackageOrServiceMutation": true,
+    "pythonVersion": "3.14.6",
+    "pythonAbi": "cp314",
+    "versions": {
+      "qdrantClient": "1.19.0",
+      "grpcio": "1.83.0",
+      "numpy": "2.5.2",
+      "pydanticCore": "2.46.4"
+    },
+    "cygrpcExtension": "cygrpc.cpython-314-x86_64-linux-gnu.so",
+    "requirementsSha256": "e9ea7f95db9f146f412154eeb51c1a042d5e5c54cbd83013e7458d89186d70d2",
+    "wheelhouse": {
+      "fileCount": 20,
+      "totalBytes": 27907613,
+      "manifestAndTreeSha256": "bf0823244270e12bb2177c30c1a3ba48eebaf3f727eb8c9efd834052195aa129"
+    },
+    "installedTree": {
+      "fileCount": 1612,
+      "totalBytes": 88699283,
+      "sha256": "d8edeaf1dcccbc1e2d85f1fe4922c1e35919ac6a3622e073406eb0e0ffda72e3"
+    },
+    "runtimeNetworkRequired": false,
+    "bytecodeWritesDisabled": true
+  },
+  "container": {
+    "runtime": "rootless-podman",
+    "rootless": true,
+    "image": {
+      "name": "archlinux:base-devel",
+      "id": "sha256:0864f97b9567bf14c4450f820234617de489069d5157a3aef4a14a3e9bdf7508",
+      "manifestDigest": "sha256:ee205c220399524a683cf495d411691b921baed8ab47cdc6d732efa782fae484",
+      "version": "20260809.0.570793",
+      "sourceRevision": "34b87485162b028c8d957bdcd2674359d883cd21"
+    },
+    "pullPolicy": "never",
+    "networkMode": "none",
+    "cgroupNamespace": "private",
+    "systemdMode": "always",
+    "removeOnExit": true,
+    "containerLocalPrivileged": true,
+    "containerLocalPrivilegedPurpose": "exercise the exact unit namespace and cgroup directives inside a rootless container",
+    "bindRoles": [
+      "qdrant-package-read-only",
+      "qdrant-web-ui-package-read-only",
+      "evidence-read-write"
+    ],
+    "resourceEnvelope": {
+      "memoryMaxBytes": 4294967296,
+      "stateFilesystem": "tmpfs",
+      "stateFilesystemSizeBytes": 2147483648,
+      "stateFilesystemOptions": [
+        "rw",
+        "nosuid",
+        "nodev",
+        "noexec"
+      ],
+      "initialStateFiles": 0,
+      "initialStateUsePercent": 0,
+      "postRestartStateUseBytes": 666873856,
+      "postRestartStateUsePercent": 32
+    }
+  },
+  "secretPreflight": {
+    "missingRejected": true,
+    "emptyRejected": true,
+    "malformedRejected": true,
+    "wrongModeRejected": true,
+    "validOwnerGroupModeAccepted": true,
+    "acceptedMode": "0640",
+    "adminSecretPersistedInEvidence": false,
+    "adminSecretPersistedInState": false,
+    "secretFileRemovedDuringCleanup": true
+  },
+  "systemdUnit": {
+    "exactPackagedUnit": true,
+    "dedicatedServiceIdentity": "qdrant:qdrant",
+    "securityExposureScore": 1.3,
+    "securityExposureRating": "OK",
+    "effectiveLimits": {
+      "tasksMax": 2048,
+      "pidsCurrentAtFinalCapture": 114,
+      "pidsLimitEvents": 0,
+      "memoryHighBytes": 3435970560,
+      "memoryMaxBytes": 3865468928,
+      "memoryHighPercentOfEnvelope": 80,
+      "memoryMaxPercentOfEnvelope": 90,
+      "memoryPeakBytes": 504586240,
+      "memoryHighEvents": 0,
+      "memoryMaxEvents": 0,
+      "oomEvents": 0,
+      "oomKillEvents": 0
+    },
+    "kernelProcessState": {
+      "capabilitySetsEmpty": true,
+      "noNewPrivileges": true,
+      "seccompFiltering": true
+    },
+    "effectiveHardening": {
+      "noNewPrivileges": true,
+      "capabilityBoundingSetEmpty": true,
+      "ambientCapabilitiesEmpty": true,
+      "privateDevices": true,
+      "privateTmp": true,
+      "protectClock": true,
+      "protectHostname": true,
+      "protectHome": true,
+      "protectSystem": "strict",
+      "protectControlGroups": true,
+      "protectKernelLogs": true,
+      "protectKernelModules": true,
+      "protectKernelTunables": true,
+      "protectProc": "invisible",
+      "procSubset": "pid",
+      "lockPersonality": true,
+      "memoryDenyWriteExecute": true,
+      "restrictNamespaces": true,
+      "restrictRealtime": true,
+      "restrictSuidSgid": true,
+      "systemCallArchitectures": "native",
+      "systemCallFilter": "system-service",
+      "systemCallError": "EPERM",
+      "umask": "0027"
+    },
+    "mountNamespace": {
+      "systemPayloadReadOnly": true,
+      "homeRootsProtectedByEmptyReadOnlyTmpfs": true,
+      "homeProtectionFalsifiedAgainstUnprotectedNamespace": true,
+      "stateDirectoryOnlyWritableSurface": true
+    }
+  },
+  "network": {
+    "interfaces": [
+      "loopback"
+    ],
+    "listeners": [
+      "127.0.0.1:6333",
+      "127.0.0.1:6334"
+    ],
+    "wildcardListeners": 0,
+    "unexpectedListeners": 0,
+    "clusterPeerListener": false,
+    "effectiveAddressPolicy": {
+      "deny": [
+        "0.0.0.0/0",
+        "::/0"
+      ],
+      "allow": [
+        "127.0.0.0/8",
+        "::1/128"
+      ]
+    },
+    "nonLoopbackEgressAvailable": false,
+    "grpcTransport": "plaintext-loopback-only"
+  },
+  "api": {
+    "publicRootBanner": {
+      "status": 200,
+      "title": "qdrant - vector search engine",
+      "version": "1.19.0",
+      "exposesDataOrManagement": false
+    },
+    "unauthenticatedSensitiveEndpoints": {
+      "collectionsStatus": 401,
+      "quotasStatus": 401
+    },
+    "admin": {
+      "collectionListStatus": 200,
+      "quotaStatus": 200
+    },
+    "quotaConfig": {
+      "enabled": true,
+      "maxResidentMemoryPercent": 80,
+      "maxDiskUsagePercent": 85,
+      "releaseMarginPercent": 10
+    },
+    "collectionQuota": {
+      "configured": 64,
+      "created": 64,
+      "sixtyFifthStatus": 400,
+      "sixtyFifthError": "Bad request: Can't create collection with name limit-65. Max collections limit reached: 64"
+    },
+    "jwtRoles": {
+      "prwPointReadWrite": "accepted",
+      "rPointRead": "accepted",
+      "rPointWriteStatus": 403,
+      "prwManagementDenials": {
+        "collectionCreate": 403,
+        "collectionDelete": 403,
+        "alias": 403,
+        "snapshot": 403,
+        "quotas": 403,
+        "configuration": 403
+      },
+      "rManagementDenials": {
+        "collectionCreate": 403,
+        "collectionDelete": 403,
+        "alias": 403,
+        "snapshot": 403,
+        "quotas": 403,
+        "configuration": 403
+      },
+      "genericRwMaintainedDefault": false,
+      "genericRwSnapshotCreation": "accepted-upstream-role-too-broad"
+    },
+    "grpc": {
+      "unauthenticatedRead": "rejected",
+      "prwPointReadWrite": "accepted",
+      "rPointRead": "accepted",
+      "rPointWrite": "rejected"
+    },
+    "cors": {
+      "enabled": false,
+      "allowOriginAbsent": true,
+      "unauthenticatedPreflightStatus": 401,
+      "authenticationPrecedesRouteHandling": true,
+      "authenticatedPreflightStatus": 404
+    },
+    "dashboard": {
+      "cloudMetadataStatus": 200,
+      "cloudMetadataValue": null,
+      "contentSecurityPolicy": "default-src 'self'; base-uri 'none'; connect-src 'self'; font-src 'self' data:; form-action 'self'; frame-ancestors 'none'; img-src 'self' data: blob:; object-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:",
+      "referrerPolicy": "no-referrer",
+      "contentTypeOptions": "nosniff",
+      "frameOptions": "DENY"
+    },
+    "strictMode": {
+      "queryLimit1000Accepted": true,
+      "queryLimit1001Status": 400,
+      "timeout120Accepted": true,
+      "timeout121Status": 400
+    },
+    "urlSnapshotRecovery": {
+      "enabled": false,
+      "status": 403
+    },
+    "privacyAndExternalServices": {
+      "telemetry": "disabled",
+      "snapshotStorage": "local",
+      "s3": "not-configured",
+      "externalInference": "not-configured"
+    }
+  },
+  "restart": {
+    "cleanServiceRestart": "passed",
+    "collectionsPreserved": 64,
+    "grpcPointPreserved": true,
+    "stateFilesystemPreservedAcrossRestart": true
+  },
+  "cleanup": {
+    "serviceStopped": true,
+    "qdrantProcessRemovedInsideContainer": true,
+    "listenersRemovedInsideContainer": true,
+    "secretMaterialRemoved": true,
+    "jwtLikeMaterialAbsentFromEvidence": true,
+    "containerStopCompleted": true,
+    "containerConfiguredRemoveOnExit": true,
+    "matchingDisposableContainerProcessObservedAfterRun": false
+  },
+  "harnessLimitations": [
+    {
+      "classification": "rootless-exact-unit-harness",
+      "detail": "Nested systemd namespace and cgroup enforcement required container-local privileged mode; the runtime remained rootless, network-none, remove-on-exit, and bound only exact artifacts plus evidence."
+    },
+    {
+      "classification": "rootless-global-tmpfiles-hook",
+      "detail": "The global tmpfiles hook could not change unrelated container device-node ownership; package integrity, service state ownership, and exact-unit behavior passed."
+    }
+  ],
+  "browserComplement": {
+    "schema": "qdrant-g2-browser-evidence/v1",
+    "disposition": "accepted",
+    "size": 4990,
+    "sha256": "b800b7a51b162ba3cf0b1f77a89762ef7726c809ccff589a48ba4b9f449491d9"
+  },
+  "harness": {
+    "runnerSha256": "77cd1a206708ecffb22e5b9b478d95cabe714702311b2a94e82da5812358a33f",
+    "inputManifestSha256": "dd56878dd9393b133a897857f8c981fdc832c519755ee274f09c548d7ebe578f",
+    "unitApiSha256": "eb00d788e94b1e2fcfafd43bc74baecdad1c4dc140a34a62dc579ec9d9b07a81",
+    "unitContainerSha256": "dbf4a44f8ca0d9e4b482d674d705ec3d0028a1495dea1491dc757654080da4bc",
+    "unitGrpcSha256": "766c80b983e25f3680d2e284b3c423dfc3ec9cb9dc686b04399fd71c679ed160",
+    "unitRestartSha256": "fe0f09aec309520b16fe7598f026f0668ee64ffd94f1b3c19befb02f4c15dccd"
+  },
+  "evidence": {
+    "restJwtUiConfig": "cdd55674e7a24d5658044bb56507b8f85f1e902afc16a82a376116db4c951669",
+    "grpcJwt": "fd13043d726d6e262e09288c6c3f4ba74dbab69c211d1ae719341a8f86f95570",
+    "restartPersistence": "d3c945b171c4c11a86d43ff9385fbb53a4e813592670a74806fc7bb07e30adb4",
+    "collectionProgress": "1b080f9b2a591d99c0e2edcbb2664726684338e1fc84931f4e1f8cad3430041c",
+    "pythonAbiPreflight": "5377829263c31613564bde302ed3167b8f9ee38956ff7262266a7701b9d1dc61",
+    "installedPackageIdentity": "cdc945fe98ab5b1e87fdf1e3289314ee7835f1b0cc867455949ab5b91b7e538e",
+    "pacmanIntegrity": "f86c6b6f6bf2450487b285a27d5d7fe74d445bda842fac28e7e508bdc7243995",
+    "packageArchiveBindings": "0ab1f56a6460db360e1e5e76f937af15793df29435a75cca318bf8e44649cfa8",
+    "installedPayloadBindings": "57df77a2ca636f1e5fd2e3acd1a2947ea36e0ab6b8ae4df83d9befd751c94b28",
+    "completeServerPayloadManifest": "63559cb13aa861d94ec23536e4f12cb166830d52d965a66731044659a529f56c",
+    "webUiTreeManifestFile": "4edbf0f8197f38f0ff2602df48bae2329101af08f7009cce49fe5994de222990",
+    "systemdEffectiveProperties": "ea9aa0ae2817c26fec98d0dbd6ae1b43270cde105742ca2cbd2ad839792bc19b",
+    "systemdSecurityAnalysis": "8fe5977c4df356714716b6a41bb5d1a1481cddf1ad64fbedeac9854a70489d88",
+    "kernelProcessStatus": "31e0eaa1420969541d602811ede7c44e2c3c7f0d16a196c0675e61498acf774e",
+    "cgroupLimits": "84d05f88fcd9221d37b93ae3b286f76c86db1c3b88d2bfd241c3bb5a65407d88",
+    "cgroupRuntimeFinal": "1e72eef94bbcc5506d7d196761c5983d013e3d32881bf81a3376a6167eb1654b",
+    "storageInitial": "29c771b2bc39c979943acab713dff143c61640f8a3be0c01171a646923b18fc4",
+    "storageAfterRestart": "0d057c56332304a0aff57b97ea034ab911beef6eaa6f55c55492933e2f5ddab0",
+    "listenersBeforeRestart": "f57da9ff7204454d76e7201f6f3b53b2933c4127bd73f495fe33e887d1925118",
+    "listenerLocalAddressSet": "4e89237da3dada97bfca0540f46770fc887414e8eac7df4d0c69aacea907cd9b",
+    "listenersAfterStop": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "networkInterfaces": "c6c7524e2111f22a9f7577211232d89a9e68cf5b9ed4a41ba77957c9771380a5",
+    "protectHomeFalsification": "626d9918e6c64442f3452e9eabd210962b97b7cff4ddfb81fa2d53c455318850",
+    "secretMissing": "84629655d23d2853b8e50342ef78083beee353d06e58f900188881f35ca4774f",
+    "secretEmpty": "49221cc6c323ee140a25f1fe071ff6fde78269eb7a3c14dc79d78ac8b49c8198",
+    "secretMalformed": "662aec45d90ffd14d403e6400f8ae63396d49f68882d6706e0bd5ca58ed9bbc7",
+    "secretWrongMode": "bd247482292d90b932419eeb2e7a7596ba99a8519540c850e1909baff2c0c85f",
+    "serviceMountNamespace": "fc7f970b5859a9371637fca622da0ca071fb91527fb8869135e47e5103d1e5f6",
+    "rootlessRuntime": "a17fcf0a2f50e2d495e4f90ce263410edc183add6c62699a2facbccf60410f74",
+    "rawContainerInspection": "e753d57121972a572c932411b61f7810bccb2a0b5d95ab9fc4766010be8fa472",
+    "containerStop": "b3711f65e75a20bf81e1b00a2b91cfdf2bf6909cc8d113334eb4e574c4280899",
+    "terminalRun": "8e227d746fdf28d382a1eb24cde670812df04ae5c8c9fa999e8541c3f7c5b6ac",
+    "installedPackageList": "8860dfb736fb4b700105bc7174b63d8ba5d9c8f04a199469ab4e9d95c2b15222",
+    "rawContainerId": "6565b15c6f01d1ee00c91261a95ab5584b8c72669bf0a1dcce27da47e054b6bf"
+  },
+  "supersedes": {
+    "sha256": "6d9ed1b86f13a9da9ede96e0213302c094577b25e847a3c91d6c7f7e61b891ae",
+    "reason": "Rebound both package archives and installed payload evidence to exact-image final candidates, with the browser-runtime-bound complement."
+  },
+  "privacy": {
+    "publicCopySafe": true,
+    "rawEvidenceRetainedSeparately": true,
+    "machineLocalPathsOmitted": true,
+    "credentialMaterialOmitted": true
+  }
+}

@@ -1,0 +1,128 @@
+{
+  "schema": "qdrant-g2-browser-evidence/v1",
+  "disposition": "accepted",
+  "supersedes": {
+    "sha256": "90d01244ad24e02e5aaa9a2a4f33a08a5f293969980c2a8b741ba10cf3801e43",
+    "reason": "Rebound both package archives to exact-image final candidates and bound the reviewed Chrome and Playwright runtime."
+  },
+  "privacy": {
+    "publicCopySafe": true,
+    "rawEvidenceRetainedSeparately": true,
+    "machineLocalPathsOmitted": true,
+    "credentialMaterialOmitted": true
+  },
+  "artifacts": {
+    "qdrant": {
+      "package": {
+        "name": "qdrant",
+        "version": "1.19.0-1",
+        "architecture": "x86_64",
+        "size": 28018464,
+        "sha256": "15f15fe2c0c774691bf3193bc8fc7883fa530c89db697f7c0bcc2720d231b011"
+      },
+      "binarySha256": "bf24efd92208fab1a8f4769a56158280b458b7a42850095ac875824571005f8c",
+      "sbomSha256": "b63c0949816cb55a4405529c7d3a02e39bb6b1d03cd757d0f6361c34ce4a8015",
+      "configSha256": "800fd7130542e5d61bc869962e6d7d59de2bccad261811d54e9b6745ffc991f4",
+      "serviceSha256": "610312cbba4efffa1d5422ab75154605000d4a4d177f77437ca00e2926ef4114",
+      "secretHelperSha256": "6a364ce0a745c6f02d38f3c39fc71e91fd31a2f33e63442cfa64b251fab545cd"
+    },
+    "qdrantWebUi": {
+      "package": {
+        "name": "qdrant-web-ui",
+        "version": "0.2.16-1",
+        "architecture": "any",
+        "size": 5719063,
+        "sha256": "f3d46e6ff09b8eb87b1465ee6a17a7cc35c574596b7fbf30518d3bc1d42fe10a"
+      },
+      "installedTree": {
+        "fileCount": 229,
+        "digestAlgorithm": "sha256-of-sorted-sha256-relative-path-lines",
+        "sha256": "b93d40367d5e2e30e3cac151adddbb934503218e8e44e798a7ed2807e03ac36b"
+      },
+      "sbomSha256": "cc7aefe7c6e20b5b235090d3dc1dd621d8e522a8b7f9f160d5c9861f0db67b63",
+      "cloudDataSha256": "38e0b9de817f645c4bec37c0d4a3e58baecccb040f5718dc069a72c7385a0bed"
+    }
+  },
+  "isolation": {
+    "boundary": "bubblewrap-user-mount-network-pid-uts-ipc",
+    "hostSensitiveRootsAbsent": [
+      "homeRoot",
+      "superuserHome",
+      "hostQdrantConfig",
+      "hostQdrantState"
+    ],
+    "networkInterfaces": [
+      "loopback"
+    ],
+    "nonLoopbackEgressDenied": true,
+    "unexpectedNetworkRequests": 0
+  },
+  "authentication": {
+    "adminSecretBrowserExposure": false,
+    "browserCredential": {
+      "kind": "JWT",
+      "subject": "qdrant-disposable-browser-acceptance",
+      "lifetimeSeconds": 300,
+      "adminSecret": false,
+      "access": [
+        {
+          "collection": "browser-fixture",
+          "role": "prw"
+        }
+      ]
+    },
+    "browserCredentialPersisted": false,
+    "adminSecretPersisted": false
+  },
+  "browserRuntime": {
+    "engine": "chromium",
+    "browserVersion": "151.0.7922.137",
+    "playwrightPythonVersion": "1.62.0",
+    "chromeLauncherSha256": "aea09d69ce7f24d5901f6bfb15dd44d0c856e793e0a498f8d8393ec7d2c308ec",
+    "chromeBinarySha256": "e1029a026f724e75741ea433ee5269e9fbef9bce82adcfeff1f2359e85afdcdf"
+  },
+  "dashboard": {
+    "status": 200,
+    "cloudMetadata": {
+      "requestPath": "/dashboard/cloud/data.json",
+      "requestObserved": true,
+      "status": 200,
+      "value": null
+    },
+    "contentSecurityPolicy": "default-src 'self'; base-uri 'none'; connect-src 'self'; font-src 'self' data:; form-action 'self'; frame-ancestors 'none'; img-src 'self' data: blob:; object-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:",
+    "referrerPolicy": "no-referrer",
+    "contentTypeOptions": "nosniff",
+    "frameOptions": "DENY",
+    "monacoEditorWorker": "executed",
+    "monacoJsonWorker": "executed",
+    "graphWorker": "executed",
+    "graphWasm": {
+      "algorithm": "UMAP",
+      "positions": 6,
+      "executed": true
+    },
+    "requestCount": 28,
+    "consoleErrors": 0,
+    "pageErrors": 0,
+    "siteDataCleared": true,
+    "profilePersisted": false
+  },
+  "cleanup": {
+    "qdrantProcessRemoved": true,
+    "browserProcessesRemovedWithNamespace": true,
+    "listenersRemoved": true,
+    "credentialMaterialRemoved": true
+  },
+  "evidence": {
+    "browserAcceptance": "9e810cf8268d5bac82a3a564773cbdc1435fb940d88b78525dad12a9eedd3b06",
+    "browserIsolation": "f5797b067bf39c9c3ecbcaa1ab373529e0beea18661b616687a39dff2d55f4c3",
+    "qdrantLog": "071b1d8231e9862b5f70a78c482d6b0bd39dbcd67753653b55cc778d2be26471",
+    "listenersAfterStop": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "packageArchiveBindings": "0e9f98120a10f877cfed086f0eafec869f77219408e61e1db1510fff360c28ea",
+    "payloadBindings": "375797c368afcdc3b9d47f2569b2a28d4a508783b3cd0a8efab11309510a9e99",
+    "hostLauncher": "423b9dde34752405cafe7a7ebe7ada88b39d71826adcc15212a4fa5cc94d1e56",
+    "namespaceHarness": "1faf61315e1e44d011990730184c788ec0a03d2e601b4886b73bd9db3eed3520",
+    "browserController": "be582df9004aac600a09966d375e0668092d3507e23e37cad1a8245421a9248e",
+    "tokenGenerator": "775bf4d4c8e8fdf61fa41f15f18cdfd8a63233e346ec9bce86ddc0d373370d48"
+  }
+}
