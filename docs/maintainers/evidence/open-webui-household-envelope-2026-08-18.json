@@ -1,0 +1,510 @@
+{
+  "schema": "open-webui-household-envelope/v1",
+  "disposition": "incomplete",
+  "scope": "Public-safe disposable measurement evidence for the accepted fresh Open WebUI native-RAG household boundary; not package, publication, production-limit, or deployment acceptance.",
+  "evidence_date": "2026-08-18",
+  "contract_refs": {
+    "issue_66": "https://github.com/nisavid/arch-pkgs/issues/66#issuecomment-5327054348",
+    "issue_67": "https://github.com/nisavid/arch-pkgs/issues/67#issuecomment-5332310242",
+    "issue_68": "https://github.com/nisavid/arch-pkgs/issues/68",
+    "prototype_commit": "6063df80ff34e91f642f3bd98cd5fec9418d4bd5",
+    "prototype_sha256": "3664ccc0c736920c645bb730cf60ef35d4369585d41d6621cf09527252d562d7"
+  },
+  "subject": {
+    "integrated_provider": false,
+    "publication_eligible": false,
+    "production_deployable": false,
+    "artifacts": {
+      "open_webui": {
+        "version": "0.11.0",
+        "commit": "f9590b8017199e56d5e953657e6498e3cef1d246",
+        "sdist_sha256": "e28c4fa997bf0a678caa7a0db6441da2e0c33b9a4120677f959ec3e45fccf9e9",
+        "wheel_sha256": "71c266be87d0fb2cd79d9172d0e86a3b1b59d550d7054622b831344df07d361b",
+        "alembic_head": "f0bd01a18a3d",
+        "packaged_candidate": false
+      },
+      "qdrant": {
+        "version": "1.19.0",
+        "package_size_bytes": 28018464,
+        "package_sha256": "15f15fe2c0c774691bf3193bc8fc7883fa530c89db697f7c0bcc2720d231b011"
+      },
+      "caddy": {
+        "version": "2.11.4-1.1",
+        "package_size_bytes": 14660413,
+        "package_sha256": "65a2fb6ea32f9d8313944b443c164b923092db0e3aa320321e1ca518ec8c0f1a"
+      },
+      "valkey": {
+        "version": "9.1.0-1",
+        "package_size_bytes": 1465234,
+        "package_sha256": "599177b7843027b58296b50e9f2302f438212365e51029f36dbd3f19385a64dd"
+      },
+      "zembed": {
+        "repository": "Abiray/zembed-1-Q4_K_M-GGUF",
+        "revision": "c1fed1b47f407fdf5ceb25d6919ac7e5237151c9",
+        "filename": "zembed-1-Q4_K_M.gguf",
+        "size_bytes": 2497280960,
+        "sha256": "3098f7963ca0563e8b39a55ee09a53697e57e49be5b9082892739bf24e075836",
+        "license_observed": "CC-BY-NC-4.0"
+      },
+      "zerank": {
+        "repository": "mradermacher/zerank-2-GGUF",
+        "revision": "c3c0d69a75b8dad9f56e99aec416d6aff12b85c7",
+        "filename": "zerank-2.Q8_0.gguf",
+        "size_bytes": 4280405664,
+        "sha256": "7b9ba05a0509151c911582a4d62b14003f6a4fafa0e7ccdf572c7598cde1c100",
+        "license_observed": "CC-BY-NC-4.0"
+      },
+      "llama_cpp_observed_runtime": {
+        "package": "llama.cpp-hip-gfx1151",
+        "version": "b9442-1",
+        "reported_build": "version 459 (baffb2e)",
+        "executable_size_bytes": 7672,
+        "executable_sha256": "9d3b6e271548ec85a67951c86a48f131e306d152c22e79266d050a240a9f2f78",
+        "server_impl_size_bytes": 9478760,
+        "server_impl_sha256": "6c93a4a9bfaa11065d89760142bcf8ce5761147ebe0c65221e09a4ad9e99215b",
+        "complete_dynamic_closure_bound": false
+      }
+    },
+    "configs": {
+      "open_webui_transport": "unix-socket-only",
+      "https_origin_count": 1,
+      "qdrant_runtime_role": "prw",
+      "qdrant_multitenancy": true,
+      "provider_shape_measured": "loopback measurement sidecar with two fixed llama.cpp backends",
+      "provider_shape_accepted": "direct patched Lemonade",
+      "provider_substitution": true
+    }
+  },
+  "provenance": {
+    "current_plan_contract_owns_input_set": true,
+    "measured_run_executed_through_current_plan": false,
+    "measured_finalization_available": false,
+    "durable_execution_recipe": false,
+    "digest_bound_raw_samples": false,
+    "digest_bound_per_obligation_receipts": false,
+    "private_temporary_source_retained": true,
+    "runtime_observations_are_provisional": true
+  },
+  "environment": {
+    "architecture": "x86_64",
+    "processor": "AMD Ryzen AI MAX+ 395 with Radeon 8060S",
+    "logical_cpu_count": 32,
+    "memory_bytes": 133617373184,
+    "provider_execution": "CPU-only",
+    "state": "synthetic and disposable",
+    "live_application_state_contacted": false,
+    "workload_isolation": {
+      "dedicated_cgroup": false,
+      "dedicated_host": false,
+      "non_loopback_egress_denied_by_kernel": false,
+      "unrelated_host_services_quiesced": false
+    }
+  },
+  "fixture": {
+    "schema": "open-webui-household-fixture/v1",
+    "corpus_id": "open-webui-household-measurement-v1",
+    "fresh_database": true,
+    "legacy_data_imported": false,
+    "principals": 4,
+    "group_count": 1,
+    "small_file_count": 25,
+    "accepted_file_size_bytes": 262144000,
+    "rejected_file_size_bytes": 262144001,
+    "canonical_fact": "The brass key opens the seed cabinet.",
+    "canonical_citation": "Winter Garden Handbook section 3",
+    "collections": [
+      "open-webui-rag-v1_memories",
+      "open-webui-rag-v1_knowledge",
+      "open-webui-rag-v1_files",
+      "open-webui-rag-v1_web-search",
+      "open-webui-rag-v1_hash-based"
+    ],
+    "vector_schema": {
+      "dimensions": 2560,
+      "distance": "Cosine",
+      "payload_indexes": [
+        "tenant_id",
+        "metadata.hash",
+        "metadata.file_id"
+      ]
+    }
+  },
+  "protocol": {
+    "embedding_pooling": {
+      "strategy": "last-token",
+      "llama_cpp_value": "last",
+      "gguf_metadata": {
+        "key": "qwen3.pooling_type",
+        "value": 3
+      },
+      "required_arguments": [
+        "--embedding",
+        "--pooling",
+        "last"
+      ]
+    },
+    "embedding_input_types": [
+      "query",
+      "document"
+    ],
+    "embedding_dimensions": 2560,
+    "reranking": {
+      "selected_token": "Yes",
+      "selected_token_id": 9454,
+      "score_mapping": "sigmoid(raw_logit / 5)"
+    },
+    "open_webui_worker_count": 1,
+    "file_size_units": "MiB",
+    "maximum_file_mib": 250,
+    "configured_file_count": 25
+  },
+  "observations": {
+    "restart_like_startup": {
+      "sample_count": 5,
+      "samples_ms": [
+        17308.92,
+        15110.0,
+        15126.0,
+        14938.0,
+        15213.984
+      ],
+      "median_ms": 15126.0,
+      "p95_ms": 17308.92,
+      "max_ms": 17308.92,
+      "fresh_start_floor_satisfied": false
+    },
+    "resource_snapshot": {
+      "aggregate_only": true,
+      "summed_process_rss_bytes": 12004040704,
+      "interpretation": "Provisional only; summed RSS can double-count shared pages and unrelated host activity contaminated CPU sampling.",
+      "production_limit_input": false
+    },
+    "embedding_canary": {
+      "pooling": "last",
+      "dimensions": 2560,
+      "query_norm": 1.0,
+      "relevant_document_norm": 1.0,
+      "unrelated_document_norm": 1.0,
+      "relevant_cosine": 0.679498783,
+      "unrelated_cosine": 0.334305462,
+      "margin": 0.345193321,
+      "status": "pass"
+    },
+    "query_concurrency_1": {
+      "pooling": "last",
+      "aggregate_only": true,
+      "count": 30,
+      "concurrency": 1,
+      "wall_seconds": 4.466589236,
+      "requests_per_second": 6.716534343,
+      "minimum_seconds": 0.122657978,
+      "median_seconds": 0.128180409,
+      "p95_seconds": 0.138063631,
+      "maximum_seconds": 0.734750647
+    },
+    "query_concurrency_3": {
+      "pooling": "last",
+      "aggregate_only": true,
+      "count": 30,
+      "concurrency": 3,
+      "wall_seconds": 2.744666571,
+      "requests_per_second": 10.930289426,
+      "minimum_seconds": 0.202910338,
+      "median_seconds": 0.268153444,
+      "p95_seconds": 0.287287278,
+      "maximum_seconds": 0.363197866
+    },
+    "sustained_query_concurrency_3": {
+      "pooling": "last",
+      "aggregate_only": true,
+      "count": 300,
+      "concurrency": 3,
+      "wall_seconds": 26.402677645,
+      "requests_per_second": 11.362483913,
+      "minimum_seconds": 0.20981371,
+      "median_seconds": 0.263018826,
+      "p95_seconds": 0.277223707,
+      "maximum_seconds": 0.367980915
+    },
+    "cited_chat": {
+      "pooling": "last",
+      "nonstream_total_seconds": 0.140853,
+      "stream_total_seconds": 0.153349,
+      "stream_event_count": 4,
+      "citation_count": 1,
+      "canonical_fact_present": true,
+      "finite_rerank_score": true
+    },
+    "long_response": {
+      "content_bytes": 262144,
+      "normal_time_to_first_byte_seconds": 0.017077,
+      "normal_total_seconds": 0.017489,
+      "stream_time_to_first_byte_seconds": 0.012785,
+      "stream_total_seconds": 0.013179,
+      "stream_event_count": 66,
+      "stream_reconstructed_exactly": true
+    },
+    "socket_io": {
+      "authenticated_websocket_upgrade": true,
+      "tls_peer_and_hostname_verified": true,
+      "upgrade_ms": 4.76,
+      "authenticated_round_trip_ms": 6.522,
+      "ping_interval_ms": 25000,
+      "ping_timeout_ms": 20000,
+      "maximum_payload_bytes": 1000000,
+      "session_pool_empty_after_close": true
+    },
+    "upload_size_boundary": {
+      "accepted": {
+        "size_bytes": 262144000,
+        "http_status": 200,
+        "total_seconds": 1.038328,
+        "peak_rss_delta_bytes": 273743872
+      },
+      "rejected": {
+        "size_bytes": 262144001,
+        "http_status": 413,
+        "total_seconds": 0.659941,
+        "peak_rss_delta_bytes": 274083840
+      }
+    },
+    "file_count_boundary": {
+      "configured_count": 25,
+      "enforcement": "frontend-only",
+      "accepted_batch_upload_attempts": 25,
+      "rejected_batch_count": 26,
+      "rejected_batch_upload_attempts": 0,
+      "raw_api_enforcement": false,
+      "persisted_chat_attachment_gap": true
+    },
+    "embedding_outage": {
+      "upload_http_status": 200,
+      "eventual_file_status": "failed",
+      "backend_error_status": 502,
+      "stale_vector_created": false,
+      "retry_after_restore_succeeded": true,
+      "cleanup_restored_point_counts": true
+    },
+    "reranker_outage": {
+      "ordinary_chat_http_status": 200,
+      "rag_retrieval_http_status": 200,
+      "rag_chat_http_status": 200,
+      "rag_citation_returned": true,
+      "rerank_score": null,
+      "accepted_failure_contract_satisfied": false
+    },
+    "qdrant_footprint": {
+      "apparent_storage_bytes": 3016764367,
+      "point_counts": {
+        "open-webui-rag-v1_memories": 0,
+        "open-webui-rag-v1_knowledge": 2,
+        "open-webui-rag-v1_files": 0,
+        "open-webui-rag-v1_web-search": 0,
+        "open-webui-rag-v1_hash-based": 0
+      },
+      "storage_growth_curve_measured": false
+    },
+    "quiesced_snapshot": {
+      "collection_count": 5,
+      "total_snapshot_bytes": 2820608,
+      "durations_ms": {
+        "open-webui-rag-v1_memories": 52,
+        "open-webui-rag-v1_knowledge": 58,
+        "open-webui-rag-v1_files": 53,
+        "open-webui-rag-v1_web-search": 50,
+        "open-webui-rag-v1_hash-based": 51
+      }
+    },
+    "quiesced_backup": {
+      "total_file_bytes": 3489175,
+      "manifest_file_count": 20,
+      "sqlite_quick_check": "ok",
+      "sqlite_wal_checkpointed": true,
+      "valkey_rdb_included": true,
+      "uploads_included": true,
+      "five_qdrant_snapshots_included": true,
+      "provider_key_included": true,
+      "qdrant_runtime_token_included": true,
+      "stable_open_webui_keys_included": false,
+      "valkey_credential_and_config_included": false,
+      "complete_credential_sources_included": false,
+      "external_fixture_configuration_reused_for_restore": true,
+      "tls_continuity_included": true
+    },
+    "restore_probe": {
+      "sample_count": 1,
+      "qdrant_restore_durations_ms": {
+        "open-webui-rag-v1_memories": 122,
+        "open-webui-rag-v1_knowledge": 129,
+        "open-webui-rag-v1_files": 126,
+        "open-webui-rag-v1_web-search": 124,
+        "open-webui-rag-v1_hash-based": 120
+      },
+      "qdrant_schema_exact": true,
+      "sqlite_restored": true,
+      "valkey_restored": true,
+      "uploads_restored": true,
+      "open_webui_ready_over_new_unix_socket": true,
+      "external_https_route_reopened": false,
+      "restored_retrieval_ms": 241,
+      "canonical_fact_retrieved": true,
+      "finite_rerank_score": true,
+      "old_bearer_session_accepted": true
+    },
+    "migration": {
+      "fresh_alembic_initialization_to_exact_head": true,
+      "legacy_runtime_upgrade_measured": false,
+      "legacy_runtime_upgrade_in_scope": false,
+      "versioned_generation_rebuild_measured": false
+    }
+  },
+  "obligations": [
+    {
+      "id": "exact_subject_identity",
+      "status": "inconclusive",
+      "reason": "The Open WebUI closure and fixed provider sidecar were representative but not accepted package artifacts, and the integrated patched Lemonade service identity was absent."
+    },
+    {
+      "id": "fresh_schema_head",
+      "status": "pass"
+    },
+    {
+      "id": "unix_socket_only",
+      "status": "pass"
+    },
+    {
+      "id": "five_collection_schema",
+      "status": "pass"
+    },
+    {
+      "id": "scoped_qdrant_runtime_authority",
+      "status": "inconclusive",
+      "reason": "The configured role was prw, but no public digest-bound authorization receipt was retained."
+    },
+    {
+      "id": "embedding_semantic_canary",
+      "status": "pass"
+    },
+    {
+      "id": "reranking_semantic_canary",
+      "status": "inconclusive",
+      "reason": "The run returned finite rerank scores, but no public digest-bound semantic-canary receipt was retained."
+    },
+    {
+      "id": "private_owner_retrieval",
+      "status": "inconclusive",
+      "reason": "Owner retrieval was observed, but its public digest-bound access receipt was not retained."
+    },
+    {
+      "id": "explicit_sharing_and_revocation",
+      "status": "inconclusive",
+      "reason": "The durable record contains no public digest-bound share and revoke receipt."
+    },
+    {
+      "id": "anonymous_denial_before_lookup",
+      "status": "inconclusive",
+      "reason": "The durable record contains no public digest-bound denial-before-lookup receipt."
+    },
+    {
+      "id": "accepted_and_rejected_upload_boundaries",
+      "status": "pass"
+    },
+    {
+      "id": "failed_index_has_no_stale_vector_or_citation",
+      "status": "pass"
+    },
+    {
+      "id": "reranker_failure_isolates_rag",
+      "status": "fail",
+      "reason": "Native retrieval and document-grounded chat remained available with a null rerank score while the reranker was unavailable."
+    },
+    {
+      "id": "websocket_sse_and_long_response",
+      "status": "pass"
+    },
+    {
+      "id": "whole_runtime_restore",
+      "status": "fail",
+      "reason": "Persistent state restored, but external fixture secrets and configuration were reused rather than restored as a bound tuple, and the absent session-epoch authority left a pre-backup authenticated session valid."
+    },
+    {
+      "id": "versioned_generation_rollback",
+      "status": "pending"
+    },
+    {
+      "id": "old_session_rejection",
+      "status": "fail",
+      "reason": "A pre-backup authenticated session remained valid after restore."
+    },
+    {
+      "id": "no_live_state_contact",
+      "status": "pass"
+    },
+    {
+      "id": "no_unexpected_egress",
+      "status": "inconclusive",
+      "reason": "Application offline controls were set, but the fixture did not run in a kernel-enforced no-egress namespace."
+    },
+    {
+      "id": "runtime_quiescence_cleanup",
+      "status": "pass"
+    }
+  ],
+  "limitations": [
+    "The exact integrated patched Lemonade provider binary and configuration were not measured.",
+    "Open WebUI 0.11.0 ran from an exact source environment rather than an accepted package candidate.",
+    "The five startup observations are restart-like and do not satisfy the five-fresh-start floor.",
+    "Query records retain aggregate count and summary values, not digest-bound per-request samples.",
+    "Summed RSS can double-count shared pages, and CPU sampling was contaminated by unrelated host services.",
+    "The CPU-only provider path is not evidence for the intended accelerated production provider envelope.",
+    "Qdrant bytes establish an apparent footprint, not growth over corpus sizes and compaction.",
+    "Heavy indexing, cache behavior, versioned generation rebuild, five restore cycles, and five rollback cycles remain unmeasured or below their sample floors.",
+    "Reranker outage violates the accepted fail-closed native-RAG behavior.",
+    "Restored sessions remain valid because the external monotonic session-epoch helper is not implemented.",
+    "Kernel-enforced no-egress evidence is absent.",
+    "The measured llama.cpp executable and server implementation are identified, but their complete dynamic runtime closure is not bound.",
+    "The restore reused external fixture secrets and configuration; complete credential continuity was not measured.",
+    "No public digest-bound execution recipe, raw sample set, or per-obligation receipt was retained, so runtime observations remain provisional.",
+    "The plan-only tool cannot emit a measured disposition; an executable verifier must be added with durable evidence before that transition exists.",
+    "An incompatible exploratory embedding-pooling configuration was excluded from every result in this record."
+  ],
+  "cleanup": {
+    "status": "runtime-quiesced",
+    "fixture_owned_processes_remaining": 0,
+    "fixture_owned_listeners_remaining": 0,
+    "fixture_owned_socket_files_remaining": 0,
+    "disposable_data_removed": false,
+    "temporary_evidence_retained_for_review": true,
+    "live_host_services_changed": false
+  },
+  "public_safety": {
+    "synthetic_identities_only": true,
+    "private_paths_included": false,
+    "private_hostnames_or_addresses_included": false,
+    "credentials_or_headers_included": false,
+    "raw_logs_included": false,
+    "production_data_included": false
+  },
+  "evidence_files": [
+    {
+      "path": "tools/measure_open_webui_household.py",
+      "size_bytes": 30832,
+      "sha256": "8b9be6a61a6005d7b059459de0f716fcc340136a2929836117ec306e21948fc8"
+    },
+    {
+      "path": "tools/fixtures/open-webui-household/provider.py",
+      "size_bytes": 17870,
+      "sha256": "82d35955227f955f2fc6e4a62fd0284f2163a68b6b2d3587de05dd11fd5a5b6b"
+    },
+    {
+      "path": "tools/fixtures/open-webui-household/open-webui-0.11.0-pristine-init.py",
+      "size_bytes": 3266,
+      "sha256": "11cd2fad929db12c687795239ab3b6af1b5ea6f3ad7363deedfabf9651dd22d4"
+    },
+    {
+      "path": "tools/fixtures/open-webui-household/0001-open-webui-0.11-measurement-uds.patch",
+      "size_bytes": 1568,
+      "sha256": "ab095e77ba03ce3244ee44397c4bb84b09cdf0638a13c3ff317f63752c4d796a"
+    }
+  ]
+}
