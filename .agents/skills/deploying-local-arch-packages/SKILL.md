@@ -38,14 +38,23 @@ or the exact promoted artifact identity served by the verified published
 repository in production. A matching version is not identity evidence. Do not
 rebuild at either boundary, and verify the resulting installed identity.
 
-Before hashing or installing at either boundary, copy or materialize the
-archive into a fresh, uniquely named handoff directory controlled by the
-transaction operator. Reject symlinks, record the resolved path, ownership, and
-mode, and make the directory and archive unwritable to every other principal
-for the whole transaction. Hash the staged archive after materialization,
-install that same literal path without rebuilding, then recheck its path,
-metadata, and SHA-256 after the transaction. A reusable or world-writable path
-is not an accepted handoff.
+Before hashing or installing at either boundary, use
+`handling-privileged-steps` to copy or reflink the archive into a fresh
+transaction directory under a root-owned staging root that the invoking UID
+cannot write. The transaction directory must be owned by `root:root` with mode
+`0700`. The staged archive must be a regular, non-symlink file owned by
+`root:root`, have mode `0400`, and have a link count of exactly one. Never hand
+pacman a user-owned path or a path whose directory or archive the invoking UID
+can rename, replace, link, or modify.
+
+After materialization, record the archive's canonical path, device, inode,
+size, UID, GID, mode, link count, and SHA-256. Immediately before invoking
+pacman, require that complete tuple and digest to match, then install the same
+literal path without rebuilding or yielding the privileged transaction. Keep
+the directory and archive ownership and modes unchanged until the package
+transaction and lane verifier finish, then recheck the tuple and SHA-256. Any
+mismatch preserves the current lifecycle milestone and fails the handoff
+closed.
 
 At acceptance, require the handoff SHA-256 to equal the candidate record. At
 production, materialize the archive served by the verified published
