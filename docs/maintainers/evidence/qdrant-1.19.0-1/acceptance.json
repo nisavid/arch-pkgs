@@ -12,8 +12,8 @@
     "g0_g1": {
       "name": "g0-g1.json",
       "schema": "arch-pkgs.qdrant.g0-g1.final3.v1",
-      "sha256": "a0e7fc2d8fe0fda193567301ac55ed29c84ab109704891d83a52648053fc5e97",
-      "size": 43404,
+      "sha256": "0adebad8ba4bcceab3224f9c9cb5845bcda57644154bcaae68a40c8c222af058",
+      "size": 44370,
       "role": "Authoritative G0 source, provenance, builder, and release-delta evidence plus G1 exact package metadata and installed-payload evidence.",
       "accepted_gate_scope": [
         "G0",
@@ -76,8 +76,12 @@
   "repository_source": {
     "base_commit": "6f0dc146ab4b533e43cff683ab0e0958f4604896",
     "status": "uncommitted review candidate",
-    "complete_source_inventory_bound_by": "a0e7fc2d8fe0fda193567301ac55ed29c84ab109704891d83a52648053fc5e97",
+    "complete_source_inventory_bound_by": "0adebad8ba4bcceab3224f9c9cb5845bcda57644154bcaae68a40c8c222af058",
     "frozen_files": {
+      ".gitignore": {
+        "sha256": "5454ae2b33c165569d76eb4b92b775a2b4b93e3922ed1e5a4a1a5b030daa6939",
+        "size": 578
+      },
       "containers/qdrant-builder/Containerfile": {
         "sha256": "df1ce8916a482f886f21ff03039f0741c1a6b3290be2321f0fc690ced5fb300f",
         "size": 342
@@ -115,8 +119,8 @@
         "size": 112941
       },
       "tests/test_qdrant_evidence.py": {
-        "sha256": "d3b67ddbb769995aa998b0a14691e2da988a452f7bccbb7d302a0541838e25c1",
-        "size": 16217
+        "sha256": "7177501789d9878cdb9dd2acef2715e8f78f1ae97d85ae6cf940971f52ac2332",
+        "size": 31790
       },
       "docs/maintainers/qdrant-migration-acceptance.md": {
         "sha256": "0cba108d380d7bb14593bff3fe1884f8655baf88daae1b236458c1964aa79bb6",
