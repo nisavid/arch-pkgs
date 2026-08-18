@@ -53,6 +53,13 @@ The ordinary updater and publisher share one repository-writer lock. They fail
 closed instead of snapshotting or promoting staging while another writer is
 active.
 
+`tools/retire_chatgpt.zsh` holds the candidate writer lock at
+`${repo_dir}.writer.lock` through candidate construction and promotion. The
+lock serializes cooperating repository tools. The invoking UID is trusted, and
+observed identity drift fails closed. This does not provide strict inode-bound
+deletion: a malicious same-UID process can race final pathname removal, just as
+it can replace a checkout-local tool.
+
 When publishing an application package with local dependencies, such as
 `hayhooks`, build and refresh the dependency package directories too.
 

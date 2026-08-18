@@ -5,6 +5,7 @@ import os
 import shutil
 import stat
 import subprocess
+import sys
 import tarfile
 import tempfile
 import textwrap
@@ -14,8 +15,30 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RETIRE = REPO_ROOT / "tools" / "retire_chatgpt.zsh"
-REQUIRED_TOOLS = ("bsdtar", "repo-add", "repo-remove", "zsh", "zstd")
+REQUIRED_TOOLS = (
+    "bsdtar",
+    "python3",
+    "repo-add",
+    "repo-remove",
+    "zsh",
+    "zstd",
+)
 MISSING_TOOLS = [tool for tool in REQUIRED_TOOLS if shutil.which(tool) is None]
+
+
+def _resolve_real_binary(name: str) -> str:
+    binary = shutil.which(name)
+    if binary is None:
+        raise AssertionError(f"required test binary is unavailable: {name}")
+    return binary
+
+
+def _python_fake(source: str, *, real_tools: tuple[str, ...] = ()) -> str:
+    resolved_tools = "".join(
+        f"real_{name.replace('-', '_')} = {_resolve_real_binary(name)!r}\n"
+        for name in real_tools
+    )
+    return f"#!{sys.executable}\n{resolved_tools}{textwrap.dedent(source)}"
 
 
 def _sha256(path: Path) -> str:
@@ -275,6 +298,7 @@ class ChatGPTRetirementTests(unittest.TestCase):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=environment,
+            check=False,
         )
 
     def _run_promotion_transition(
@@ -286,15 +310,18 @@ class ChatGPTRetirementTests(unittest.TestCase):
         corrupt_after_move: bool = False,
         signal_after_move: bool = False,
         race_destination: bool = False,
+        replace_failed_identity: bool = False,
+        fail_failed_move_after_effect: bool = False,
+        symlink_promoted_destination: bool = False,
+        symlink_retained_stage: bool = False,
     ) -> subprocess.CompletedProcess[str]:
         self._seed_complete_repository()
         fake_bin = self.root / "bin"
         fake_bin.mkdir()
         _write_executable(
             fake_bin / "mv",
-            textwrap.dedent(
+            _python_fake(
                 f"""\
-                #!/usr/bin/python3
                 import os
                 import pathlib
                 import shutil
@@ -308,11 +335,19 @@ class ChatGPTRetirementTests(unittest.TestCase):
                 corrupt_after_move = {corrupt_after_move!r}
                 signal_after_move = {signal_after_move!r}
                 race_destination = {race_destination!r}
+                replace_failed_identity = {replace_failed_identity!r}
+                fail_failed_move_after_effect = {fail_failed_move_after_effect!r}
+                symlink_promoted_destination = {symlink_promoted_destination!r}
+                symlink_retained_stage = {symlink_retained_stage!r}
                 source = pathlib.Path(sys.argv[-2])
                 destination = pathlib.Path(sys.argv[-1])
                 is_promotion = (
                     source.name.startswith(".candidate.retire-stage.")
                     and destination.name == "candidate"
+                )
+                is_failed_move = (
+                    source.name == "candidate"
+                    and destination.name.startswith(".candidate.retire-failed.")
                 )
                 if is_promotion and no_effect:
                     raise SystemExit(0)
@@ -320,7 +355,20 @@ class ChatGPTRetirementTests(unittest.TestCase):
                     destination.mkdir()
                     (destination / "other-writer").write_bytes(b"unrelated\\n")
                     raise SystemExit(1)
-                result = subprocess.run(["/usr/bin/mv", *sys.argv[1:]])
+                if is_promotion and symlink_retained_stage:
+                    owned = source.with_name(f"{{source.name}}.owned")
+                    source.rename(owned)
+                    source.symlink_to(owned, target_is_directory=True)
+                    raise SystemExit(0)
+                result = subprocess.run([real_mv, *sys.argv[1:]])
+                if (
+                    is_promotion
+                    and result.returncode == 0
+                    and symlink_promoted_destination
+                ):
+                    owned = destination.with_name(f"{{destination.name}}.owned")
+                    destination.rename(owned)
+                    destination.symlink_to(owned, target_is_directory=True)
                 if is_promotion and result.returncode == 0 and replace_identity:
                     moved = destination.with_name(f"{{destination.name}}.moved")
                     destination.rename(moved)
@@ -332,8 +380,19 @@ class ChatGPTRetirementTests(unittest.TestCase):
                     os.kill(os.getppid(), signal.SIGTERM)
                 if is_promotion and result.returncode == 0 and fail_after_move:
                     raise SystemExit(77)
+                if is_failed_move and result.returncode == 0 and replace_failed_identity:
+                    owned = destination.with_name(f"{{destination.name}}.owned")
+                    destination.rename(owned)
+                    shutil.copytree(owned, destination, symlinks=True)
+                if (
+                    is_failed_move
+                    and result.returncode == 0
+                    and fail_failed_move_after_effect
+                ):
+                    raise SystemExit(77)
                 raise SystemExit(result.returncode)
-                """
+                """,
+                real_tools=("mv",),
             ),
         )
         environment = os.environ.copy()
@@ -518,9 +577,8 @@ class ChatGPTRetirementTests(unittest.TestCase):
         fake_bin.mkdir()
         _write_executable(
             fake_bin / "repo-remove",
-            textwrap.dedent(
+            _python_fake(
                 """\
-                #!/usr/bin/env python3
                 import os
                 import pathlib
                 import shutil
@@ -528,7 +586,7 @@ class ChatGPTRetirementTests(unittest.TestCase):
                 import sys
                 import tempfile
 
-                result = subprocess.run(["/usr/bin/repo-remove", *sys.argv[1:]])
+                result = subprocess.run([real_repo_remove, *sys.argv[1:]])
                 if result.returncode != 0 or sys.argv[-1] != "chatgpt":
                     raise SystemExit(result.returncode)
                 database = pathlib.Path(sys.argv[-2])
@@ -536,7 +594,7 @@ class ChatGPTRetirementTests(unittest.TestCase):
                     extracted = pathlib.Path(temporary) / "index"
                     extracted.mkdir()
                     subprocess.run(
-                        ["/usr/bin/bsdtar", "-xf", str(database), "-C", str(extracted)],
+                        [real_bsdtar, "-xf", str(database), "-C", str(extracted)],
                         check=True,
                     )
                     description = next(extracted.glob("example-*/desc"))
@@ -546,7 +604,7 @@ class ChatGPTRetirementTests(unittest.TestCase):
                     replacement = database.with_name(f"{database.name}.replacement")
                     subprocess.run(
                         [
-                            "/usr/bin/bsdtar",
+                            real_bsdtar,
                             "--zstd",
                             "-cf",
                             str(replacement),
@@ -557,7 +615,8 @@ class ChatGPTRetirementTests(unittest.TestCase):
                         check=True,
                     )
                     os.replace(replacement, database)
-                """
+                """,
+                real_tools=("repo-remove", "bsdtar"),
             ),
         )
         environment = os.environ.copy()
@@ -575,16 +634,15 @@ class ChatGPTRetirementTests(unittest.TestCase):
         fake_bin.mkdir()
         _write_executable(
             fake_bin / "repo-remove",
-            textwrap.dedent(
+            _python_fake(
                 """\
-                #!/usr/bin/env python3
                 import os
                 import pathlib
                 import subprocess
                 import sys
                 import tempfile
 
-                result = subprocess.run(["/usr/bin/repo-remove", *sys.argv[1:]])
+                result = subprocess.run([real_repo_remove, *sys.argv[1:]])
                 if result.returncode != 0 or sys.argv[-1] != "chatgpt":
                     raise SystemExit(result.returncode)
                 database = pathlib.Path(sys.argv[-2])
@@ -592,7 +650,7 @@ class ChatGPTRetirementTests(unittest.TestCase):
                     extracted = pathlib.Path(temporary) / "index"
                     extracted.mkdir()
                     subprocess.run(
-                        ["/usr/bin/bsdtar", "-xf", str(database), "-C", str(extracted)],
+                        [real_bsdtar, "-xf", str(database), "-C", str(extracted)],
                         check=True,
                     )
                     description = next(extracted.glob("example-*/desc"))
@@ -604,7 +662,7 @@ class ChatGPTRetirementTests(unittest.TestCase):
                     replacement = database.with_name(f"{database.name}.replacement")
                     subprocess.run(
                         [
-                            "/usr/bin/bsdtar",
+                            real_bsdtar,
                             "--zstd",
                             "-cf",
                             str(replacement),
@@ -615,7 +673,8 @@ class ChatGPTRetirementTests(unittest.TestCase):
                         check=True,
                     )
                     os.replace(replacement, database)
-                """
+                """,
+                real_tools=("repo-remove", "bsdtar"),
             ),
         )
         environment = os.environ.copy()
@@ -633,16 +692,15 @@ class ChatGPTRetirementTests(unittest.TestCase):
         fake_bin.mkdir()
         _write_executable(
             fake_bin / "repo-remove",
-            textwrap.dedent(
+            _python_fake(
                 """\
-                #!/usr/bin/env python3
                 import os
                 import pathlib
                 import subprocess
                 import sys
                 import tempfile
 
-                result = subprocess.run(["/usr/bin/repo-remove", *sys.argv[1:]])
+                result = subprocess.run([real_repo_remove, *sys.argv[1:]])
                 if result.returncode != 0 or sys.argv[-1] != "chatgpt":
                     raise SystemExit(result.returncode)
                 database = pathlib.Path(sys.argv[-2])
@@ -650,7 +708,7 @@ class ChatGPTRetirementTests(unittest.TestCase):
                     extracted = pathlib.Path(temporary) / "index"
                     extracted.mkdir()
                     subprocess.run(
-                        ["/usr/bin/bsdtar", "-xf", str(database), "-C", str(extracted)],
+                        [real_bsdtar, "-xf", str(database), "-C", str(extracted)],
                         check=True,
                     )
                     package_directory = next(extracted.glob("example-*"))
@@ -662,7 +720,7 @@ class ChatGPTRetirementTests(unittest.TestCase):
                     replacement = database.with_name(f"{database.name}.replacement")
                     subprocess.run(
                         [
-                            "/usr/bin/bsdtar",
+                            real_bsdtar,
                             "--zstd",
                             "-cf",
                             str(replacement),
@@ -673,7 +731,8 @@ class ChatGPTRetirementTests(unittest.TestCase):
                         check=True,
                     )
                     os.replace(replacement, database)
-                """
+                """,
+                real_tools=("repo-remove", "bsdtar"),
             ),
         )
         environment = os.environ.copy()
@@ -691,17 +750,17 @@ class ChatGPTRetirementTests(unittest.TestCase):
         fake_bin.mkdir()
         _write_executable(
             fake_bin / "repo-remove",
-            textwrap.dedent(
+            _python_fake(
                 """\
-                #!/usr/bin/env python3
                 import subprocess
                 import sys
 
-                result = subprocess.run(["/usr/bin/repo-remove", *sys.argv[1:]])
+                result = subprocess.run([real_repo_remove, *sys.argv[1:]])
                 if result.returncode == 0 and sys.argv[-1] == "chatgpt":
                     raise SystemExit(77)
                 raise SystemExit(result.returncode)
-                """
+                """,
+                real_tools=("repo-remove",),
             ),
         )
         environment = os.environ.copy()
@@ -719,21 +778,21 @@ class ChatGPTRetirementTests(unittest.TestCase):
         fake_bin.mkdir()
         _write_executable(
             fake_bin / "repo-remove",
-            textwrap.dedent(
+            _python_fake(
                 f"""\
-                #!/usr/bin/env python3
                 import pathlib
                 import subprocess
                 import sys
 
-                result = subprocess.run(["/usr/bin/repo-remove", *sys.argv[1:]])
+                result = subprocess.run([real_repo_remove, *sys.argv[1:]])
                 if result.returncode == 0:
                     database = pathlib.Path(sys.argv[-2])
                     alias = database.with_name("nisavid.db")
                     alias.unlink(missing_ok=True)
                     alias.symlink_to({staged['example'].name!r})
                 raise SystemExit(result.returncode)
-                """
+                """,
+                real_tools=("repo-remove",),
             ),
         )
         environment = os.environ.copy()
@@ -751,14 +810,13 @@ class ChatGPTRetirementTests(unittest.TestCase):
         fake_bin.mkdir()
         _write_executable(
             fake_bin / "cmp",
-            textwrap.dedent(
+            _python_fake(
                 f"""\
-                #!/usr/bin/env python3
                 import pathlib
                 import subprocess
                 import sys
 
-                result = subprocess.run(["/usr/bin/cmp", *sys.argv[1:]])
+                result = subprocess.run([real_cmp, *sys.argv[1:]])
                 if result.returncode == 0 and any(
                     value.endswith("candidate.db-records.sorted") for value in sys.argv
                 ):
@@ -767,7 +825,8 @@ class ChatGPTRetirementTests(unittest.TestCase):
                     alias.unlink()
                     alias.symlink_to({staged['example'].name!r})
                 raise SystemExit(result.returncode)
-                """
+                """,
+                real_tools=("cmp",),
             ),
         )
         environment = os.environ.copy()
@@ -785,19 +844,19 @@ class ChatGPTRetirementTests(unittest.TestCase):
         fake_bin.mkdir()
         _write_executable(
             fake_bin / "cp",
-            textwrap.dedent(
+            _python_fake(
                 """\
-                #!/usr/bin/env python3
                 import pathlib
                 import subprocess
                 import sys
 
-                result = subprocess.run(["/usr/bin/cp", *sys.argv[1:]])
+                result = subprocess.run([real_cp, *sys.argv[1:]])
                 if result.returncode == 0 and "-a" in sys.argv:
                     source = pathlib.Path(sys.argv[-2]).resolve()
                     (source / "race-marker").write_bytes(b"changed during copy\\n")
                 raise SystemExit(result.returncode)
-                """
+                """,
+                real_tools=("cp",),
             ),
         )
         environment = os.environ.copy()
@@ -831,9 +890,48 @@ class ChatGPTRetirementTests(unittest.TestCase):
         )
 
         self.assertEqual(result.returncode, 2, result.stderr)
-        self.assertIn("could not identify the retirement candidate", result.stderr)
+        self.assertIn(
+            "could not identify the retirement candidate after promotion",
+            result.stderr,
+        )
         self.assertIn("recovery manifests preserved at:", result.stderr)
         self.assertTrue(self.candidate.is_dir())
+        self.assertTrue(Path(f"{self.candidate}.writer.lock").is_dir())
+
+    def test_symlinked_promoted_destination_is_indeterminate(self):
+        result = self._run_promotion_transition(
+            symlink_promoted_destination=True
+        )
+
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn(
+            "could not identify the retirement candidate after promotion",
+            result.stderr,
+        )
+        self.assertTrue(self.candidate.is_symlink(), result.stderr)
+        self.assertTrue(
+            (self.root / "candidate.owned/nisavid.db.tar.zst").is_file(),
+            result.stderr,
+        )
+        self.assertTrue(Path(f"{self.candidate}.writer.lock").is_dir())
+
+    def test_symlinked_retained_stage_is_indeterminate(self):
+        result = self._run_promotion_transition(symlink_retained_stage=True)
+
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn(
+            "could not identify the retirement candidate after promotion",
+            result.stderr,
+        )
+        staged_links = [
+            path
+            for path in self.root.glob(".candidate.retire-stage.*")
+            if path.is_symlink()
+        ]
+        self.assertEqual(len(staged_links), 1, result.stderr)
+        self.assertTrue(
+            staged_links[0].with_name(f"{staged_links[0].name}.owned").is_dir()
+        )
         self.assertTrue(Path(f"{self.candidate}.writer.lock").is_dir())
 
     def test_post_promotion_corruption_is_retained_as_failed_not_accepted(self):
@@ -846,6 +944,19 @@ class ChatGPTRetirementTests(unittest.TestCase):
         self.assertEqual(len(failed), 1, result.stderr)
         self.assertTrue((failed[0] / "unexpected-after-promotion").is_file())
         self.assertFalse(Path(f"{self.candidate}.writer.lock").exists())
+
+    def test_failed_candidate_claim_reports_the_original_move_failure(self):
+        result = self._run_promotion_transition(
+            corrupt_after_move=True,
+            replace_failed_identity=True,
+            fail_failed_move_after_effect=True,
+        )
+
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("(identity-mismatch, status 77)", result.stderr)
+        self.assertNotIn("(identity-mismatch, status 0)", result.stderr)
+        self.assertTrue(self.candidate.is_dir(), result.stderr)
+        self.assertTrue(Path(f"{self.candidate}.writer.lock").is_dir())
 
     def test_signal_during_promotion_retains_candidate_as_failed(self):
         result = self._run_promotion_transition(signal_after_move=True)
@@ -878,18 +989,18 @@ class ChatGPTRetirementTests(unittest.TestCase):
         fake_bin.mkdir()
         _write_executable(
             fake_bin / "repo-remove",
-            textwrap.dedent(
+            _python_fake(
                 """\
-                #!/usr/bin/env python3
                 import os
                 import signal
                 import subprocess
                 import sys
 
-                result = subprocess.run(["/usr/bin/repo-remove", *sys.argv[1:]])
+                result = subprocess.run([real_repo_remove, *sys.argv[1:]])
                 os.kill(os.getppid(), signal.SIGTERM)
                 raise SystemExit(result.returncode)
-                """
+                """,
+                real_tools=("repo-remove",),
             ),
         )
         environment = os.environ.copy()
@@ -909,14 +1020,13 @@ class ChatGPTRetirementTests(unittest.TestCase):
         fake_bin.mkdir()
         _write_executable(
             fake_bin / "cp",
-            textwrap.dedent(
+            _python_fake(
                 """\
-                #!/usr/bin/env python3
                 import pathlib
                 import subprocess
                 import sys
 
-                result = subprocess.run(["/usr/bin/cp", *sys.argv[1:]])
+                result = subprocess.run([real_cp, *sys.argv[1:]])
                 if result.returncode == 0 and "-a" in sys.argv:
                     stage = pathlib.Path(sys.argv[-1]).resolve()
                     owned = stage.with_name(f"{stage.name}.owned")
@@ -925,7 +1035,8 @@ class ChatGPTRetirementTests(unittest.TestCase):
                     (stage / "unrelated-marker").write_bytes(b"preserve\\n")
                     raise SystemExit(77)
                 raise SystemExit(result.returncode)
-                """
+                """,
+                real_tools=("cp",),
             ),
         )
         environment = os.environ.copy()
@@ -955,20 +1066,20 @@ class ChatGPTRetirementTests(unittest.TestCase):
         fake_bin.mkdir()
         _write_executable(
             fake_bin / "cp",
-            textwrap.dedent(
+            _python_fake(
                 """\
-                #!/usr/bin/python3
                 import pathlib
                 import subprocess
                 import sys
 
-                result = subprocess.run(["/usr/bin/cp", *sys.argv[1:]])
+                result = subprocess.run([real_cp, *sys.argv[1:]])
                 if result.returncode == 0 and "-a" in sys.argv:
                     stage = pathlib.Path(sys.argv[-1]).resolve()
                     stage.rename(stage.with_name(f"{stage.name}.owned"))
                     raise SystemExit(77)
                 raise SystemExit(result.returncode)
-                """
+                """,
+                real_tools=("cp",),
             ),
         )
         environment = os.environ.copy()
@@ -995,14 +1106,13 @@ class ChatGPTRetirementTests(unittest.TestCase):
         )
         _write_executable(
             fake_bin / "stat",
-            textwrap.dedent(
+            _python_fake(
                 f"""\
-                #!/usr/bin/env python3
                 import pathlib
                 import subprocess
                 import sys
 
-                result = subprocess.run(["/usr/bin/stat", *sys.argv[1:]], capture_output=True)
+                result = subprocess.run([real_stat, *sys.argv[1:]], capture_output=True)
                 target = pathlib.Path(sys.argv[-1])
                 counter = pathlib.Path({str(counter)!r})
                 if result.returncode == 0 and "-Lc" in sys.argv and target.name.startswith(
@@ -1019,7 +1129,8 @@ class ChatGPTRetirementTests(unittest.TestCase):
                 sys.stdout.buffer.write(result.stdout)
                 sys.stderr.buffer.write(result.stderr)
                 raise SystemExit(result.returncode)
-                """
+                """,
+                real_tools=("stat",),
             ),
         )
         environment = os.environ.copy()
@@ -1051,16 +1162,15 @@ class ChatGPTRetirementTests(unittest.TestCase):
         _write_executable(fake_bin / "repo-remove", "#!/bin/sh\nexit 77\n")
         _write_executable(
             fake_bin / "mv",
-            textwrap.dedent(
+            _python_fake(
                 f"""\
-                #!/usr/bin/env python3
                 import pathlib
                 import subprocess
                 import sys
 
                 source = pathlib.Path(sys.argv[-2])
                 destination = pathlib.Path(sys.argv[-1])
-                result = subprocess.run(["/usr/bin/mv", *sys.argv[1:]])
+                result = subprocess.run([real_mv, *sys.argv[1:]])
                 injected = pathlib.Path({str(injected)!r})
                 if (
                     result.returncode == 0
@@ -1073,7 +1183,8 @@ class ChatGPTRetirementTests(unittest.TestCase):
                     (destination / "unrelated-marker").write_bytes(b"preserve\\n")
                     injected.write_text("yes")
                 raise SystemExit(result.returncode)
-                """
+                """,
+                real_tools=("mv",),
             ),
         )
         environment = os.environ.copy()
@@ -1105,12 +1216,13 @@ class ChatGPTRetirementTests(unittest.TestCase):
         _write_executable(fake_bin / "repo-remove", "#!/bin/sh\nexit 77\n")
         _write_executable(
             fake_bin / "python3",
-            textwrap.dedent(
+            _python_fake(
                 f"""\
-                #!/usr/bin/python3
                 import os
                 import pathlib
                 import sys
+
+                real_python = {sys.executable!r}
 
                 injected = pathlib.Path({str(injected)!r})
                 if (
@@ -1127,7 +1239,7 @@ class ChatGPTRetirementTests(unittest.TestCase):
                     target.mkdir()
                     (target / "unrelated-marker").write_bytes(b"preserve\\n")
                     injected.write_text("yes")
-                os.execv("/usr/bin/python3", ["/usr/bin/python3", *sys.argv[1:]])
+                os.execv(real_python, [real_python, *sys.argv[1:]])
                 """
             ),
         )
@@ -1175,15 +1287,15 @@ class ChatGPTRetirementTests(unittest.TestCase):
         fake_bin.mkdir()
         _write_executable(
             fake_bin / "python3",
-            textwrap.dedent(
-                """\
-                #!/usr/bin/python3
+            _python_fake(
+                f"""\
                 import os
                 import pathlib
                 import subprocess
                 import sys
 
-                result = subprocess.run(["/usr/bin/python3", *sys.argv[1:]])
+                real_python = {sys.executable!r}
+                result = subprocess.run([real_python, *sys.argv[1:]])
                 if (
                     result.returncode == 0
                     and len(sys.argv) >= 3
@@ -1234,21 +1346,21 @@ class ChatGPTRetirementTests(unittest.TestCase):
         fake_bin.mkdir()
         _write_executable(
             fake_bin / "mkdir",
-            textwrap.dedent(
+            _python_fake(
                 """\
-                #!/usr/bin/env python3
                 import os
                 import pathlib
                 import signal
                 import subprocess
                 import sys
 
-                result = subprocess.run(["/usr/bin/mkdir", *sys.argv[1:]])
+                result = subprocess.run([real_mkdir, *sys.argv[1:]])
                 destination = pathlib.Path(sys.argv[-1])
                 if result.returncode == 0 and destination.name.endswith(".writer.lock"):
                     os.kill(os.getppid(), signal.SIGTERM)
                 raise SystemExit(result.returncode)
-                """
+                """,
+                real_tools=("mkdir",),
             ),
         )
         environment = os.environ.copy()
@@ -1259,6 +1371,51 @@ class ChatGPTRetirementTests(unittest.TestCase):
         self.assertEqual(result.returncode, 143, result.stderr)
         self.assertFalse(Path(f"{self.candidate}.writer.lock").exists())
         self.assertFalse(self.candidate.exists())
+
+    def test_retirement_rejects_a_symlinked_adjacent_manifest_tool(self):
+        self._seed_complete_repository()
+        isolated_tools = self.root / "isolated-tools"
+        isolated_tools.mkdir()
+        isolated_retire = isolated_tools / RETIRE.name
+        shutil.copy2(RETIRE, isolated_retire)
+        shutil.copy2(
+            REPO_ROOT / "tools" / "repository_owned_directory.py",
+            isolated_tools / "repository_owned_directory.py",
+        )
+        manifest_link = isolated_tools / "repository_manifest.py"
+        manifest_link.symlink_to(REPO_ROOT / "tools" / "repository_manifest.py")
+        source_manifest_bytes = (
+            json.dumps(_repository_manifest(self.source), indent=2, sort_keys=True)
+            + "\n"
+        ).encode()
+        manifest_path = self.root / "accepted-source-manifest.json"
+        manifest_path.write_bytes(source_manifest_bytes)
+
+        result = subprocess.run(
+            [
+                str(isolated_retire),
+                "--source-repo-dir",
+                str(self.source),
+                "--input-manifest",
+                str(manifest_path),
+                "--input-manifest-sha256",
+                _sha256(manifest_path),
+                "--repo-dir",
+                str(self.candidate),
+            ],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(
+            result.stderr,
+            f"repository manifest tool is not executable: {manifest_link}\n",
+        )
+        self.assertFalse(self.candidate.exists())
+        self.assertFalse(Path(f"{self.candidate}.writer.lock").exists())
 
     def test_signed_repository_indexes_are_rejected_without_mutation(self):
         self._seed_complete_repository()

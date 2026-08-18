@@ -35,9 +35,16 @@ def repository_manifest(root: Path) -> dict:
             target = os.readlink(path)
             if "/" in target or target in ("", ".", ".."):
                 raise SystemExit(f"unsafe repository symlink: {path.name} -> {target}")
-            if not (root / target).is_file():
+            try:
+                target_metadata = (root / target).lstat()
+            except FileNotFoundError:
                 raise SystemExit(
                     f"repository symlink target is missing: {path.name} -> {target}"
+                )
+            if not stat.S_ISREG(target_metadata.st_mode):
+                raise SystemExit(
+                    "repository symlink target must be a direct regular file: "
+                    f"{path.name} -> {target}"
                 )
             entries.append({**common, "target": target, "type": "symlink"})
         elif path.is_file():

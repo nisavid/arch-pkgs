@@ -91,7 +91,11 @@ claim_owned_directory() {
     fi
     move_to_unused_path "$destination" "$source" || restore_status=$?
     claim_state=identity-mismatch
-    claim_status=${restore_status:-$move_status}
+    if (( restore_status )); then
+      claim_status=$restore_status
+    else
+      claim_status=$move_status
+    fi
     return 1
   fi
   if [[ -d "$source" && ! -L "$source" \
@@ -384,7 +388,8 @@ for command_name in awk bsdtar cmp cp cut date env mkdir mktemp mv python3 \
   readlink repo-remove rm sed sha256sum sort stat tar wc zstd; do
   need_command "$command_name"
 done
-[[ -x "$manifest_tool" ]] || die "repository manifest tool is not executable: $manifest_tool"
+[[ -f "$manifest_tool" && ! -L "$manifest_tool" && -x "$manifest_tool" ]] \
+  || die "repository manifest tool is not executable: $manifest_tool"
 [[ -f "$owned_directory_tool" && ! -L "$owned_directory_tool" ]] \
   || die "repository owned-directory helper is unavailable: $owned_directory_tool"
 
@@ -750,13 +755,15 @@ promotion_status=0
 promotion_state=indeterminate
 signal_deferral=1
 move_to_unused_path "$stage_dir" "$repo_dir" || promotion_status=$?
-if [[ ! -e "$stage_dir" && -d "$repo_dir" ]]; then
+if [[ ! -e "$stage_dir" && ! -L "$stage_dir" \
+    && -d "$repo_dir" && ! -L "$repo_dir" ]]; then
   promoted_identity=
   if promoted_identity=$(directory_identity "$repo_dir") \
       && [[ "$promoted_identity" == "$candidate_identity" ]]; then
     promotion_state=promoted
   fi
-elif [[ ! -e "$repo_dir" && -d "$stage_dir" ]]; then
+elif [[ ! -e "$repo_dir" && ! -L "$repo_dir" \
+    && -d "$stage_dir" && ! -L "$stage_dir" ]]; then
   retained_identity=
   if retained_identity=$(directory_identity "$stage_dir") \
       && [[ "$retained_identity" == "$candidate_identity" ]]; then

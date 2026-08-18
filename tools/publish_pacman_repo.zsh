@@ -163,7 +163,7 @@ fi
 publish_dir=${publish_dir:a}
 
 if (( ! dry_run )); then
-  [[ -f "$repository_manifest_tool" ]] \
+  [[ -f "$repository_manifest_tool" && ! -L "$repository_manifest_tool" ]] \
     || die "missing repository manifest tool: $repository_manifest_tool"
   (( test_mode )) || need_command sudo
   need_command rsync
@@ -534,9 +534,14 @@ if (( had_previous )); then
   publication_state=verified_unretained
   move_to_unused_path "$candidate_dir" "$previous_dir" \
     || retention_status=$?
-  if (( test_mode )) \
-      && [[ ${ARCH_PKGS_PUBLISH_TEST_SIGNAL_DURING_RETENTION_FINALIZATION:-0} == 1 ]]; then
-    kill -TERM $$
+  if (( test_mode )); then
+    retention_test_signal=${ARCH_PKGS_PUBLISH_TEST_SIGNAL_DURING_RETENTION_FINALIZATION:-0}
+    case "$retention_test_signal" in
+      0) ;;
+      1|TERM) kill -TERM $$ ;;
+      HUP) kill -HUP $$ ;;
+      *) die "invalid retention-finalization test signal: $retention_test_signal" ;;
+    esac
   fi
   if [[ ! -e "$candidate_dir" && -d "$previous_dir" ]]; then
     current_publish_identity=

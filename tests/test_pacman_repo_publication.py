@@ -15,6 +15,7 @@ REQUIRED_TOOLS = (
     "install",
     "mkdir",
     "mv",
+    "python3",
     "readlink",
     "rsync",
     "sha256sum",
@@ -560,7 +561,6 @@ class PacmanRepoPublicationTests(unittest.TestCase):
             f"fail_retention_move = {fail_retention_move!r}\n"
             f"fail_after_retention_move = {fail_after_retention_move!r}\n"
             f"replace_retained_identity = {replace_retained_identity!r}\n"
-            f"signal_after_retention_move = {signal_after_retention_move!r}\n"
             f"race_previous_destination = {race_previous_destination!r}\n"
             "source = pathlib.Path(sys.argv[-2]) if len(sys.argv) >= 3 else None\n"
             "destination = pathlib.Path(sys.argv[-1]) if len(sys.argv) >= 2 else None\n"
@@ -586,12 +586,8 @@ class PacmanRepoPublicationTests(unittest.TestCase):
             "    destination.rename(moved)\n"
             "    shutil.copytree(moved, destination, symlinks=True)\n"
             "    shutil.rmtree(moved)\n"
-            "if is_retention_move and result.returncode == 0 and signal_after_retention_move:\n"
-            "    os.kill(os.getppid(), getattr(signal, f'SIG{signal_after_retention_move}'))\n"
-            "    time.sleep(0.2)\n"
-            "    raise SystemExit(0)\n"
             "raise SystemExit(result.returncode)\n",
-            extra_imports=("os", "signal", "shutil", "time"),
+            extra_imports=("shutil",),
         )
         if precreate_previous_destination:
             _write_fake_date_collision(
@@ -604,6 +600,10 @@ class PacmanRepoPublicationTests(unittest.TestCase):
         environment["ARCH_PKGS_PUBLISH_TEST_MODE"] = "1"
         environment["PATH"] = f"{fake_bin}:{environment['PATH']}"
         environment["TMPDIR"] = str(manifest_tmp)
+        if signal_after_retention_move is not None:
+            environment[
+                "ARCH_PKGS_PUBLISH_TEST_SIGNAL_DURING_RETENTION_FINALIZATION"
+            ] = signal_after_retention_move
 
         result = subprocess.run(
             [
@@ -972,6 +972,61 @@ class PacmanRepoPublicationTests(unittest.TestCase):
             self.assertFalse((root / ".published.publish.lock").exists())
             self.assertFalse(Path(f"{repo}.writer.lock").exists())
 
+    def test_publication_rejects_a_symlinked_adjacent_manifest_tool(self):
+        with tempfile.TemporaryDirectory(dir="/tmp") as temporary:
+            root = Path(temporary)
+            repo = root / "repo"
+            publish = root / "published"
+            isolated_tools = root / "tools"
+            repo.mkdir()
+            publish.mkdir()
+            isolated_tools.mkdir()
+            (repo / "fixture.db.tar.zst").write_bytes(b"new database")
+            (repo / "new.pkg.tar.zst").write_bytes(b"new package")
+            (publish / "fixture.db.tar.zst").write_bytes(b"old database")
+            (publish / "old.pkg.tar.zst").write_bytes(b"old package")
+            isolated_publish = isolated_tools / PUBLISH.name
+            shutil.copy2(PUBLISH, isolated_publish)
+            manifest_link = isolated_tools / "repository_manifest.py"
+            manifest_link.symlink_to(REPO_ROOT / "tools" / "repository_manifest.py")
+            environment = os.environ.copy()
+            for key in list(environment):
+                if key.startswith("BASH_FUNC_"):
+                    del environment[key]
+            environment["ARCH_PKGS_PUBLISH_TEST_MODE"] = "1"
+
+            result = subprocess.run(
+                [
+                    "zsh",
+                    str(isolated_publish),
+                    "--repo-dir",
+                    str(repo),
+                    "--repo-name",
+                    "fixture",
+                    "--publish-dir",
+                    str(publish),
+                ],
+                cwd=root,
+                env=environment,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 2)
+            self.assertEqual(
+                result.stderr,
+                f"missing repository manifest tool: {manifest_link}\n",
+            )
+            self.assertEqual(
+                (publish / "fixture.db.tar.zst").read_bytes(), b"old database"
+            )
+            self.assertTrue((publish / "old.pkg.tar.zst").is_file())
+            self.assertFalse((publish / "new.pkg.tar.zst").exists())
+            self.assertFalse((root / ".published.publish.lock").exists())
+            self.assertFalse(Path(f"{repo}.writer.lock").exists())
+
     def test_test_mode_rejects_symlinked_publish_path_without_mutation(self):
         with tempfile.TemporaryDirectory(dir="/tmp") as temporary:
             root = Path(temporary)
@@ -1037,8 +1092,7 @@ class PacmanRepoPublicationTests(unittest.TestCase):
             published_package = publish / "old.pkg.tar.zst"
             published_database.write_bytes(b"old database")
             published_package.write_bytes(b"old package")
-            real_rsync = shutil.which("rsync")
-            self.assertIsNotNone(real_rsync)
+            real_rsync = _resolve_real_binary("rsync")
             fake_rsync = fake_bin / "rsync"
             fake_rsync.write_text(
                 "#!/bin/sh\n"
