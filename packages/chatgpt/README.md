@@ -34,9 +34,10 @@ The ingest lane requires Zsh, GNU `cp` with `--reflink` support, `bsdtar`, Git,
 Arch packaging tools. The helper checks these prerequisites before it creates
 or changes checkout-local staging.
 
-For an ordinary incremental ingest outside a terminal multi-lane refresh, run
-the helper with the retained evidence set, exact record digest, and complete
-verified published repository as the seed when checkout-local staging is empty:
+For an ordinary incremental ingest outside a lifecycle-managed terminal
+accepted-only publication, run the helper with the retained evidence set, exact
+record digest, and complete verified published repository as the seed when
+checkout-local staging is empty:
 
 ```zsh
 tools/ingest_chatgpt.zsh \
@@ -54,12 +55,15 @@ path must already exist as a directory.
 
 For terminal accepted-only publication, follow the
 [`package refresh lifecycle`](../../docs/policies/package-refresh-lifecycle.md)
-instead. Omit the seed when ChatGPT is the only accepted entry. Otherwise use
-only a freshly materialized seed whose complete repository database and archive
-set is bound to the explicit promotion manifest; a verified live repository is
-not sufficient evidence of publication eligibility. Stop and open an
-implementation ticket if current tooling cannot construct and prove that seed
-without rebuilding or importing an ineligible artifact.
+instead. When ChatGPT is the only accepted entry, use an absent or proven-empty
+dedicated `--repo-dir`, omit the seed, and reconcile the complete result with
+the promotion manifest. The current helper copies an existing `--repo-dir` even
+without a seed, so seed omission alone is insufficient. Otherwise use only a
+freshly materialized seed whose complete repository database and archive set is
+bound to the manifest; a verified live repository is not publication-eligibility
+evidence. Stop and open an implementation ticket if the helper cannot enforce
+the empty-staging precondition or current tooling cannot construct and prove the
+accepted-only seed without rebuilding or importing an ineligible artifact.
 
 The helper first binds the record digest to the tracked baseline, then snapshots
 the artifact and evidence before parsing them. It compares the full accepted

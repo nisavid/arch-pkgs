@@ -62,9 +62,9 @@ When publishing an application package with local dependencies, such as
 `hayhooks`, build and refresh the dependency package directories too.
 
 Artifact-ingest lanes have their own verifier. For an ordinary incremental
-ChatGPT ingest outside a terminal multi-lane refresh, pass the complete verified
-published repository as the seed so unrelated packages remain present, then run
-the exact ingest command documented in
+ChatGPT ingest outside a lifecycle-managed terminal accepted-only publication,
+pass the complete verified published repository as the seed so unrelated
+packages remain present, then run the exact ingest command documented in
 [`packages/chatgpt/README.md`](../../packages/chatgpt/README.md):
 
 ```bash
@@ -87,7 +87,7 @@ one guarded transaction.
 Never publish a partial staging directory: the publisher mirrors staging and
 removes destination files that are absent from it.
 
-For a repository-wide or multi-lane terminal publication, first follow the
+For a lifecycle-managed terminal accepted-only publication, first follow the
 [`package refresh lifecycle`](../policies/package-refresh-lifecycle.md).
 Reconstruct staging from empty against the explicit accepted-artifact manifest
 and reconcile every staged entry before running the publisher. The updater and
@@ -95,11 +95,15 @@ publisher preserve and promote repository contents; they do not decide whether
 an artifact passed its lane's acceptance and promotion gates.
 
 For ChatGPT in that terminal path, do not seed ingest directly from the live
-repository. Omit the seed when ChatGPT is the only accepted entry. Otherwise
-first materialize a seed whose complete database and archive set matches the
-promotion manifest, then pass that directory to `tools/ingest_chatgpt.zsh`.
-Stop and open a tooling ticket if the accepted-only seed cannot be constructed
-and verified without rebuilding or importing an ineligible artifact.
+repository. When ChatGPT is the only accepted entry, use an absent or
+proven-empty dedicated `--repo-dir`, omit the seed, and reconcile the complete
+result with the promotion manifest. Otherwise first materialize a seed whose
+complete database and archive set matches that manifest, then pass that
+directory to `tools/ingest_chatgpt.zsh`. The current helper copies an existing
+`--repo-dir` even when no seed is supplied, so omission alone does not establish
+empty staging. Stop and open a tooling ticket if the helper cannot enforce the
+empty-staging precondition or the accepted-only seed cannot be constructed and
+verified without rebuilding or importing an ineligible artifact.
 
 ## Publish A Pacman-Visible Copy
 
