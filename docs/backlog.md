@@ -158,48 +158,6 @@ Exit criteria:
 
 ## Repo workflow tooling
 
-### Adopt declarative package maintenance policies
-
-This repo has started to need package-specific maintenance policy beyond a
-plain `PKGBUILD` workflow. `chatgpt` is the first concrete case: it is built by
-the maintained `chatgpt-linux` source repo, and this repo ingests an explicitly
-selected, provenance-bound package artifact instead of rebuilding it here.
-
-Adopt a generic, declarative maintenance-policy system derived from the
-[`arch-strix-halo-pkgs`](https://github.com/nisavid/arch-strix-halo-pkgs)
-approach, then express the `chatgpt` ingestion policy as the first instance.
-The current `tools/ingest_chatgpt.zsh` helper should be treated as a working
-bridge, not the final package-policy architecture.
-
-If this repo's fetch, freshness, or update-disposition workflows develop gaps,
-use the `arch-strix-halo-pkgs` refresh/update hardening stack as a reference
-pattern. In particular, review its package-maintenance skill, freshness checker,
-candidate-disposition ledger, and backlog/current-state wiring before designing
-new local policy.
-
-Deliverables:
-
-- A small policy format for package maintenance rules, including source
-  checkout location, freshness window, artifact selection, build command, and
-  ingest/publish behavior.
-- A canonical ignored `upstream/` checkout area for source repos that are not
-  owned by this repo.
-- A runner that can evaluate a package's policy and perform the declared
-  action.
-- A `chatgpt` policy that requires an explicit retained artifact, verification
-  record and digest, annotated source tag, package stream-manifest equality,
-  and transactional staging without cloning or rebuilding.
-- Maintainer docs that explain how to add another package with the same policy
-  mechanism.
-
-Exit criteria:
-
-- `chatgpt` no longer needs a one-off ingest script for its normal update
-  path.
-- A maintainer can add a second package policy without designing new plumbing.
-- The policy runner reports clearly whether it reused a fresh artifact, built a
-  new artifact, or failed before publishing anything.
-
 ### Package `amerge` for shared local-repo management
 
 `amerge` is not part of this repo workflow yet. The current install path is the

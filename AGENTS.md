@@ -8,10 +8,9 @@ Your job is not to make a package build once. Your job is to leave behind packag
 
 - Keep packages under `packages/<name>/`.
 - Keep each package self-contained with the files needed to build it: `PKGBUILD`, `.SRCINFO`, patches, service files, config files, and short package-local notes when helpful.
-- Treat `packages/chatgpt/` as the explicit immutable artifact-ingest exception.
-  It does not carry a `PKGBUILD` or `.SRCINFO` and does not use `makepkg`.
-  Ingest it only with `tools/ingest_chatgpt.zsh`; never pass it to
-  `tools/update_pacman_repo.zsh`.
+- Keep the retired ChatGPT fallback out of the active package tree and catalog.
+  Preserve only the exact public evidence and retirement notes under
+  `docs/maintainers/`; do not recreate a recipe or ingest helper.
 - Prefer repository-relative documentation over chat-only explanations.
 
 ## Rules
@@ -45,10 +44,6 @@ Before claiming a package update is complete, run the relevant checks for the ch
 - `makepkg --verifysource`
 - `makepkg -f` or `makepkg -si`
 - inspect package contents when install payload changed
-
-The `makepkg` checks do not apply to `packages/chatgpt/`. Verify that lane by
-ingesting the exact accepted artifact and provenance tuple with
-`tools/ingest_chatgpt.zsh` and inspecting the staged repository output.
 
 ## Scripts
 

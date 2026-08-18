@@ -5,8 +5,8 @@ Personal Arch Linux packages for a local AI application stack.
 This repository collects packages that are useful enough to keep close, patched,
 and installable through a local pacman repository. It is not a public distro or a
 general AUR mirror. It is a small workspace for reproducible local packages:
-exact verified ChatGPT desktop artifact ingest, vector storage, Haystack
-services, their Python dependencies, and an experimental GPU inspection tool.
+vector storage, Haystack services, their Python dependencies, and an
+experimental GPU inspection tool.
 It also keeps a source-build Thorium Browser recipe when a local browser package
 needs the fixed tarball/tag build path.
 
@@ -18,8 +18,6 @@ notes.
 
 Start with the package family that matches what you want to install:
 
-- [`chatgpt`](packages/chatgpt/) ingests the exact verified native package from
-  the maintained ChatGPT for Linux source repository.
 - [`qdrant`](packages/qdrant/) and [`hayhooks`](packages/hayhooks/) provide the
   local service layer for vector storage and Haystack pipeline serving.
 - [`python-haystack-ai`](packages/haystack-ai/) and its companion Python
@@ -43,35 +41,6 @@ If you want one package quickly, build and install it from its package directory
 
 ```bash
 (cd packages/qdrant && makepkg --verifysource && makepkg -si)
-```
-
-`chatgpt` is different from the normal `PKGBUILD` packages: this repo ingests an
-explicitly retained pacman package produced by the maintained
-[`chatgpt-linux`](https://github.com/nisavid/chatgpt-linux) source repository.
-The helper requires the exact artifact, verification record and digest, and the
-annotated source tag. It never selects by version or filesystem time and never
-rebuilds the package. See [`packages/chatgpt/`](packages/chatgpt/) for the
-accepted baseline and complete command.
-
-Before the first ingest in a fresh checkout, pass the complete published
-repository as the ingest seed, as documented in
-[`docs/usage/local-repo.md`](docs/usage/local-repo.md#refresh-the-checkout-local-repo).
-
-```bash
-tools/ingest_chatgpt.zsh \
-  --artifact /path/to/chatgpt.pkg.tar.zst \
-  --verification-record /path/to/verification-record.json \
-  --record-sha256 RECORD_SHA256 \
-  --source-dir /path/to/chatgpt-linux \
-  --seed-repo-dir /srv/pacman/nisavid/x86_64
-```
-
-Run the staged verification in `packages/chatgpt/README.md`. Only after it
-succeeds, publish and install:
-
-```bash
-tools/publish_pacman_repo.zsh
-sudo pacman -Syu chatgpt
 ```
 
 If you want the normal workflow, build a package, refresh the local repo staging
@@ -108,15 +77,15 @@ The full local-repo setup, including the pacman stanza, is in
 
 ## Repository Map
 
-- Ordinary `packages/<name>/` lanes contain `PKGBUILD`, `.SRCINFO`, patches,
-  service files, config defaults, and package-local notes.
-  [`packages/chatgpt/`](packages/chatgpt/) is the exact verified artifact-ingest
-  exception.
+- `packages/<name>/` lanes contain `PKGBUILD`, `.SRCINFO`, patches, service
+  files, config defaults, and package-local notes.
 - `repo/x86_64/` is ignored, rebuildable local-repo staging output.
 - `tools/update_pacman_repo.zsh` refreshes `repo/x86_64/` from the current
   package archives reported by `makepkg --packagelist`.
 - `docs/usage/` contains user and operator how-to guides.
 - `docs/maintainers/` contains decision notes for package-maintenance work.
+  The retired ChatGPT fallback and retained public evidence are documented in
+  [`docs/maintainers/chatgpt-retirement.md`](docs/maintainers/chatgpt-retirement.md).
   The Arch CUDA container image is documented in
   [`docs/maintainers/arch-cuda-image.md`](docs/maintainers/arch-cuda-image.md).
 
