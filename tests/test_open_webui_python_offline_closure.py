@@ -111,6 +111,60 @@ class OpenWebUiPythonOfflineClosureTests(unittest.TestCase):
             self.assertNotEqual(tampered.returncode, 0)
             self.assertIn("SHA-256", tampered.stderr)
 
+    def test_verify_rejects_a_wheel_for_another_platform(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            wheelhouse = root / "wheelhouse"
+            wheelhouse.mkdir()
+            artifact = wheelhouse / "example-1.0-cp314-cp314-win_amd64.whl"
+            artifact.write_bytes(b"wrong platform\n")
+            digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+            lock = root / "requirements.lock"
+            lock.write_text(
+                f"example==1.0 {chr(92)}\n    --hash=sha256:{digest}\n",
+                encoding="utf-8",
+            )
+            manifest = root / "manifest.json"
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "format": "open-webui-python-offline-closure-v1",
+                        "target": "cp314-manylinux_2_28_x86_64",
+                        "lock_sha256": hashlib.sha256(lock.read_bytes()).hexdigest(),
+                        "distribution_count": 1,
+                        "artifacts": [
+                            {
+                                "name": "example",
+                                "version": "1.0",
+                                "filename": artifact.name,
+                                "url": "https://files.pythonhosted.org/example.whl",
+                                "sha256": digest,
+                                "size": artifact.stat().st_size,
+                            }
+                        ],
+                    },
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            result = self.run_tool(
+                "verify",
+                "--lock",
+                lock,
+                "--manifest",
+                manifest,
+                "--wheelhouse",
+                wheelhouse,
+                "--allow-partial",
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(
+                "not compatible with cp314-manylinux_2_28_x86_64", result.stderr
+            )
+
     def test_archive_is_byte_reproducible_and_has_only_manifested_artifacts(
         self,
     ) -> None:
@@ -188,6 +242,159 @@ class OpenWebUiPythonOfflineClosureTests(unittest.TestCase):
                         f"open-webui-python-offline-closure/wheelhouse/{artifact.name}",
                     ],
                 )
+
+    def test_verify_archive_rejects_a_wheel_for_another_interpreter(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            filename = "example-1.0-cp313-cp313-manylinux_2_28_x86_64.whl"
+            payload = b"wrong interpreter\n"
+            digest = hashlib.sha256(payload).hexdigest()
+            lock = root / "requirements.lock"
+            lock.write_text(
+                f"example==1.0 {chr(92)}\n    --hash=sha256:{digest}\n",
+                encoding="utf-8",
+            )
+            manifest_bytes = (
+                json.dumps(
+                    {
+                        "format": "open-webui-python-offline-closure-v1",
+                        "target": "cp314-manylinux_2_28_x86_64",
+                        "lock_sha256": hashlib.sha256(lock.read_bytes()).hexdigest(),
+                        "distribution_count": 1,
+                        "artifacts": [
+                            {
+                                "name": "example",
+                                "version": "1.0",
+                                "filename": filename,
+                                "url": "https://files.pythonhosted.org/example.whl",
+                                "sha256": digest,
+                                "size": len(payload),
+                            }
+                        ],
+                    },
+                    sort_keys=True,
+                )
+                + "\n"
+            ).encode()
+            uncompressed = io.BytesIO()
+            archive_root = "open-webui-python-offline-closure"
+            with tarfile.open(
+                fileobj=uncompressed, mode="w", format=tarfile.PAX_FORMAT
+            ) as archive:
+                for name, content, mode in (
+                    (archive_root, None, 0o755),
+                    (f"{archive_root}/manifest.json", manifest_bytes, 0o644),
+                    (f"{archive_root}/wheelhouse/{filename}", payload, 0o644),
+                ):
+                    info = tarfile.TarInfo(name)
+                    info.mode = mode
+                    info.uid = 0
+                    info.gid = 0
+                    info.uname = "root"
+                    info.gname = "root"
+                    info.mtime = 0
+                    if content is None:
+                        info.type = tarfile.DIRTYPE
+                        archive.addfile(info)
+                    else:
+                        info.size = len(content)
+                        archive.addfile(info, io.BytesIO(content))
+            closure = root / "closure.tar.zst"
+            closure.write_bytes(zstd.compress(uncompressed.getvalue(), level=19))
+
+            result = self.run_tool(
+                "verify-archive",
+                "--lock",
+                lock,
+                "--archive",
+                closure,
+                "--allow-partial",
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn(
+                "not compatible with cp314-manylinux_2_28_x86_64", result.stderr
+            )
+
+    def test_verify_archive_rejects_noncanonical_member_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            wheelhouse = root / "wheelhouse"
+            wheelhouse.mkdir()
+            artifact = wheelhouse / "example-1.0-py3-none-any.whl"
+            artifact.write_bytes(b"immutable artifact\n")
+            digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+            lock = root / "requirements.lock"
+            lock.write_text(
+                f"example==1.0 {chr(92)}\n    --hash=sha256:{digest}\n",
+                encoding="utf-8",
+            )
+            manifest = root / "manifest.json"
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "format": "open-webui-python-offline-closure-v1",
+                        "target": "cp314-manylinux_2_28_x86_64",
+                        "lock_sha256": hashlib.sha256(lock.read_bytes()).hexdigest(),
+                        "distribution_count": 1,
+                        "artifacts": [
+                            {
+                                "name": "example",
+                                "version": "1.0",
+                                "filename": artifact.name,
+                                "url": "https://files.pythonhosted.org/example.whl",
+                                "sha256": digest,
+                                "size": artifact.stat().st_size,
+                            }
+                        ],
+                    },
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            canonical = root / "canonical.tar.zst"
+            archived = self.run_tool(
+                "archive",
+                "--lock",
+                lock,
+                "--manifest",
+                manifest,
+                "--wheelhouse",
+                wheelhouse,
+                "--output",
+                canonical,
+                "--allow-partial",
+            )
+            self.assertEqual(archived.returncode, 0, archived.stderr)
+
+            uncompressed = io.BytesIO(zstd.decompress(canonical.read_bytes()))
+            noncanonical = io.BytesIO()
+            with (
+                tarfile.open(fileobj=uncompressed, mode="r:") as source,
+                tarfile.open(
+                    fileobj=noncanonical, mode="w", format=tarfile.PAX_FORMAT
+                ) as target,
+            ):
+                for member in source.getmembers():
+                    payload = source.extractfile(member)
+                    if member.name.endswith(".whl"):
+                        member.mode = 0o755
+                    target.addfile(member, payload)
+            closure = root / "noncanonical.tar.zst"
+            closure.write_bytes(zstd.compress(noncanonical.getvalue(), level=19))
+
+            result = self.run_tool(
+                "verify-archive",
+                "--lock",
+                lock,
+                "--archive",
+                closure,
+                "--allow-partial",
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("noncanonical archive metadata", result.stderr)
 
     def test_fresh_target_installs_from_wheelhouse_with_uv_offline_no_index(
         self,
