@@ -1,21 +1,21 @@
 --- a/pyproject.toml
 +++ b/pyproject.toml
-@@ -67,10 +67,6 @@
-     "PyMySQL==1.1.2",
+@@ -70,10 +70,6 @@
+     "PyMySQL==1.2.0",
      "boto3==1.42.62",
      
 -    "transformers==5.5.4",
--    "sentence-transformers==5.4.0",
+-    "sentence-transformers==5.5.1",
 -    "accelerate==1.13.0",
--    "pyarrow>=24,<25",
+-    "pyarrow==20.0.0", # fix: pin pyarrow version to 20 for rpi compatibility #15897
      "einops==0.8.2",
  
      "ftfy==6.3.1",
-@@ -84,23 +80,15 @@
-     "Markdown==3.10.2",
+@@ -89,23 +85,16 @@
      "beautifulsoup4==4.14.3",
-     "pypandoc==1.16.2",
--    "pandas==3.0.1",
+     "lxml==6.1.1",
+     "pypandoc==1.17",
+-    "pandas==3.0.3",
      "openpyxl==3.1.5",
      "pyxlsb==1.0.10",
      "xlrd==2.0.2",
@@ -25,13 +25,13 @@
      "soundfile==0.13.1",
      "azure-ai-documentintelligence==1.0.2",
  
--    "pillow==12.1.1",
+-    "pillow==12.2.0",
 -    "opencv-python-headless==4.13.0.92",
--    "rapidocr-onnxruntime==1.4.4",
+-    "rapidocr==3.9.2",
      "rank-bm25==0.2.2",
--
--    "onnxruntime==1.24.3",
+
+-    "onnxruntime==1.26.0",
 -    "faster-whisper==1.2.1",
  
-     "black==26.3.1",
+     "black==26.5.1",
      "youtube-transcript-api==1.2.4",

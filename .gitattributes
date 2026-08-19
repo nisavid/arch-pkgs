@@ -1,0 +1,2 @@
+# Unified-diff payloads preserve source whitespace and diff markers.
+*.patch -whitespace

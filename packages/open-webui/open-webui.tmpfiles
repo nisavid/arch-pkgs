@@ -1,5 +1,6 @@
 d /var/lib/open-webui 0750 open-webui open-webui -
 d /var/lib/open-webui/data 0750 open-webui open-webui -
+d /var/lib/open-webui/static 0750 open-webui open-webui -
 d /var/lib/open-webui/cache 0750 open-webui open-webui -
 d /var/lib/open-webui/cache/huggingface 0750 open-webui open-webui -
 d /var/lib/open-webui/cache/embedding 0750 open-webui open-webui -
@@ -7,3 +8,4 @@ d /var/lib/open-webui/cache/embedding/models 0750 open-webui open-webui -
 d /var/lib/open-webui/cache/tiktoken 0750 open-webui open-webui -
 d /var/lib/open-webui/cache/whisper 0750 open-webui open-webui -
 d /var/lib/open-webui/cache/whisper/models 0750 open-webui open-webui -
+d /var/lib/open-webui-session-epoch 0700 root root -

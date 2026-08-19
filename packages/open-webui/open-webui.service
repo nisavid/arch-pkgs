@@ -8,14 +8,24 @@ Wants=network-online.target
 Type=simple
 User=open-webui
 Group=open-webui
+SupplementaryGroups=open-webui-proxy
 StateDirectory=open-webui
 StateDirectoryMode=0750
+RuntimeDirectory=open-webui
+RuntimeDirectoryMode=0750
 WorkingDirectory=/var/lib/open-webui
 Environment=HOME=/var/lib/open-webui
-Environment=OPEN_WEBUI_HOST=127.0.0.1
-Environment=OPEN_WEBUI_PORT=8080
-EnvironmentFile=-/etc/open-webui/open-webui.env
-ExecStart=/usr/bin/open-webui serve --host ${OPEN_WEBUI_HOST} --port ${OPEN_WEBUI_PORT}
+EnvironmentFile=/etc/open-webui/open-webui.env
+LoadCredentialEncrypted=webui-secret-key:/etc/credstore.encrypted/open-webui.webui-secret-key
+LoadCredentialEncrypted=oauth-client-info-encryption-key:/etc/credstore.encrypted/open-webui.oauth-client-info-encryption-key
+LoadCredentialEncrypted=oauth-session-token-encryption-key:/etc/credstore.encrypted/open-webui.oauth-session-token-encryption-key
+LoadCredentialEncrypted=valkey-url:/etc/credstore.encrypted/open-webui.valkey-url
+LoadCredentialEncrypted=qdrant-runtime-api-key:/etc/credstore.encrypted/open-webui.qdrant-runtime-api-key
+LoadCredentialEncrypted=lemonade-inference-api-key:/etc/credstore.encrypted/open-webui.lemonade-inference-api-key
+LoadCredential=session-epoch:/var/lib/open-webui-session-epoch/current
+ExecStartPre=+/usr/bin/chgrp open-webui-proxy /run/open-webui
+ExecStartPre=+/usr/bin/chmod 2750 /run/open-webui
+ExecStart=/usr/bin/open-webui serve --uds /run/open-webui/open-webui.sock
 Restart=on-failure
 RestartSec=5s
 NoNewPrivileges=true
@@ -29,7 +39,9 @@ RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 RestrictRealtime=true
 RestrictSUIDSGID=true
 SystemCallArchitectures=native
-UMask=0027
+IPAddressDeny=any
+IPAddressAllow=localhost
+UMask=0007
 ReadWritePaths=/var/lib/open-webui
 
 [Install]

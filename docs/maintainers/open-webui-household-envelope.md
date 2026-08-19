@@ -141,12 +141,17 @@ The run is not closure-complete because:
 ## Production-boundary implications
 
 Do not derive a production memory, CPU, startup, readiness, upload-count, or
-storage-growth limit from this run. Later implementation must add a RAG
-availability gate around reranker semantic health and a root-owned,
-forward-only session-epoch authority outside the restored application tuple.
-The production provider must also bind the exact accepted Lemonade and patched
-llama.cpp artifacts before the measurements can become candidate-acceptance
-evidence.
+storage-growth limit from this run. The package candidate now carries a
+fail-closed semantic RAG gate and a root-owned, forward-only session-epoch
+authority outside the restored application tuple, but neither remediation was
+part of this measured subject. The production provider must also bind the exact
+accepted Lemonade and patched llama.cpp artifacts before repeated measurements
+can become candidate-acceptance evidence.
+
+The package source is also not G1-complete: its Python and npm graphs are
+hash-locked, but they have not yet been materialized as makepkg-visible source
+artifacts for a self-contained networkless build. Source verification and an
+online hash-enforced build do not close that boundary.
 
 ## Durable evidence
 
@@ -160,12 +165,12 @@ claims.
 
 ## Remaining work
 
-1. Measure the exact packaged Open WebUI and integrated patched Lemonade
-   candidate in a dedicated cgroup with kernel-enforced no egress.
-2. Implement and prove fail-closed RAG behavior when the reranker is not
-   semantically healthy.
-3. Implement the external session-epoch helper and prove old-session rejection
-   across repeated whole-tuple restores.
+1. Materialize and bind the npm and private Python package inputs, then build
+   and inspect the exact Open WebUI and RapidOCR package candidates.
+2. Compose that package set with the exact accepted patched Lemonade and
+   llama.cpp provider in a dedicated cgroup with kernel-enforced no egress.
+3. Prove the packaged fail-closed RAG gate and external session epoch across
+   reranker failure and repeated whole-tuple restores.
 4. Retain public-safe raw samples and meet every declared fresh-start, heavy
    indexing, generation-rebuild, restore, and rollback floor.
 5. Measure cache behavior, cgroup memory, isolated CPU, corpus-size growth,

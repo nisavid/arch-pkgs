@@ -1,0 +1,640 @@
+# Household fail-closed RAG patch.
+# Open WebUI commit: f9590b8017199e56d5e953657e6498e3cef1d246
+# Open WebUI 0.11.0 sdist SHA-256: e28c4fa997bf0a678caa7a0db6441da2e0c33b9a4120677f959ec3e45fccf9e9
+# The package installs open-webui-rag-gate.py as open_webui/retrieval/rag_gate.py before build.
+# App startup remains available for ordinary chat when qualification fails; authenticated /api/v1/retrieval/health stays 503.
+diff --git a/backend/open_webui/retrieval/models/external.py b/backend/open_webui/retrieval/models/external.py
+index 6d2849e..f02026d 100644
+--- a/backend/open_webui/retrieval/models/external.py
++++ b/backend/open_webui/retrieval/models/external.py
+@@ -1,10 +1,20 @@
+ import logging
+-from typing import List, Optional, Tuple
+-from urllib.parse import quote
++import math
++from typing import List, Tuple
+ 
+ import requests
+ from open_webui.env import ENABLE_FORWARD_USER_INFO_HEADERS, REQUESTS_VERIFY
+ from open_webui.retrieval.models.base_reranker import BaseReranker
++from open_webui.retrieval.rag_gate import (
++    RAG_QUALIFICATION_DOCUMENTS,
++    RAG_QUALIFICATION_QUERY,
++    RAGUnavailableError,
++    close_required_reranker,
++    configure_required_reranker,
++    qualify_required_reranker,
++    require_required_reranker,
++    validate_external_rerank_results,
++)
+ from open_webui.utils.headers import include_user_info_headers
+ 
+ log = logging.getLogger(__name__)
+@@ -16,14 +26,24 @@ class ExternalReranker(BaseReranker):
+         api_key: str,
+         url: str = 'http://localhost:8080/v1/rerank',
+         model: str = 'reranker',
+-        timeout: Optional[int] = None,
++        timeout: float = 30.0,
+     ):
++        configure_required_reranker(True)
++        if (
++            isinstance(timeout, bool)
++            or not isinstance(timeout, (int, float))
++            or not math.isfinite(timeout)
++            or timeout <= 0
++        ):
++            raise RAGUnavailableError()
+         self.api_key = api_key
+         self.url = url
+         self.model = model
+-        self.timeout = timeout
++        self.timeout = float(timeout)
+ 
+-    def predict(self, sentences: List[Tuple[str, str]], user=None) -> Optional[List[float]]:
++    def _predict(self, sentences: List[Tuple[str, str]], user=None) -> List[float]:
++        if not sentences:
++            raise RAGUnavailableError()
+         query = sentences[0][0]
+         docs = [i[1] for i in sentences]
+ 
+@@ -36,7 +56,6 @@ class ExternalReranker(BaseReranker):
+ 
+         try:
+             log.info(f'ExternalReranker:predict:model {self.model}')
+-            log.info(f'ExternalReranker:predict:query {query}')
+ 
+             headers = {
+                 'Content-Type': 'application/json',
+@@ -56,14 +75,31 @@ class ExternalReranker(BaseReranker):
+ 
+             r.raise_for_status()
+             data = r.json()
+-
+-            if 'results' in data:
+-                sorted_results = sorted(data['results'], key=lambda x: x['index'])
+-                return [result['relevance_score'] for result in sorted_results]
+-            else:
+-                log.error('No results found in external reranking response')
+-                return None
+-
++            if not isinstance(data, dict):
++                raise RAGUnavailableError()
++            return validate_external_rerank_results(data.get('results'), len(docs))
++        except RAGUnavailableError:
++            raise
+         except Exception as e:
+-            log.exception(f'Error in external reranking: {e}')
+-            return None
++            raise RAGUnavailableError() from e
++
++    def qualify(self) -> None:
++        try:
++            scores = self._predict(
++                [
++                    (RAG_QUALIFICATION_QUERY, document)
++                    for document in RAG_QUALIFICATION_DOCUMENTS
++                ]
++            )
++            qualify_required_reranker(scores)
++        except RAGUnavailableError:
++            close_required_reranker()
++            raise
++
++    def predict(self, sentences: List[Tuple[str, str]], user=None) -> List[float]:
++        require_required_reranker(self)
++        try:
++            return self._predict(sentences, user=user)
++        except RAGUnavailableError:
++            close_required_reranker()
++            raise
+diff --git a/backend/open_webui/retrieval/utils.py b/backend/open_webui/retrieval/utils.py
+index 952b1e6..e71bc2d 100644
+--- a/backend/open_webui/retrieval/utils.py
++++ b/backend/open_webui/retrieval/utils.py
+@@ -43,6 +43,12 @@ from open_webui.models.notes import Notes
+ from open_webui.models.config import Config
+ from open_webui.models.users import UserModel
+ from open_webui.retrieval.loaders.youtube import YoutubeLoader
++from open_webui.retrieval.rag_gate import (
++    RAGUnavailableError,
++    close_required_reranker,
++    require_safe_retrieval_mode,
++    validate_rerank_scores,
++)
+ from open_webui.retrieval.vector.async_client import ASYNC_VECTOR_DB_CLIENT
+ from open_webui.retrieval.external import retrieve_external_knowledge
+ from open_webui.retrieval.vector.factory import VECTOR_DB_CLIENT
+@@ -457,6 +463,8 @@ async def query_doc_with_native_hybrid_search(
+             'documents': [documents],
+             'metadatas': [metadatas],
+         }
++    except RAGUnavailableError:
++        raise
+     except Exception as e:
+         log.debug(f'Native hybrid search failed for {collection_name}, falling back to legacy hybrid search: {e}')
+         return None
+@@ -683,19 +691,27 @@ async def query_collection(
+ ) -> dict:
+     config = await Config.get_many(
+         'rag.enable_hybrid_search',
++        'rag.bypass_embedding_and_retrieval',
+         'rag.top_k_reranker',
+         'rag.relevance_threshold',
+         'rag.hybrid_bm25_weight',
+         'rag.enable_hybrid_search_enriched_texts',
+     )
++    reranking_function = (
++        (lambda query, documents: request.app.state.RERANKING_FUNCTION(query, documents))
++        if request and request.app.state.RERANKING_FUNCTION
++        else None
++    )
++    require_safe_retrieval_mode(
++        reranking_function,
++        hybrid_search=config.get('rag.enable_hybrid_search') is True,
++        bypass_embedding_and_retrieval=(
++            config.get('rag.bypass_embedding_and_retrieval') is True
++        ),
++    )
+     # When request is provided, try hybrid search + reranking if enabled
+     if request and config.get('rag.enable_hybrid_search'):
+         try:
+-            reranking_function = (
+-                (lambda query, documents: request.app.state.RERANKING_FUNCTION(query, documents))
+-                if request.app.state.RERANKING_FUNCTION
+-                else None
+-            )
+             return await query_collection_with_hybrid_search(
+                 collection_names=collection_names,
+                 queries=queries,
+@@ -707,6 +723,8 @@ async def query_collection(
+                 hybrid_bm25_weight=config.get('rag.hybrid_bm25_weight'),
+                 enable_enriched_texts=config.get('rag.enable_hybrid_search_enriched_texts'),
+             )
++        except RAGUnavailableError:
++            raise
+         except Exception as e:
+             log.debug(f'Hybrid search failed, falling back to vector search: {e}')
+ 
+@@ -831,6 +849,8 @@ async def query_collection_with_hybrid_search(
+                 native_hybrid_search=False,
+             )
+             return result, None
++        except RAGUnavailableError:
++            raise
+         except Exception as e:
+             log.exception(f'Error when querying the collection with hybrid_search: {e}')
+             return None, e
+@@ -1335,9 +1355,19 @@ async def get_sources_from_items(
+     full_context=False,
+     user: UserModel | None = None,
+ ):
+-    log.debug('items: %s %s %s %s %s', items, queries, embedding_function, reranking_function, full_context)
+-
+     bypass_embedding_and_retrieval = await Config.get('rag.bypass_embedding_and_retrieval')
++    log.debug(
++        'get_sources_from_items: item_count=%d query_count=%d full_context=%s',
++        len(items),
++        len(queries),
++        full_context,
++    )
++    require_safe_retrieval_mode(
++        reranking_function,
++        full_context=full_context is True,
++        hybrid_search=hybrid_search is True,
++        bypass_embedding_and_retrieval=bypass_embedding_and_retrieval is True,
++    )
+     extracted_collections = []
+     query_results = []
+     folder_items = set()
+@@ -1630,6 +1660,8 @@ async def get_sources_from_items(
+                         embedding_function=embedding_function,
+                         k=k,
+                     )
++            except RAGUnavailableError:
++                raise
+             except Exception as e:
+                 log.exception(e)
+ 
+@@ -1744,7 +1776,11 @@ class RerankCompressor(BaseDocumentCompressor):
+ 
+         scores = None
+         if reranking:
+-            scores = await asyncio.to_thread(self.reranking_function, query, documents)
++            try:
++                scores = await asyncio.to_thread(self.reranking_function, query, documents)
++            except RAGUnavailableError:
++                close_required_reranker()
++                raise
+         else:
+             from sentence_transformers import util as st_util
+ 
+@@ -1753,27 +1789,23 @@ class RerankCompressor(BaseDocumentCompressor):
+             document_embedding = await self.embedding_function(doc_texts, RAG_EMBEDDING_CONTENT_PREFIX)
+             scores = st_util.cos_sim(query_embedding, document_embedding)[0]
+ 
+-        if scores is not None:
+-            docs_with_scores = list(
+-                zip(
+-                    documents,
+-                    scores.tolist() if not isinstance(scores, list) else scores,
+-                )
+-            )
+-            if self.r_score:
+-                docs_with_scores = [(d, s) for d, s in docs_with_scores if s >= self.r_score]
++        try:
++            scores = validate_rerank_scores(scores, len(documents))
++        except RAGUnavailableError:
++            close_required_reranker()
++            raise
++        docs_with_scores = list(zip(documents, scores))
++        if self.r_score:
++            docs_with_scores = [(d, s) for d, s in docs_with_scores if s >= self.r_score]
+ 
+-            result = sorted(docs_with_scores, key=operator.itemgetter(1), reverse=True)
+-            final_results = []
+-            for doc, doc_score in result[: self.top_n]:
+-                metadata = doc.metadata
+-                metadata['score'] = doc_score
+-                doc = Document(
+-                    page_content=doc.page_content,
+-                    metadata=metadata,
+-                )
+-                final_results.append(doc)
+-            return final_results
+-        else:
+-            log.warning('No valid scores found, check your reranking function. Returning original documents.')
+-            return documents
++        result = sorted(docs_with_scores, key=operator.itemgetter(1), reverse=True)
++        final_results = []
++        for doc, doc_score in result[: self.top_n]:
++            metadata = doc.metadata
++            metadata['score'] = doc_score
++            doc = Document(
++                page_content=doc.page_content,
++                metadata=metadata,
++            )
++            final_results.append(doc)
++        return final_results
+diff --git a/backend/open_webui/utils/middleware.py b/backend/open_webui/utils/middleware.py
+index 271d072..733382a 100644
+--- a/backend/open_webui/utils/middleware.py
++++ b/backend/open_webui/utils/middleware.py
+@@ -49,6 +49,10 @@ from open_webui.models.oauth_sessions import OAuthSessions
+ from open_webui.models.users import UserModel, Users
+ from open_webui.events import EVENTS, publish_event
+ from open_webui.retrieval.utils import get_sources_from_items
++from open_webui.retrieval.rag_gate import (
++    RAGUnavailableError,
++    require_file_rag_ready,
++)
+ from open_webui.routers.images import (
+     CreateImageForm,
+     EditImageForm,
+@@ -1834,6 +1838,29 @@ async def chat_completion_files_handler(
+         # Check if all files are in full context mode
+         all_full_context = all(item.get('context') == 'full' for item in files)
+ 
++        rag_config = await Config.get_many(
++            'rag.top_k',
++            'rag.top_k_reranker',
++            'rag.relevance_threshold',
++            'rag.hybrid_bm25_weight',
++            'rag.enable_hybrid_search',
++            'rag.full_context',
++            'rag.bypass_embedding_and_retrieval',
++        )
++        reranking_function = (
++            (lambda query, documents: request.app.state.RERANKING_FUNCTION(query, documents, user=user))
++            if request.app.state.RERANKING_FUNCTION
++            else None
++        )
++        # Refuse unavailable or no-rerank modes before query generation.
++        require_file_rag_ready(
++            files,
++            reranking_function,
++            full_context=(all_full_context or rag_config.get('rag.full_context')) is True,
++            hybrid_search=rag_config.get('rag.enable_hybrid_search') is True,
++            bypass_embedding_and_retrieval=(rag_config.get('rag.bypass_embedding_and_retrieval') is True),
++        )
++
+         queries = []
+         if not all_full_context:
+             try:
+@@ -1880,15 +1907,6 @@ async def chat_completion_files_handler(
+             queries = [get_last_user_message(body['messages']) or '']
+ 
+         try:
+-            # One batched SELECT instead of six sequential round trips.
+-            rag_config = await Config.get_many(
+-                'rag.top_k',
+-                'rag.top_k_reranker',
+-                'rag.relevance_threshold',
+-                'rag.hybrid_bm25_weight',
+-                'rag.enable_hybrid_search',
+-                'rag.full_context',
+-            )
+             # Directly await async get_sources_from_items (no thread needed - fully async now)
+             sources = await get_sources_from_items(
+                 request=request,
+@@ -1898,11 +1916,7 @@ async def chat_completion_files_handler(
+                     query, prefix=prefix, user=user
+                 ),
+                 k=rag_config.get('rag.top_k'),
+-                reranking_function=(
+-                    (lambda query, documents: request.app.state.RERANKING_FUNCTION(query, documents, user=user))
+-                    if request.app.state.RERANKING_FUNCTION
+-                    else None
+-                ),
++                reranking_function=reranking_function,
+                 k_reranker=rag_config.get('rag.top_k_reranker'),
+                 r=rag_config.get('rag.relevance_threshold'),
+                 hybrid_bm25_weight=rag_config.get('rag.hybrid_bm25_weight'),
+@@ -1910,6 +1924,8 @@ async def chat_completion_files_handler(
+                 full_context=all_full_context or rag_config.get('rag.full_context'),
+                 user=user,
+             )
++        except RAGUnavailableError:
++            raise
+         except Exception as e:
+             log.exception(e)
+ 
+@@ -2928,6 +2944,8 @@ async def process_chat_payload(request, form_data, user, metadata, model):
+         try:
+             form_data, flags = await chat_completion_files_handler(request, form_data, extra_params, user)
+             sources.extend(flags.get('sources', []))
++        except RAGUnavailableError:
++            raise
+         except Exception as e:
+             log.exception(e)
+ 
+diff --git a/backend/open_webui/tools/builtin.py b/backend/open_webui/tools/builtin.py
+index 1b721f1..f677dd4 100644
+--- a/backend/open_webui/tools/builtin.py
++++ b/backend/open_webui/tools/builtin.py
+@@ -30,6 +30,10 @@ from open_webui.models.memories import Memories
+ from open_webui.models.messages import Message, Messages
+ from open_webui.models.notes import Notes
+ from open_webui.models.users import UserModel
++from open_webui.retrieval.rag_gate import (
++    RAG_UNAVAILABLE_DETAIL,
++    RAGUnavailableError,
++)
+ from open_webui.retrieval.utils import get_content_from_url
+ from open_webui.retrieval.vector.async_client import ASYNC_VECTOR_DB_CLIENT
+ from open_webui.routers.images import (
+@@ -2460,6 +2464,13 @@ async def query_chat_files(
+                 chunks.append(chunk)
+ 
+         return json.dumps(chunks[:count], ensure_ascii=False)
++    except RAGUnavailableError:
++        return json.dumps(
++            {
++                'error': RAG_UNAVAILABLE_DETAIL,
++                'status': RAGUnavailableError.status_code,
++            }
++        )
+     except Exception as e:
+         log.exception(f'query_chat_files error: {e}')
+         return json.dumps({'error': str(e)})
+@@ -3203,6 +3214,13 @@ async def query_knowledge_files(
+         chunks = chunks[:count]
+ 
+         return json.dumps(chunks, ensure_ascii=False)
++    except RAGUnavailableError:
++        return json.dumps(
++            {
++                'error': RAG_UNAVAILABLE_DETAIL,
++                'status': RAGUnavailableError.status_code,
++            }
++        )
+     except Exception as e:
+         log.exception(f'query_knowledge_files error: {e}')
+         return json.dumps({'error': str(e)})
+diff --git a/backend/open_webui/routers/retrieval.py b/backend/open_webui/routers/retrieval.py
+index 4bb2fbc..ac7fe75 100644
+--- a/backend/open_webui/routers/retrieval.py
++++ b/backend/open_webui/routers/retrieval.py
+@@ -77,6 +77,12 @@ from open_webui.retrieval.utils import (
+     query_doc,
+     query_doc_with_hybrid_search,
+ )
++from open_webui.retrieval.rag_gate import (
++    RAGUnavailableError,
++    configure_required_reranker,
++    require_required_reranker,
++    require_safe_retrieval_mode,
++)
+ from open_webui.retrieval.vector.async_client import ASYNC_VECTOR_DB_CLIENT
+ from open_webui.retrieval.vector.factory import VECTOR_DB_CLIENT
+ from open_webui.retrieval.vector.utils import filter_metadata
+@@ -171,8 +177,11 @@ def get_rf(
+     auto_update: bool = RAG_RERANKING_MODEL_AUTO_UPDATE,
+ ):
+     rf = None
+-    # Convert timeout string to int or None (system default)
+-    timeout_value = int(external_reranker_timeout) if external_reranker_timeout else None
++    configure_required_reranker(engine == 'external' and bool(reranking_model))
++    if isinstance(external_reranker_timeout, bool):
++        timeout_value = external_reranker_timeout
++    else:
++        timeout_value = float(external_reranker_timeout) if external_reranker_timeout else None
+     if reranking_model:
+         if any(model in reranking_model for model in ['jinaai/jina-colbert-v2']):
+             try:
+@@ -197,6 +206,9 @@ def get_rf(
+                         model=reranking_model,
+                         timeout=timeout_value,
+                     )
++                    rf.qualify()
++                except RAGUnavailableError:
++                    raise
+                 except Exception as e:
+                     log.error(f'ExternalReranking: {e}')
+                     raise Exception(ERROR_MESSAGES.DEFAULT(e, 'Error loading reranking model'))
+@@ -249,6 +261,22 @@ def get_rf(
+ 
+ router = APIRouter()
+ 
++
++@router.get('/health')
++async def get_rag_health(
++    request: Request,
++    user=Depends(get_verified_user),
++):
++    """Authenticated readiness for the package-mandated RAG boundary."""
++    try:
++        require_required_reranker(request.app.state.RERANKING_FUNCTION)
++    except RAGUnavailableError as e:
++        raise HTTPException(
++            status_code=RAGUnavailableError.status_code,
++            detail=str(e),
++        )
++    return {'status': 'qualified'}
++
+ RETRIEVAL_CONFIG_KEYS = {
+     'ALLOWED_FILE_EXTENSIONS': 'rag.file.allowed_extensions',
+     'AZURE_AI_SEARCH_API_KEY': 'web.search.azure_ai_search_api_key',
+@@ -1165,6 +1193,10 @@ async def update_rag_config(request: Request, form_data: ConfigForm, user=Depend
+         config.RAG_RERANKING_MODEL = (
+             form_data.RAG_RERANKING_MODEL if form_data.RAG_RERANKING_MODEL is not None else config.RAG_RERANKING_MODEL
+         )
++        configure_required_reranker(
++            config.RAG_RERANKING_ENGINE == 'external'
++            and bool(config.RAG_RERANKING_MODEL)
++        )
+ 
+         try:
+             if config.ENABLE_RAG_HYBRID_SEARCH and not config.BYPASS_EMBEDDING_AND_RETRIEVAL:
+@@ -1182,9 +1214,16 @@ async def update_rag_config(request: Request, form_data: ConfigForm, user=Depend
+                     request.app.state.rf,
+                     reranking_batch_size=config.RAG_RERANKING_BATCH_SIZE,
+                 )
++        except RAGUnavailableError:
++            raise
+         except Exception as e:
+             log.error(f'Error loading reranking model: {e}')
+             config.ENABLE_RAG_HYBRID_SEARCH = False
++    except RAGUnavailableError as e:
++        raise HTTPException(
++            status_code=RAGUnavailableError.status_code,
++            detail=str(e),
++        )
+     except Exception as e:
+         log.exception(f'Problem updating reranking model: {e}')
+         raise HTTPException(
+@@ -2750,6 +2789,19 @@ async def query_doc_handler(
+     await _validate_collection_access([form_data.collection_name], user)
+ 
+     try:
++        reranking_function = (
++            (lambda query, documents: request.app.state.RERANKING_FUNCTION(query, documents, user=user))
++            if request.app.state.RERANKING_FUNCTION
++            else None
++        )
++        require_safe_retrieval_mode(
++            reranking_function,
++            hybrid_search=(
++                config.ENABLE_RAG_HYBRID_SEARCH
++                and (form_data.hybrid is None or form_data.hybrid)
++            ),
++            bypass_embedding_and_retrieval=config.BYPASS_EMBEDDING_AND_RETRIEVAL,
++        )
+         if config.ENABLE_RAG_HYBRID_SEARCH and (form_data.hybrid is None or form_data.hybrid):
+             return await query_doc_with_hybrid_search(
+                 collection_name=form_data.collection_name,
+@@ -2759,11 +2811,7 @@ async def query_doc_handler(
+                     query, prefix=prefix, user=user
+                 ),
+                 k=form_data.k if form_data.k else config.TOP_K,
+-                reranking_function=(
+-                    (lambda query, documents: request.app.state.RERANKING_FUNCTION(query, documents, user=user))
+-                    if request.app.state.RERANKING_FUNCTION
+-                    else None
+-                ),
++                reranking_function=reranking_function,
+                 k_reranker=form_data.k_reranker or config.TOP_K_RERANKER,
+                 r=(form_data.r if form_data.r else config.RELEVANCE_THRESHOLD),
+                 hybrid_bm25_weight=(
+@@ -2785,6 +2833,11 @@ async def query_doc_handler(
+                 k=form_data.k if form_data.k else config.TOP_K,
+                 user=user,
+             )
++    except RAGUnavailableError as e:
++        raise HTTPException(
++            status_code=RAGUnavailableError.status_code,
++            detail=str(e),
++        )
+     except HTTPException:
+         raise
+     except Exception as e:
+@@ -2816,6 +2869,19 @@ async def query_collection_handler(
+     await _validate_collection_access(form_data.collection_names, user)
+ 
+     try:
++        reranking_function = (
++            (lambda query, documents: request.app.state.RERANKING_FUNCTION(query, documents, user=user))
++            if request.app.state.RERANKING_FUNCTION
++            else None
++        )
++        require_safe_retrieval_mode(
++            reranking_function,
++            hybrid_search=(
++                config.ENABLE_RAG_HYBRID_SEARCH
++                and (form_data.hybrid is None or form_data.hybrid)
++            ),
++            bypass_embedding_and_retrieval=config.BYPASS_EMBEDDING_AND_RETRIEVAL,
++        )
+         if config.ENABLE_RAG_HYBRID_SEARCH and (form_data.hybrid is None or form_data.hybrid):
+             return await query_collection_with_hybrid_search(
+                 collection_names=form_data.collection_names,
+@@ -2824,11 +2890,7 @@ async def query_collection_handler(
+                     query, prefix=prefix, user=user
+                 ),
+                 k=form_data.k if form_data.k else config.TOP_K,
+-                reranking_function=(
+-                    (lambda query, documents: request.app.state.RERANKING_FUNCTION(query, documents, user=user))
+-                    if request.app.state.RERANKING_FUNCTION
+-                    else None
+-                ),
++                reranking_function=reranking_function,
+                 k_reranker=form_data.k_reranker or config.TOP_K_RERANKER,
+                 r=(form_data.r if form_data.r else config.RELEVANCE_THRESHOLD),
+                 hybrid_bm25_weight=(
+@@ -2853,6 +2915,11 @@ async def query_collection_handler(
+                 k=form_data.k if form_data.k else config.TOP_K,
+             )
+ 
++    except RAGUnavailableError as e:
++        raise HTTPException(
++            status_code=RAGUnavailableError.status_code,
++            detail=str(e),
++        )
+     except HTTPException:
+         raise
+     except Exception as e:
+diff --git a/backend/open_webui/main.py b/backend/open_webui/main.py
+index 55613ac..75e930b 100644
+--- a/backend/open_webui/main.py
++++ b/backend/open_webui/main.py
+@@ -175,6 +175,10 @@ from open_webui.routers.retrieval import (
+     get_reranking_function,
+     get_rf,
+ )
++from open_webui.retrieval.rag_gate import (
++    RAGUnavailableError,
++    configure_required_reranker,
++)
+ from open_webui.socket.main import (
+     MODELS,
+     get_event_emitter,
+@@ -619,6 +623,10 @@ async def initialize_runtime_config(app: FastAPI):
+             'rag.external_reranker_api_key',
+             'rag.external_reranker_timeout',
+         )
++        configure_required_reranker(
++            rag_config.get('rag.reranking_engine') == 'external'
++            and bool(rag_config.get('rag.reranking_model'))
++        )
+         app.state.ef = get_ef(rag_config.get('rag.embedding_engine'), rag_config.get('rag.embedding_model'))
+         if rag_config.get('rag.enable_hybrid_search') and not rag_config.get('rag.bypass_embedding_and_retrieval'):
+             app.state.rf = get_rf(
+@@ -1617,7 +1625,16 @@ async def chat_completion(
+                 # a proper HTTP response; without this the function would
+                 # return None which FastAPI serializes as null.  #23924
+                 raise HTTPException(
+-                    status_code=status.HTTP_400_BAD_REQUEST,
++                    status_code=(
++                        RAGUnavailableError.status_code
++                        if isinstance(e, RAGUnavailableError)
++                        else status.HTTP_400_BAD_REQUEST
++                    ),
++                    detail=error_detail,
++                )
++            if isinstance(e, RAGUnavailableError):
++                raise HTTPException(
++                    status_code=RAGUnavailableError.status_code,
+                     detail=error_detail,
+                 )
+         finally:
+
