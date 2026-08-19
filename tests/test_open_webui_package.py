@@ -112,6 +112,48 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
         }
         self.assertTrue(externalized.isdisjoint({name for name, _ in entries}))
 
+    def test_offline_dependency_bundles_are_makepkg_sources_and_only_build_inputs(self):
+        recipe = read(OPEN_WEBUI / "PKGBUILD")
+        frontend_patch = read(OPEN_WEBUI / "0003-build-frozen-frontend.patch")
+        source_info = subprocess.run(
+            ["makepkg", "--printsrcinfo"],
+            cwd=OPEN_WEBUI,
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+
+        self.assertIn("pkgrel=2", recipe)
+        for asset, digest in (
+            (
+                "open-webui-npm-offline-closure-0.11.0.tar.zst",
+                "6238b436c6669a311623d97724c6b2ada0e77090d0e5219860acc38c53fb32b1",
+            ),
+            (
+                "open-webui-python-offline-closure-0.11.0-cp314-x86_64.tar.zst",
+                "bcd3c5c651fc42e8e5a73a4c81f4b5760e82f6b39eb714caf999700bad4ed27c",
+            ),
+        ):
+            self.assertIn(asset, source_info)
+            self.assertIn(digest, source_info)
+            self.assertIn(f"noextract = {asset}", source_info)
+        for asset in (
+            "npm-offline-closure.py",
+            "npm-offline-closure-manifest.json",
+            "python-offline-closure.py",
+        ):
+            self.assertIn(asset, recipe)
+        self.assertIn('npm-offline-closure.py" seed', recipe)
+        self.assertIn('python-offline-closure.py" verify-archive', recipe)
+        self.assertIn("NPM_CONFIG_OFFLINE=true", recipe)
+        self.assertIn("npm, 'ci', '--offline'", frontend_patch)
+        for argument in (
+            "--offline",
+            "--no-index",
+            '--find-links "${srcdir}/open-webui-python-offline-closure/wheelhouse"',
+        ):
+            self.assertIn(argument, recipe)
+
     def test_private_lock_has_reproducible_package_local_provenance(self):
         lock = read(OPEN_WEBUI / "open-webui-private-requirements.lock")
         constraints = read(OPEN_WEBUI / "open-webui-private-constraints.txt").splitlines()
@@ -382,8 +424,11 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
         for collection in ("memories", "knowledge", "files", "web-search", "hash-based"):
             self.assertIn(f"open-webui-rag-v1_{collection}", notes)
         self.assertIn("create or reset collections", notes)
-        self.assertIn("G0/G1 blocker", notes)
-        self.assertIn("self-contained, networkless clean build", notes)
+        self.assertIn("closure archives are immutable", notes)
+        self.assertIn("`makepkg` sources", notes)
+        self.assertIn("npm ci --offline", notes)
+        self.assertIn("uv --offline --no-index --require-hashes", notes)
+        self.assertIn("integrated provider, restore, and rollback evidence", notes)
         self.assertNotIn("0.9.5", notes)
         self.assertNotIn("127.0.0.1:8080", notes)
         self.assertNotIn("enable --now", notes)

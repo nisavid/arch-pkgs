@@ -8,7 +8,7 @@
 -        subprocess.run([npm, 'install', '--force'], check=True)  # noqa: S603
 -        stderr.write('\n### npm run build\n')
 +        stderr.write('### npm ci\n')
-+        subprocess.run([npm, 'ci'], check=True)  # noqa: S603
++        subprocess.run([npm, 'ci', '--offline'], check=True)  # noqa: S603
 +        stderr.write('\n### vite build\n')
          os.environ['APP_BUILD_HASH'] = version
          node_options = os.environ.get('NODE_OPTIONS', '')
