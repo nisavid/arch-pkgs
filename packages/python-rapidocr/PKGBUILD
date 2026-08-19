@@ -1,0 +1,84 @@
+# Maintainer: aliu <AA RON LIU <GMAIL.COM> >
+
+pkgname=python-rapidocr
+pkgver=3.9.2
+pkgrel=1
+pkgdesc='Cross-runtime OCR library'
+arch=('any')
+url='https://github.com/RapidAI/RapidOCR'
+license=('Apache-2.0')
+depends=(
+  'python'
+  'python-colorlog'
+  'python-numpy'
+  'python-omegaconf'
+  'python-onnxruntime'
+  'python-opencv'
+  'python-pillow'
+  'python-pyclipper'
+  'python-requests'
+  'python-shapely'
+  'python-six'
+  'python-tqdm'
+  'python-yaml'
+)
+makedepends=(
+  'python-build'
+  'python-installer'
+  'python-setuptools'
+  'python-wheel'
+)
+conflicts=('python-rapidocr-onnxruntime')
+replaces=('python-rapidocr-onnxruntime')
+_commit=095232a4c94f7f0e6600ba5bba1177010ad696d4
+source=(
+  "RapidOCR-${_commit}.tar.gz::https://codeload.github.com/RapidAI/RapidOCR/tar.gz/${_commit}"
+  'PP-OCRv6_det_small.onnx::https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.9.2/onnx/PP-OCRv6/det/PP-OCRv6_det_small.onnx'
+  'ch_ppocr_mobile_v2.0_cls_mobile.onnx::https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.9.2/onnx/PP-OCRv4/cls/ch_ppocr_mobile_v2.0_cls_mobile.onnx'
+  'PP-OCRv6_rec_small.onnx::https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.9.2/onnx/PP-OCRv6/rec/PP-OCRv6_rec_small.onnx'
+  'pyproject-version.patch'
+  'rapidocr-models.MANIFEST.in'
+)
+sha256sums=('be524502995f5a2628b777daa6cf37d207aa7a6d9d3488c942338ff3698aef5f'
+            '090f04abcd9d9a7498bc4ebf677e4cb9bdce1fe4197ddb7e529f1ef44e1ff94f'
+            'e47acedf663230f8863ff1ab0e64dd2d82b838fceb5957146dab185a89d6215c'
+            '6f327246b50388f3c176ae304bd95767ea6dc0c9ae92153ef8cbe210b3c14884'
+            '7da9e8144b655aab45d6ee54e9c336e07ae9092d0f0ad7241444da290ef210e7'
+            '38f2283eb4f6c5033f46231e39efbcabf493634f760f00008d4ca114601bea3f')
+
+prepare() {
+  cd "RapidOCR-${_commit}/python"
+
+  patch --fuzz=0 -Np1 -i "${srcdir}/pyproject-version.patch"
+  rm -f rapidocr/models/.gitkeep
+  install -Dm644 "${srcdir}/PP-OCRv6_det_small.onnx" rapidocr/models/PP-OCRv6_det_small.onnx
+  install -Dm644 "${srcdir}/ch_ppocr_mobile_v2.0_cls_mobile.onnx" \
+    rapidocr/models/ch_ppocr_mobile_v2.0_cls_mobile.onnx
+  install -Dm644 "${srcdir}/PP-OCRv6_rec_small.onnx" rapidocr/models/PP-OCRv6_rec_small.onnx
+  install -Dm644 "${srcdir}/rapidocr-models.MANIFEST.in" MANIFEST.in
+}
+
+build() {
+  cd "RapidOCR-${_commit}/python"
+
+  python -m build --wheel --skip-dependency-check --no-isolation
+}
+
+package() {
+  cd "RapidOCR-${_commit}/python"
+
+  python -m installer --destdir="${pkgdir}" --no-compile-bytecode dist/*.whl
+  install -Dm644 ../LICENSE "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
+
+  local _site
+  _site=$(find "${pkgdir}/usr/lib" -type d -path '*/site-packages' -print -quit)
+  [[ -n ${_site} ]]
+  (
+    cd "${_site}/rapidocr/models"
+    printf '%s\n' \
+      '090f04abcd9d9a7498bc4ebf677e4cb9bdce1fe4197ddb7e529f1ef44e1ff94f  PP-OCRv6_det_small.onnx' \
+      'e47acedf663230f8863ff1ab0e64dd2d82b838fceb5957146dab185a89d6215c  ch_ppocr_mobile_v2.0_cls_mobile.onnx' \
+      '6f327246b50388f3c176ae304bd95767ea6dc0c9ae92153ef8cbe210b3c14884  PP-OCRv6_rec_small.onnx' | \
+      sha256sum -c --status --strict
+  )
+}

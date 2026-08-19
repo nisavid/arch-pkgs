@@ -1,4 +1,56 @@
 #!/bin/sh
+set -eu
+
+credential_directory=${CREDENTIALS_DIRECTORY:-}
+if [ -z "$credential_directory" ]; then
+  echo "open-webui: systemd credential directory is unavailable" >&2
+  exit 78
+fi
+
+load_credential() {
+  credential_name=$1
+  environment_name=$2
+  credential_path=${credential_directory}/${credential_name}
+  if [ ! -r "$credential_path" ]; then
+    echo "open-webui: required credential is unavailable: ${credential_name}" >&2
+    exit 78
+  fi
+  credential_value=$(cat "$credential_path")
+  if [ -z "$credential_value" ]; then
+    echo "open-webui: required credential is empty: ${credential_name}" >&2
+    exit 78
+  fi
+  export "${environment_name}=${credential_value}"
+  unset credential_value
+}
+
+load_credential webui-secret-key WEBUI_SECRET_KEY
+load_credential oauth-client-info-encryption-key OAUTH_CLIENT_INFO_ENCRYPTION_KEY
+load_credential oauth-session-token-encryption-key OAUTH_SESSION_TOKEN_ENCRYPTION_KEY
+if [ "$WEBUI_SECRET_KEY" = "$OAUTH_CLIENT_INFO_ENCRYPTION_KEY" ] \
+  || [ "$WEBUI_SECRET_KEY" = "$OAUTH_SESSION_TOKEN_ENCRYPTION_KEY" ] \
+  || [ "$OAUTH_CLIENT_INFO_ENCRYPTION_KEY" = "$OAUTH_SESSION_TOKEN_ENCRYPTION_KEY" ]; then
+  echo "open-webui: stable signing and encryption credentials must be pairwise distinct" >&2
+  exit 78
+fi
+load_credential valkey-url REDIS_URL
+export WEBSOCKET_REDIS_URL=$REDIS_URL
+load_credential qdrant-runtime-api-key QDRANT_API_KEY
+load_credential lemonade-inference-api-key RAG_OPENAI_API_KEY
+export RAG_EXTERNAL_RERANKER_API_KEY=$RAG_OPENAI_API_KEY
+
+# A deployment-only drop-in may expose the transient bootstrap inputs on the
+# first closed-socket start. A partial set fails rather than falling through to
+# the unauthenticated first-signup path.
+admin_email_path=${credential_directory}/admin-email
+admin_name_path=${credential_directory}/admin-name
+admin_password_path=${credential_directory}/admin-bootstrap-password
+if [ -e "$admin_email_path" ] || [ -e "$admin_name_path" ] || [ -e "$admin_password_path" ]; then
+  load_credential admin-email WEBUI_ADMIN_EMAIL
+  load_credential admin-name WEBUI_ADMIN_NAME
+  load_credential admin-bootstrap-password WEBUI_ADMIN_PASSWORD
+fi
+
 export PYTHONPATH="/opt/open-webui/lib/python3.14/site-packages${PYTHONPATH:+:${PYTHONPATH}}"
 if [ "${1:-}" = "--version" ] || [ "${1:-}" = "-V" ]; then
   exec /usr/bin/python -c 'from open_webui.env import VERSION; print(VERSION)'

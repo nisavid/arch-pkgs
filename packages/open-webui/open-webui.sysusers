@@ -1,1 +1,4 @@
+g open-webui-proxy - -
 u open-webui - "Open WebUI service user" /var/lib/open-webui
+m open-webui open-webui-proxy
+m caddy open-webui-proxy
