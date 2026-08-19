@@ -1,0 +1,3 @@
+include rapidocr/models/PP-OCRv6_det_small.onnx
+include rapidocr/models/ch_ppocr_mobile_v2.0_cls_mobile.onnx
+include rapidocr/models/PP-OCRv6_rec_small.onnx

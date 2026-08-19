@@ -1,0 +1,5 @@
+[python-rapidocr]
+source = "github"
+github = "RapidAI/RapidOCR"
+use_latest_release = true
+prefix = "v"

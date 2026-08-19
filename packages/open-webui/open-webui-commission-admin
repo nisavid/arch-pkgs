@@ -1,0 +1,149 @@
+#!/usr/bin/python
+import http.client
+import json
+import os
+import socket
+import sys
+from pathlib import Path
+
+
+class CommissioningError(RuntimeError):
+    pass
+
+
+class UnixHTTPConnection(http.client.HTTPConnection):
+    def __init__(self, socket_path: Path):
+        super().__init__("localhost", timeout=15)
+        self.socket_path = socket_path
+
+    def connect(self) -> None:
+        self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        self.sock.settimeout(self.timeout)
+        self.sock.connect(self.socket_path)
+
+
+def credential(name: str) -> str:
+    directory = os.environ.get("CREDENTIALS_DIRECTORY")
+    if not directory:
+        raise CommissioningError("systemd credential directory is unavailable")
+    path = Path(directory) / name
+    try:
+        value = path.read_text(encoding="utf-8").rstrip("\n")
+    except OSError as error:
+        raise CommissioningError(f"required credential is unavailable: {name}") from error
+    if not value:
+        raise CommissioningError(f"required credential is empty: {name}")
+    return value
+
+
+def request_json(
+    socket_path: Path,
+    method: str,
+    path: str,
+    payload: object | None = None,
+    token: str | None = None,
+    expected: tuple[int, ...] = (200,),
+) -> tuple[int, object]:
+    body = None if payload is None else json.dumps(payload, separators=(",", ":"))
+    headers = {"Accept": "application/json"}
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+    if token is not None:
+        headers["Authorization"] = f"Bearer {token}"
+    connection = UnixHTTPConnection(socket_path)
+    try:
+        connection.request(method, path, body=body, headers=headers)
+        response = connection.getresponse()
+        response_body = response.read()
+    except (OSError, http.client.HTTPException) as error:
+        raise CommissioningError("Open WebUI commissioning request failed") from error
+    finally:
+        connection.close()
+    if response.status not in expected:
+        raise CommissioningError(
+            f"Open WebUI commissioning endpoint {path} returned HTTP {response.status}"
+        )
+    if not response_body:
+        return response.status, None
+    try:
+        return response.status, json.loads(response_body)
+    except json.JSONDecodeError as error:
+        raise CommissioningError(
+            f"Open WebUI commissioning endpoint {path} returned invalid JSON"
+        ) from error
+
+
+def signin(socket_path: Path, email: str, password: str) -> dict[str, object]:
+    _, response = request_json(
+        socket_path,
+        "POST",
+        "/api/v1/auths/signin",
+        {"email": email, "password": password},
+    )
+    if not isinstance(response, dict) or not isinstance(response.get("token"), str):
+        raise CommissioningError("Open WebUI sign-in response did not contain a token")
+    return response
+
+
+def main() -> int:
+    socket_path = Path(os.environ.get("OPEN_WEBUI_SOCKET", "/run/open-webui/open-webui.sock"))
+    email = credential("admin-email").casefold()
+    name = credential("admin-name")
+    bootstrap_password = credential("admin-bootstrap-password")
+    final_password = credential("admin-final-password")
+    if bootstrap_password == final_password:
+        raise CommissioningError("bootstrap and final administrator passwords must differ")
+
+    initial_session = signin(socket_path, email, bootstrap_password)
+    token = str(initial_session["token"])
+    _, changed = request_json(
+        socket_path,
+        "POST",
+        "/api/v1/auths/update/password",
+        {"password": bootstrap_password, "new_password": final_password},
+        token,
+    )
+    if changed is not True:
+        raise CommissioningError("administrator password change was not confirmed")
+
+    request_json(
+        socket_path,
+        "POST",
+        "/api/v1/auths/signin",
+        {"email": email, "password": bootstrap_password},
+        expected=(400, 401, 403),
+    )
+    final_session = signin(socket_path, email, final_password)
+    final_token = str(final_session["token"])
+
+    _, users = request_json(socket_path, "GET", "/api/v1/users/", token=final_token)
+    if not isinstance(users, dict) or users.get("total") != 1:
+        raise CommissioningError("commissioned runtime does not contain exactly one user")
+    user_list = users.get("users")
+    if not isinstance(user_list, list) or len(user_list) != 1:
+        raise CommissioningError("commissioned runtime user inventory is malformed")
+    intended = user_list[0]
+    if (
+        not isinstance(intended, dict)
+        or str(intended.get("email", "")).casefold() != email
+        or intended.get("name") != name
+        or intended.get("role") != "admin"
+    ):
+        raise CommissioningError("the sole user is not the intended administrator")
+
+    _, config = request_json(socket_path, "GET", "/api/config", token=final_token)
+    if not isinstance(config, dict) or not isinstance(config.get("features"), dict):
+        raise CommissioningError("Open WebUI configuration response is malformed")
+    if config["features"].get("enable_signup") is not False:
+        raise CommissioningError("self-service signup is not disabled")
+
+    print("Open WebUI administrator commissioning postconditions passed")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        raise SystemExit(main())
+    except CommissioningError as error:
+        print(f"open-webui-commission-admin: {error}", file=sys.stderr)
+        raise SystemExit(1) from None

@@ -1,0 +1,11 @@
+--- a/pyproject.toml
++++ b/pyproject.toml
+@@ -127,7 +127,7 @@
+     "ldap3==2.9.1",
+ ]
+ readme = "README.md"
+-requires-python = ">= 3.11, < 3.13.0a1"
++requires-python = ">= 3.11, < 3.15.0a1"
+ dynamic = ["version"]
+ classifiers = [
+     "Development Status :: 4 - Beta",

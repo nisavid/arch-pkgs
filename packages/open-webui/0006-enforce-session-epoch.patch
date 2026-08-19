@@ -1,0 +1,218 @@
+From 8b2317f26dc9101499b87473f4a827265589a9db Mon Sep 17 00:00:00 2001
+From: Ivan D Vasin <ivan@nisavid.io>
+Date: Tue, 18 Aug 2026 18:00:00 -0400
+Subject: [PATCH] Enforce a non-restored session epoch
+X-Open-WebUI-Commit: f9590b8017199e56d5e953657e6498e3cef1d246
+X-Open-WebUI-Sdist-SHA256: e28c4fa997bf0a678caa7a0db6441da2e0c33b9a4120677f959ec3e45fccf9e9
+X-Open-WebUI-Init-SHA256: 11cd2fad929db12c687795239ab3b6af1b5ea6f3ad7363deedfabf9651dd22d4
+X-Open-WebUI-Auth-SHA256: d78b5f3fc2249d0b1719d0d280eb9aeef83922ef7b55c87cd843eedbd2e25c34
+X-Open-WebUI-Auth-Router-SHA256: 32bf3812b9a44face4bfa7efe4a0770577dc8608127bcbb41f25ea15a6085945
+
+Require the root-controlled current epoch before the service imports the app or
+binds its listener. Stamp every Open WebUI session JWT at the single minting
+seam and reject any token whose claim is missing, differently typed, lower, or
+higher at the single decoding seam. API-key authentication stays disabled so it
+cannot bypass epoch validation.
+
+Header and cookie authentication call decode_token directly. Socket.IO and the
+terminal WebSocket both call get_verified_user_by_token, which also converges on
+decode_token.
+
+The application gets read-only credential and comparison logic only. The
+forward-only ledger writer remains outside the restored runtime.
+
+The exact bound sign-out router clears cookies unconditionally. Its actor lookup
+and revocation calls reuse decode_token, so a stale epoch remains unattributed
+and causes no revocation write.
+---
+ open_webui/__init__.py            |   3 +
+ open_webui/utils/auth.py          |  30 +++++------
+ open_webui/utils/session_epoch.py | 100 +++++++++++++++++++++++++++++++++++++
+ 3 files changed, 116 insertions(+), 17 deletions(-)
+ create mode 100644 open_webui/utils/session_epoch.py
+
+diff --git a/open_webui/__init__.py b/open_webui/__init__.py
+--- a/open_webui/__init__.py
++++ b/open_webui/__init__.py
+@@ -37,3 +37,6 @@ def serve(
++    from open_webui.utils.session_epoch import read_current_session_epoch
++
++    read_current_session_epoch()
+     os.environ['FROM_INIT_PY'] = 'true'
+     if os.getenv('WEBUI_SECRET_KEY') is None:
+         typer.echo('Loading WEBUI_SECRET_KEY from file, not provided as an environment variable.')
+diff --git a/open_webui/utils/auth.py b/open_webui/utils/auth.py
+--- a/open_webui/utils/auth.py
++++ b/open_webui/utils/auth.py
+@@ -40,13 +40,19 @@ from open_webui.models.auths import Auths
+ from open_webui.models.config import Config
+ from open_webui.models.users import Users
+ from open_webui.utils.access_control import has_permission
++from open_webui.utils.session_epoch import (
++    read_current_session_epoch,
++    token_epoch_is_current,
++    with_current_session_epoch,
++)
+ from pytz import UTC
+ 
+ log = logging.getLogger(__name__)
+ 
+ SESSION_SECRET = WEBUI_SECRET_KEY
+ ALGORITHM = 'HS256'
+ PASSWORD_BCRYPT_MAX_BYTES = 72
++CURRENT_SESSION_EPOCH = read_current_session_epoch()
+ 
+ ##############
+ # Auth Utils
+@@ -220,7 +226,7 @@ async def verify_password(plain_password: str, hashed_password: str) -> bool:
+ # and may the claims therein honor the creator long after
+ # the session has closed.
+ def create_token(data: dict, expires_delta: Union[timedelta, None] = None) -> str:
+-    payload = data.copy()
++    payload = with_current_session_epoch(data, CURRENT_SESSION_EPOCH)
+ 
+     if expires_delta:
+         expire = datetime.now(UTC) + expires_delta
+@@ -236,6 +242,8 @@ def create_token(data: dict, expires_delta: Union[timedelta, None] = None) -> str:
+ def decode_token(token: str) -> dict | None:
+     try:
+         decoded = jwt.decode(token, SESSION_SECRET, algorithms=[ALGORITHM])
++        if not token_epoch_is_current(decoded, CURRENT_SESSION_EPOCH):
++            return None
+         return decoded
+     except Exception:
+         return None
+@@ -343,22 +351,10 @@ async def get_current_user(
+ 
+     # auth by api key
+     if token.startswith('sk-'):
+-        user = await get_current_user_by_api_key(request, token)
+-
+-        # Add user info to current span
+-        if ENABLE_OTEL:
+-            from opentelemetry import trace
+-
+-            current_span = trace.get_current_span()
+-            if current_span:
+-                current_span.set_attribute('client.user.id', user.id)
+-                current_span.set_attribute('client.user.email', user.email)
+-                current_span.set_attribute('client.user.role', user.role)
+-                current_span.set_attribute('client.auth.type', 'api_key')
+-
+-        # Scope-backed, so outer middleware (audit) can reuse the resolved user
+-        request.state.user = user
+-        return user
++        raise HTTPException(
++            status_code=status.HTTP_403_FORBIDDEN,
++            detail=ERROR_MESSAGES.API_KEY_NOT_ALLOWED,
++        )
+ 
+     # auth by jwt token
+     try:
+diff --git a/open_webui/utils/session_epoch.py b/open_webui/utils/session_epoch.py
+new file mode 100644
+--- /dev/null
++++ b/open_webui/utils/session_epoch.py
+@@ -0,0 +1,100 @@
++"""Session-epoch enforcement seam for the exact Open WebUI 0.11.0 candidate.
++
++The service receives the current epoch as a read-only systemd credential.  This
++module deliberately has no ledger mutation API: only the root-owned external
++helper may advance the epoch across a whole-runtime restore.
++"""
++
++from __future__ import annotations
++
++import os
++import stat
++from collections.abc import Mapping
++from pathlib import Path
++from typing import Any
++
++CREDENTIALS_DIRECTORY_ENV = "CREDENTIALS_DIRECTORY"
++CREDENTIAL_NAME = "session-epoch"
++SESSION_EPOCH_CLAIM = "owui_session_epoch"
++MAX_SESSION_EPOCH = (1 << 63) - 1
++MAX_SERIALIZED_EPOCH_BYTES = len(str(MAX_SESSION_EPOCH))
++
++
++class SessionEpochError(RuntimeError):
++    """The current session epoch is absent, unsafe, or noncanonical."""
++
++
++def parse_session_epoch(raw: bytes) -> int:
++    """Parse the one canonical representation: unsigned ASCII decimal."""
++    if not isinstance(raw, bytes):
++        raise SessionEpochError("session epoch must be bytes")
++    if not raw or len(raw) > MAX_SERIALIZED_EPOCH_BYTES:
++        raise SessionEpochError("session epoch is empty or out of range")
++    if not raw.isdigit() or (len(raw) > 1 and raw.startswith(b"0")):
++        raise SessionEpochError("session epoch is not canonical unsigned decimal")
++
++    value = int(raw)
++    if value > MAX_SESSION_EPOCH:
++        raise SessionEpochError("session epoch is out of range")
++    return value
++
++
++def _read_read_only_regular_file(path: Path) -> bytes:
++    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
++    fd: int | None = None
++    try:
++        fd = os.open(path, flags)
++        metadata = os.fstat(fd)
++        if not stat.S_ISREG(metadata.st_mode):
++            raise SessionEpochError("session epoch credential is not a regular file")
++        if stat.S_IMODE(metadata.st_mode) & 0o222:
++            raise SessionEpochError("session epoch credential is not read-only")
++        return os.read(fd, MAX_SERIALIZED_EPOCH_BYTES + 1)
++    except SessionEpochError:
++        raise
++    except OSError as error:
++        raise SessionEpochError("session epoch credential is unavailable") from error
++    finally:
++        if fd is not None:
++            os.close(fd)
++
++
++def read_current_session_epoch() -> int:
++    """Load the mandatory systemd credential without accepting a fallback."""
++    credentials_directory = os.environ.get(CREDENTIALS_DIRECTORY_ENV)
++    if not credentials_directory:
++        raise SessionEpochError("systemd credentials directory is unavailable")
++
++    directory = Path(credentials_directory)
++    if not directory.is_absolute():
++        raise SessionEpochError("systemd credentials directory must be absolute")
++
++    return parse_session_epoch(
++        _read_read_only_regular_file(directory / CREDENTIAL_NAME)
++    )
++
++
++def _validate_epoch_value(value: int) -> int:
++    if type(value) is not int or value < 0 or value > MAX_SESSION_EPOCH:
++        raise SessionEpochError("session epoch must be a bounded integer")
++    return value
++
++
++def with_current_session_epoch(
++    payload: Mapping[str, Any], current_epoch: int
++) -> dict[str, Any]:
++    """Return a JWT payload whose epoch claim cannot be supplied by the caller."""
++    epoch = _validate_epoch_value(current_epoch)
++    stamped = dict(payload)
++    stamped[SESSION_EPOCH_CLAIM] = epoch
++    return stamped
++
++
++def token_epoch_is_current(claims: Mapping[str, Any], current_epoch: int) -> bool:
++    """Accept only an exact integer epoch; bool and numeric strings fail closed."""
++    try:
++        epoch = _validate_epoch_value(current_epoch)
++    except SessionEpochError:
++        return False
++    claim = claims.get(SESSION_EPOCH_CLAIM)
++    return type(claim) is int and claim == epoch
+-- 
+2.51.0
