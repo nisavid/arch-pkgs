@@ -2,7 +2,7 @@
 
 pkgname=open-webui
 pkgver=0.11.0
-pkgrel=2
+pkgrel=3
 pkgdesc="Self-hosted AI web interface for Ollama and OpenAI-compatible APIs"
 arch=('x86_64')
 url="https://github.com/open-webui/open-webui"
@@ -245,6 +245,8 @@ package() {
       "dist/open_webui-${pkgver}-py3-none-any.whl"
 
   rm -f "${_site}/open_webui-${pkgver}.dist-info/direct_url.json"
+  rm -f "${_site}/.lock"
+  find "${_site}" -type f -name uv_cache.json -delete
   if [[ -d "${_site}/bin" ]]; then
     find "${_site}/bin" -type f \
       -exec sed -i '1s|^#!.*/\.venv/bin/python3$|#!/usr/bin/python|' {} +

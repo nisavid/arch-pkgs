@@ -123,7 +123,7 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
             text=True,
         ).stdout
 
-        self.assertIn("pkgrel=2", recipe)
+        self.assertIn("pkgrel=3", recipe)
         for asset, digest in (
             (
                 "open-webui-npm-offline-closure-0.11.0.tar.zst",
@@ -281,6 +281,15 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
                 return_value=DistributionWithoutFiles(inventory),
             ), self.assertRaisesRegex(RuntimeError, "file inventory"):
                 verifier.provider_payload()
+
+    def test_private_install_drops_uv_build_metadata(self):
+        recipe = read(OPEN_WEBUI / "PKGBUILD")
+
+        self.assertIn('rm -f "${_site}/.lock"', recipe)
+        self.assertIn(
+            'find "${_site}" -type f -name uv_cache.json -delete',
+            recipe,
+        )
 
     def test_source_patches_are_narrow_and_runtime_is_uds_only(self):
         python_patch = read(OPEN_WEBUI / "0001-support-python-3.14.patch")
