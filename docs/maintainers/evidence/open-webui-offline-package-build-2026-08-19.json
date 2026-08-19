@@ -1,0 +1,347 @@
+{
+  "schema": "arch-pkgs.open-webui.offline-package-build.v1",
+  "evidence_date": "2026-08-19",
+  "scope": "Package-owned npm and Python input materialization, cold source verification, a no-egress Open WebUI package build, and package payload inspection only.",
+  "contract_refs": {
+    "issue_68": "https://github.com/nisavid/arch-pkgs/issues/68",
+    "accepted_household_boundary": "https://github.com/nisavid/arch-pkgs/issues/67#issuecomment-5332310242",
+    "build_input_release": "https://github.com/nisavid/arch-pkgs/releases/tag/open-webui-0.11.0-offline-closures-v1"
+  },
+  "source_subject": {
+    "repository": "https://github.com/nisavid/arch-pkgs",
+    "commit": "44223148ba1825c048e06865f458ddd58c05450c",
+    "package_tree_oid": "ec1dfe7e841e9ef3548ff5350399b2ccfbd86d86",
+    "package": "open-webui",
+    "package_version": "0.11.0-3",
+    "architecture": "x86_64",
+    "pkgbuild_sha256": "b160bdffd4a329269f838d4bcd9728dbcf13a44d95d05371ccac80ecd5634510",
+    "srcinfo_sha256": "be50a66f3514feee992ba933fc694ee06e76fdf0345d60426634b04fcef0d1b9",
+    "source_entry_count": 28,
+    "checksum_entry_count": 28
+  },
+  "build_input_release": {
+    "tag": "open-webui-0.11.0-offline-closures-v1",
+    "url": "https://github.com/nisavid/arch-pkgs/releases/tag/open-webui-0.11.0-offline-closures-v1",
+    "release_id": 373325360,
+    "target_commit": "54d8505614da17709cf99ffd7706ba9e957647da",
+    "draft": false,
+    "prerelease": true,
+    "build_input_only": true,
+    "assets": [
+      {
+        "asset_id": 521302573,
+        "name": "open-webui-npm-offline-closure-0.11.0.tar.zst",
+        "size_bytes": 886706456,
+        "sha256": "6238b436c6669a311623d97724c6b2ada0e77090d0e5219860acc38c53fb32b1",
+        "url": "https://github.com/nisavid/arch-pkgs/releases/download/open-webui-0.11.0-offline-closures-v1/open-webui-npm-offline-closure-0.11.0.tar.zst"
+      },
+      {
+        "asset_id": 521302574,
+        "name": "open-webui-python-offline-closure-0.11.0-cp314-x86_64.tar.zst",
+        "size_bytes": 144877017,
+        "sha256": "bcd3c5c651fc42e8e5a73a4c81f4b5760e82f6b39eb714caf999700bad4ed27c",
+        "url": "https://github.com/nisavid/arch-pkgs/releases/download/open-webui-0.11.0-offline-closures-v1/open-webui-python-offline-closure-0.11.0-cp314-x86_64.tar.zst"
+      }
+    ],
+    "npm": {
+      "package_lock_sha256": "664ff34f1d8273e2e6a7a6b6437d27fd195d289ea3df9c56cdd30c4afbd62b02",
+      "manifest_sha256": "a45a76bc4d81fafeae69c61a3de2e1dc471e103069f43a03709f474167beedc7",
+      "lock_record_count": 1275,
+      "unique_tarball_count": 1233,
+      "raw_tarball_bytes": 886851096,
+      "independent_archives_byte_identical": true
+    },
+    "python": {
+      "requirements_lock_sha256": "df99fc265998cf7029d22b01faa81f3dc015d255754748e3e6512d84cce95007",
+      "archive_verifier_sha256": "c21fd557c23ed844fc673920add5d17116bce6a9d5f91f8e0461fd2de53bda09",
+      "target": "CPython 3.14, Linux x86_64",
+      "wheel_count": 222,
+      "raw_wheel_bytes": 149821557,
+      "independent_archives_byte_identical": true,
+      "wrong_platform_and_noncanonical_archive_cases_rejected": true
+    }
+  },
+  "source_verification": {
+    "source_shape": "cold Git archive of the reviewed commit",
+    "local_ignored_sources_present_at_start": false,
+    "release_assets_fetched_from_public_urls": true,
+    "makepkg_verifysource_passed": true,
+    "verified_source_count": 28,
+    "verified_checksum_count": 28
+  },
+  "build": {
+    "status": "pass",
+    "exit_status": 0,
+    "command_shape": "makepkg -f --nodeps --cleanbuild inside bubblewrap with a separate network namespace",
+    "non_loopback_network_namespace_unshared": true,
+    "network_access_available": false,
+    "host_filesystem_read_only": true,
+    "disposable_package_root_writable": true,
+    "fresh_namespace_device_process_runtime_temporary_and_home_mounts": true,
+    "build_and_start_directory": "/var/tmp",
+    "clean_makepkg_source_and_package_roots": true,
+    "clean_chroot": false,
+    "dependency_checks_skipped": true,
+    "complete_arch_build_environment_materialized": false,
+    "byte_reproducibility_proven": false,
+    "self_contained_scope": "The exact package-owned npm and private Python graphs are immutable offline inputs; system toolchain and pacman-owned provider packages remain external build dependencies.",
+    "toolchain": {
+      "makepkg": "7.1.0",
+      "python": "3.14.6",
+      "uv": "0.12.5",
+      "node": "22.23.2",
+      "npm": "12.0.2",
+      "bubblewrap": "0.11.2",
+      "libarchive": "3.8.9",
+      "zstd": "1.5.7"
+    },
+    "node_build_dependency": {
+      "package": "nodejs-lts-jod-22.23.2-1-x86_64.pkg.tar.zst",
+      "size_bytes": 15781130,
+      "sha256": "310812473edec1c57f2a04f902b6fee20c09251f24c0db964362874ab3c8d06b",
+      "arch_signature_valid": true,
+      "installed_on_host": false
+    },
+    "provider_metadata_fixture": {
+      "package": "python-rapidocr-3.9.2-1-any.pkg.tar.zst",
+      "size_bytes": 27198173,
+      "sha256": "5ec99d779ce88e39fd2160850fe5f2b266f9d7e779138a6038f4e5fb5d8d3ff2",
+      "read_only": true,
+      "reason": "The build intentionally skipped dependency installation; exact RapidOCR metadata was staged so the unchanged provider-boundary verifier could evaluate the declared external provider set.",
+      "host_modified": false
+    },
+    "built_wheel": {
+      "filename": "open_webui-0.11.0-py3-none-any.whl",
+      "size_bytes": 146164627,
+      "sha256": "dd7777b592e51cd9aec63f7985170d20572589b4a6b41c73b5d188e258ecd962"
+    },
+    "local_review_transcript": {
+      "size_bytes": 377082,
+      "sha256": "7de0c293c32b128449f1d60863638e2dbd69ae0f8bb99e7061f20e6475f7f636",
+      "exit_status": 0,
+      "body_publicly_retained": false
+    }
+  },
+  "package": {
+    "filename": "open-webui-0.11.0-3-x86_64.pkg.tar.zst",
+    "size_bytes": 240012544,
+    "sha256": "10c5ef31da980f9fcef7a8fd0ed9416b1ce21ac42f6df54eb65ea1eec836860f",
+    "installed_size_bytes": 864287174,
+    "build_timestamp_utc": "2026-08-19T20:47:22Z",
+    "archive_member_count": 28087,
+    "payload_entry_count": 28084,
+    "private_distribution_count": 223,
+    "frontend_entry_count": 5588,
+    "symlink_count": 0,
+    "publicly_retained": false,
+    "metadata": {
+      "pkginfo": {
+        "size_bytes": 1338,
+        "sha256": "05c23dfebf689799f42c7455bbf10f48629929266394f90d227d81876fd1d2e0"
+      },
+      "buildinfo": {
+        "size_bytes": 142914,
+        "sha256": "cc781cf1ef9b38ea5bb33ee8568154c1c01925c83e0ae4e32837e0b95146e652",
+        "build_directory": "/var/tmp",
+        "start_directory": "/var/tmp",
+        "paths_public_safe": true
+      },
+      "mtree": {
+        "size_bytes": 1255638,
+        "sha256": "aff1077b3447fd975ac2a4129ba0d4727d978aee1001473f893b94f03bac2136",
+        "decoded_sha256": "7e7ad49f1c643b5378b7951840685ea88ba79d90ea162e0cf5b30ccf55177dee",
+        "decoded_line_count": 28271
+      }
+    },
+    "pyodide": {
+      "file_count": 60,
+      "wheel_count": 46,
+      "total_bytes": 59832549,
+      "source_manifest_sha256": "57b3bc90e6ebca23c0cec1736e470fbb2fee1c6b05531551b8871f3cbdab185c",
+      "installed_manifest_algorithm": "For each lexically sorted relative path: path, NUL, byte count, NUL, file SHA-256, newline.",
+      "installed_manifest_sha256": "1b7fac2b0106815c9e2246d99533754490fcea8c4f6c9a8b2b04c03b544221bd",
+      "separate_from_server_private_python_boundary": true,
+      "system_provider_name_overlaps": [
+        "numpy",
+        "pandas",
+        "pillow",
+        "scikit-learn",
+        "scipy"
+      ]
+    }
+  },
+  "inspection_receipt": {
+    "path": "docs/maintainers/evidence/open-webui-offline-package-inspection-2026-08-19.json",
+    "size_bytes": 20254,
+    "sha256": "531d16e2097181ec8f93e01adac3d091519b94aaf9d267763289effe1777510d",
+    "verifier": "packages/open-webui/inspect-open-webui-package.py",
+    "verifier_sha256": "a49f63893fd0dd7d07b3215b7175cf86ee3cf815fde016f7fa6e67554e235cc5",
+    "archive_sha256": "10c5ef31da980f9fcef7a8fd0ed9416b1ce21ac42f6df54eb65ea1eec836860f",
+    "archive_manifest_sha256": "6697f5e5dc37be6110181de4df3cefe76128c354c49f587e49d17678c20d6dca"
+  },
+  "payload_inspection": {
+    "provider_boundary_passed": true,
+    "server_private_distributions_absent": [
+      "accelerate",
+      "av",
+      "ctranslate2",
+      "faster-whisper",
+      "numpy",
+      "onnxruntime",
+      "opencv-python",
+      "opencv-python-headless",
+      "pandas",
+      "pillow",
+      "pyarrow",
+      "pyclipper",
+      "rapidocr",
+      "scikit-learn",
+      "scipy",
+      "sentence-transformers",
+      "sentencepiece",
+      "shapely",
+      "tokenizers",
+      "torch",
+      "transformers"
+    ],
+    "unexpected_build_material": [],
+    "absence_checks": [
+      "package-owned offline closure archives",
+      "seeded npm cache",
+      "Python wheelhouse",
+      "private requirements lock",
+      "closure materializers",
+      "node_modules",
+      "build home",
+      "uv install lock",
+      "dist-info uv cache metadata"
+    ],
+    "critical_files": {
+      "etc/open-webui/open-webui.env": {
+        "mode": "0600",
+        "owner": "root:root",
+        "size_bytes": 2418,
+        "sha256": "fea096fef2635398edd2d0e1bb93cad0f39ef15a1aa68d0ce226bbc36e92387a"
+      },
+      "usr/bin/open-webui": {
+        "mode": "0755",
+        "owner": "root:root",
+        "size_bytes": 2440,
+        "sha256": "9063c401f99b035bbec7f7b1a16f2da10b3d9dd91579ef59081fd8f6f9b5530e"
+      },
+      "usr/lib/systemd/system/open-webui.service": {
+        "mode": "0644",
+        "owner": "root:root",
+        "size_bytes": 1818,
+        "sha256": "5e731f787285118d9e9803f9008b15d11cdfafea64ae9c67fef84cc715549c58"
+      },
+      "usr/lib/sysusers.d/open-webui.conf": {
+        "mode": "0644",
+        "owner": "root:root",
+        "size_bytes": 139,
+        "sha256": "8e110af7e0d813a9d72639cf64dfd0e8892f8917d632524ad17a593d73a46c1c"
+      },
+      "usr/lib/tmpfiles.d/open-webui.conf": {
+        "mode": "0644",
+        "owner": "root:root",
+        "size_bytes": 688,
+        "sha256": "3f458a27a1adb60214a0ea86254099c70a49f8873aed2254aef2ce7978133b9b"
+      },
+      "usr/lib/open-webui/open-webui-commission-admin": {
+        "mode": "0755",
+        "owner": "root:root",
+        "size_bytes": 5467,
+        "sha256": "413ce05b52b7e033435b159befb8c3dba2fa33ca41d9d1abcfe2751c1793feb9"
+      },
+      "usr/lib/open-webui/open-webui-session-epoch-ledger": {
+        "mode": "0755",
+        "owner": "root:root",
+        "size_bytes": 9258,
+        "sha256": "953bf54b5f3c40707e3dc8ddd18f9f53c2c778e14a01d62f3cb5d9e1e7725111"
+      },
+      "opt/open-webui/lib/python3.14/site-packages/open_webui/retrieval/rag_gate.py": {
+        "mode": "0644",
+        "owner": "root:root",
+        "size_bytes": 6192,
+        "sha256": "7fc2a64960e109188f7500882f0096d24ba21e54578aade6ec6e5a9280141c96"
+      },
+      "opt/open-webui/lib/python3.14/site-packages/open_webui/utils/session_epoch.py": {
+        "mode": "0644",
+        "owner": "root:root",
+        "size_bytes": 3694,
+        "sha256": "45e5b3802b37c14b642d41311adbf670e1aaa8a69665ca01439d127fae1c7387"
+      },
+      "usr/share/licenses/open-webui/LICENSE": {
+        "mode": "0644",
+        "owner": "root:root",
+        "size_bytes": 2819,
+        "sha256": "5f1bd74c48bf13ab0f82e177ad9e637313b92533d20ead2593d49347a47fc232"
+      },
+      "usr/share/licenses/open-webui/LICENSE_HISTORY": {
+        "mode": "0644",
+        "owner": "root:root",
+        "size_bytes": 2872,
+        "sha256": "b1567cc9763241a41569e01f08272a167dac57273f717b95b31ba7b5ec935e17"
+      },
+      "usr/share/licenses/open-webui/LICENSE_NOTICE": {
+        "mode": "0644",
+        "owner": "root:root",
+        "size_bytes": 721,
+        "sha256": "9de72254becbb9a317410a459447be7e8f042b911a846c58307319c77e50df00"
+      }
+    },
+    "build_host_path_tokens_absent": true,
+    "archive_metadata_paths_public_safe": true,
+    "package_owned_configuration_credential_values_absent": true
+  },
+  "provider_frontier": {
+    "status_note": "docs/maintainers/lemonade-provider-port-status-2026-08-19.md",
+    "status_note_sha256": "fb56d3df4e8ac0e5f1018f8c6f1a2829f1fb393f139b6f88f1837d9743deef04",
+    "adapter_present_in_fork_main": true,
+    "coherent_packaged_provider_ready": false,
+    "blocking_issues": [
+      "https://github.com/nisavid/arch-strix-halo-pkgs/issues/105",
+      "https://github.com/nisavid/arch-strix-halo-pkgs/issues/112",
+      "https://github.com/nisavid/arch-strix-halo-pkgs/issues/113"
+    ],
+    "integrated_trial_executed": false
+  },
+  "limitations": [
+    "This is not a clean-chroot build and does not prove a complete Arch build environment.",
+    "The public-safe .BUILDINFO records the non-clean host package inventory and is not minimal-chroot provenance.",
+    "Self-contained refers only to the package-owned npm and private Python inputs; pacman-owned provider packages and build tools remain external.",
+    "The no-egress result applies to package construction, not application runtime isolation.",
+    "Dependency satisfaction was skipped by makepkg and only the exact missing RapidOCR metadata was staged read-only for the provider-boundary check.",
+    "One successful build does not prove byte reproducibility.",
+    "The final package archive is retained only in disposable review state and is not publicly retrievable.",
+    "No installation, startup, commissioning, provider composition, restore, rollback, performance, production-limit, publication, or deployment result follows from this package build."
+  ],
+  "disposition": {
+    "state": "offline-package-built-inspected-provider-pending",
+    "offline_package_subgate_passed": true,
+    "catalog_lane": "deferred",
+    "integrated_provider_ready": false,
+    "integrated_measurement_complete": false,
+    "publication_eligible": false,
+    "production_deployable": false,
+    "live_actions": {
+      "installed": false,
+      "activated": false,
+      "pacman_published": false,
+      "promoted": false,
+      "deployed": false
+    },
+    "next_gate": "Freeze and package one coherent five-package Lemonade and llama.cpp family, then run the accepted integrated start, restore, and rollback trials."
+  },
+  "privacy": {
+    "public_copy_safe": true,
+    "build_transcript_locally_retained": true,
+    "build_transcript_body_publicly_retained": false,
+    "build_metadata_body_publicly_retained": false,
+    "machine_local_paths_recorded": false,
+    "host_identity_recorded": false,
+    "private_addresses_recorded": false,
+    "credentials_recorded": false,
+    "production_data_contacted": false
+  }
+}
