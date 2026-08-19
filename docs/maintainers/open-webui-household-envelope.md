@@ -148,10 +148,11 @@ part of this measured subject. The production provider must also bind the exact
 accepted Lemonade and patched llama.cpp artifacts before repeated measurements
 can become candidate-acceptance evidence.
 
-The package source is also not G1-complete: its Python and npm graphs are
-hash-locked, but they have not yet been materialized as makepkg-visible source
-artifacts for a self-contained networkless build. Source verification and an
-online hash-enforced build do not close that boundary.
+A later pkgrel-3 package checkpoint materialized both graphs as immutable
+makepkg sources and passed a no-egress build and payload inspection. See
+[`open-webui-offline-package-build-2026-08-19.md`](open-webui-offline-package-build-2026-08-19.md).
+That later result does not retroactively change this run's unpackaged measured
+subject or close the integrated provider and recovery gates.
 
 ## Durable evidence
 
@@ -165,15 +166,13 @@ claims.
 
 ## Remaining work
 
-1. Materialize and bind the npm and private Python package inputs, then build
-   and inspect the exact Open WebUI and RapidOCR package candidates.
-2. Compose that package set with the exact accepted patched Lemonade and
+1. Compose the built package set with the exact accepted patched Lemonade and
    llama.cpp provider in a dedicated cgroup with kernel-enforced no egress.
-3. Prove the packaged fail-closed RAG gate and external session epoch across
+2. Prove the packaged fail-closed RAG gate and external session epoch across
    reranker failure and repeated whole-tuple restores.
-4. Retain public-safe raw samples and meet every declared fresh-start, heavy
+3. Retain public-safe raw samples and meet every declared fresh-start, heavy
    indexing, generation-rebuild, restore, and rollback floor.
-5. Measure cache behavior, cgroup memory, isolated CPU, corpus-size growth,
+4. Measure cache behavior, cgroup memory, isolated CPU, corpus-size growth,
    compaction, accelerated-provider behavior, and the future v1-to-v2
    generation cutover.
 

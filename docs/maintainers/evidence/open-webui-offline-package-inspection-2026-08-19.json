@@ -1,0 +1,456 @@
+{
+  "archive": {
+    "duplicate_path_count": 0,
+    "link_member_count": 0,
+    "manifest_algorithm": "SHA-256 over canonical JSON Lines sorted by path; each record binds path, type, mode, uid, gid, size, file-content SHA-256, and link target.",
+    "manifest_record_count": 28087,
+    "manifest_sha256": "6697f5e5dc37be6110181de4df3cefe76128c354c49f587e49d17678c20d6dca",
+    "member_count": 28087,
+    "non_root_member_count": 0,
+    "sha256": "10c5ef31da980f9fcef7a8fd0ed9416b1ce21ac42f6df54eb65ea1eec836860f",
+    "size_bytes": 240012544,
+    "type_counts": {
+      "directory": 2933,
+      "file": 25154,
+      "hardlink": 0,
+      "other": 0,
+      "symlink": 0
+    },
+    "unsafe_mode_member_count": 0,
+    "unsafe_path_count": 0
+  },
+  "critical_files": {
+    "etc/open-webui/open-webui.env": {
+      "mode": "0600",
+      "owner": "root:root",
+      "sha256": "fea096fef2635398edd2d0e1bb93cad0f39ef15a1aa68d0ce226bbc36e92387a",
+      "size_bytes": 2418
+    },
+    "opt/open-webui/lib/python3.14/site-packages/open_webui/retrieval/rag_gate.py": {
+      "mode": "0644",
+      "owner": "root:root",
+      "sha256": "7fc2a64960e109188f7500882f0096d24ba21e54578aade6ec6e5a9280141c96",
+      "size_bytes": 6192
+    },
+    "opt/open-webui/lib/python3.14/site-packages/open_webui/utils/session_epoch.py": {
+      "mode": "0644",
+      "owner": "root:root",
+      "sha256": "45e5b3802b37c14b642d41311adbf670e1aaa8a69665ca01439d127fae1c7387",
+      "size_bytes": 3694
+    },
+    "usr/bin/open-webui": {
+      "mode": "0755",
+      "owner": "root:root",
+      "sha256": "9063c401f99b035bbec7f7b1a16f2da10b3d9dd91579ef59081fd8f6f9b5530e",
+      "size_bytes": 2440
+    },
+    "usr/lib/open-webui/open-webui-commission-admin": {
+      "mode": "0755",
+      "owner": "root:root",
+      "sha256": "413ce05b52b7e033435b159befb8c3dba2fa33ca41d9d1abcfe2751c1793feb9",
+      "size_bytes": 5467
+    },
+    "usr/lib/open-webui/open-webui-session-epoch-ledger": {
+      "mode": "0755",
+      "owner": "root:root",
+      "sha256": "953bf54b5f3c40707e3dc8ddd18f9f53c2c778e14a01d62f3cb5d9e1e7725111",
+      "size_bytes": 9258
+    },
+    "usr/lib/systemd/system/open-webui.service": {
+      "mode": "0644",
+      "owner": "root:root",
+      "sha256": "5e731f787285118d9e9803f9008b15d11cdfafea64ae9c67fef84cc715549c58",
+      "size_bytes": 1818
+    },
+    "usr/lib/sysusers.d/open-webui.conf": {
+      "mode": "0644",
+      "owner": "root:root",
+      "sha256": "8e110af7e0d813a9d72639cf64dfd0e8892f8917d632524ad17a593d73a46c1c",
+      "size_bytes": 139
+    },
+    "usr/lib/tmpfiles.d/open-webui.conf": {
+      "mode": "0644",
+      "owner": "root:root",
+      "sha256": "3f458a27a1adb60214a0ea86254099c70a49f8873aed2254aef2ce7978133b9b",
+      "size_bytes": 688
+    },
+    "usr/share/licenses/open-webui/LICENSE": {
+      "mode": "0644",
+      "owner": "root:root",
+      "sha256": "5f1bd74c48bf13ab0f82e177ad9e637313b92533d20ead2593d49347a47fc232",
+      "size_bytes": 2819
+    },
+    "usr/share/licenses/open-webui/LICENSE_HISTORY": {
+      "mode": "0644",
+      "owner": "root:root",
+      "sha256": "b1567cc9763241a41569e01f08272a167dac57273f717b95b31ba7b5ec935e17",
+      "size_bytes": 2872
+    },
+    "usr/share/licenses/open-webui/LICENSE_NOTICE": {
+      "mode": "0644",
+      "owner": "root:root",
+      "sha256": "9de72254becbb9a317410a459447be7e8f042b911a846c58307319c77e50df00",
+      "size_bytes": 721
+    }
+  },
+  "metadata": {
+    ".BUILDINFO": {
+      "fields": {
+        "architecture": "x86_64",
+        "package_version": "0.11.0-3",
+        "pkgbuild_sha256": "b160bdffd4a329269f838d4bcd9728dbcf13a44d95d05371ccac80ecd5634510"
+      },
+      "sha256": "cc781cf1ef9b38ea5bb33ee8568154c1c01925c83e0ae4e32837e0b95146e652",
+      "size_bytes": 142914
+    },
+    ".MTREE": {
+      "decoded_line_count": 28271,
+      "decoded_sha256": "7e7ad49f1c643b5378b7951840685ea88ba79d90ea162e0cf5b30ccf55177dee",
+      "decoded_size_bytes": 5268107,
+      "sha256": "aff1077b3447fd975ac2a4129ba0d4727d978aee1001473f893b94f03bac2136",
+      "size_bytes": 1255638
+    },
+    ".PKGINFO": {
+      "fields": {
+        "architecture": "x86_64",
+        "build_timestamp": 1787172442,
+        "installed_size_bytes": 864287174,
+        "package_base": "open-webui",
+        "package_name": "open-webui",
+        "package_version": "0.11.0-3"
+      },
+      "sha256": "05c23dfebf689799f42c7455bbf10f48629929266394f90d227d81876fd1d2e0",
+      "size_bytes": 1338
+    },
+    "build_paths_public_safe": true,
+    "builddir": "/var/tmp",
+    "startdir": "/var/tmp"
+  },
+  "payload": {
+    "directory_count": 2933,
+    "entry_count": 28084,
+    "frontend_entry_count": 5588,
+    "installed_size_matches_pkginfo": true,
+    "installer_metadata": {
+      "lock_matches": [],
+      "uv_cache_json_matches": []
+    },
+    "installer_metadata_absent": true,
+    "private_distribution_count": 223,
+    "pyodide_payload": {
+      "file_count": 60,
+      "manifest_algorithm": "For each lexically sorted relative path: path, NUL, byte count, NUL, file SHA-256, newline.",
+      "manifest_sha256": "1b7fac2b0106815c9e2246d99533754490fcea8c4f6c9a8b2b04c03b544221bd",
+      "total_bytes": 59832549
+    },
+    "pyodide_wheels": {
+      "count": 46,
+      "files": [
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/annotated_types-0.7.0-py3-none-any.whl",
+          "sha256": "7beddfd593719e92d8d4d6c290a512ceff0f0879428417fced1384cf5417e8c4",
+          "size_bytes": 11963
+        },
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/anyio-4.13.0-py3-none-any.whl",
+          "sha256": "6e4139828bae2bdbc968ac43fafb20007af8fcd22b683f60d245ebd6992cbe3c",
+          "size_bytes": 114353
+        },
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/beautifulsoup4-4.14.3-py3-none-any.whl",
+          "sha256": "95a87dbe58c8dafab021c1f2c003fc9a9c69759a81495ae739f1df483805115e",
+          "size_bytes": 107721
+        },
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/black-26.5.1-py3-none-any.whl",
+          "sha256": "4ed7f7da04046d2e488437170797d3b4a4ad83906683bcb7dfc68b673bbce5e2",
+          "size_bytes": 213693
+        },
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/certifi-2026.4.22-py3-none-any.whl",
+          "sha256": "93071d4b932b2c9d0f4aa9a74c8b320135d0cf9f8f8a2c8575b59ee57621d801",
+          "size_bytes": 135707
+        },
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/charset_normalizer-3.4.7-py3-none-any.whl",
+          "sha256": "fdb1aad0f2606f2c05b27de59beabd9c4fc897795996492ccc5e2b7ef2967248",
+          "size_bytes": 61958
+        },
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/click-8.3.1-py3-none-any.whl",
+          "sha256": "200b390f193f56180bfb06987ae9fbb4f3efded531356163b14371d7044469e7",
+          "size_bytes": 108274
+        },
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/contourpy-1.3.3-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+          "sha256": "8af5f4338988b30a65f5c81c0a3f335353546809538e81d35b572ed4595f80b6",
+          "size_bytes": 117562
+        },
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/cycler-0.12.1-py3-none-any.whl",
+          "sha256": "3569bab200be7f85520bf64a3ff334b016e19441ba89b588d2625c3b89da09c7",
+          "size_bytes": 8321
+        },
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/distro-1.9.0-py3-none-any.whl",
+          "sha256": "56ae1ed8841379b6948b9a564555c1547907a0ecbf863e7cc42a265d0b2728ff",
+          "size_bytes": 20277
+        },
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/fonttools-4.62.1-py3-none-any.whl",
+          "sha256": "6d8caa09c191f26c47403499d6cff62f3fb9685b978baa047bf791862bcb298a",
+          "size_bytes": 1152647
+        },
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/httpx-0.28.1-py3-none-any.whl",
+          "sha256": "80fdeea708b53a5ce509b3669b89b67124acdd241f7bfd131ff8bf215d620400",
+          "size_bytes": 77458
+        },
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/idna-3.11-py3-none-any.whl",
+          "sha256": "1c8df7b3fbc3e2767635c9fd38a8e970ddc0bb36d94ff223250a348e1dfa0e7d",
+          "size_bytes": 71008
+        },
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/jiter-0.13.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+          "sha256": "a058ea3b1f99a0fab68e96f9a331d65593452f1a1fce965dcd56fd32ee03db1a",
+          "size_bytes": 119499
+        },
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/joblib-1.5.3-py3-none-any.whl",
+          "sha256": "b2263b31e10db62fc9b7d307a270064017040001e6c24a8d6aff1db2d62d4821",
+          "size_bytes": 180315
+        },
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/kiwisolver-1.5.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+          "sha256": "7591db9cc1181815eeefb2e7c5b5622a18a3fa334788e1b49eb3e8ad7f90186f",
+          "size_bytes": 36615
+        },
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/matplotlib-3.10.8-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+          "sha256": "2867b2003ee66d0d2478423f783ec035d432c6560ae86d0e58d096ff98cab6a8",
+          "size_bytes": 6972262
+        },
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/micropip-0.11.1-py3-none-any.whl",
+          "sha256": "668cd1270f480ac9f93da4a2b4873a252743e4ad3da723d37a7e4c637c4f2314",
+          "size_bytes": 115486
+        },
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/mpmath-1.4.1-py3-none-any.whl",
+          "sha256": "625a8215b09034296e02e6a432a26997e08a865e2637d43a7b13ab5faa59306e",
+          "size_bytes": 430985
+        },
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/mypy_extensions-1.1.0-py3-none-any.whl",
+          "sha256": "1be4cccdb0f2482337c4743e60421de3a356cd97508abadd57d47403e94f5505",
+          "size_bytes": 4963
+        },
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/numpy-2.4.3-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+          "sha256": "0cad9c1b91f0082e4f959bc0e0bf5835a2efbba6ab3b1e9d1fe6e7e564cca98e",
+          "size_bytes": 2916023
+        },
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/openai-2.30.0-py3-none-any.whl",
+          "sha256": "365c3b95509e66a2303130a94f6a66d78e4260d1922ddca272b1d397b299a581",
+          "size_bytes": 1146658
+        },
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/packaging-26.1-py3-none-any.whl",
+          "sha256": "2719239437268bcea22845651a242f2c252e2ed984645161dd203546f2a52219",
+          "size_bytes": 95846
+        },
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/pandas-3.0.2-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+          "sha256": "51475a2026084c3b600566658fffc95efc5a71593472ab8a561d92a504a15a3e",
+          "size_bytes": 4183474
+        },
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/pathspec-1.1.1-py3-none-any.whl",
+          "sha256": "a00ce642f577bf7f473932318056212bc4f8bfdf53128c78bbd5af0b9b20b189",
+          "size_bytes": 57328
+        },
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/pillow-12.2.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+          "sha256": "a50d83a8a76d646768e99e93ed5bf365d0b83563fd8b597e77562e75c8f575a9",
+          "size_bytes": 1037798
+        },
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/platformdirs-4.9.4-py3-none-any.whl",
+          "sha256": "df6b888248eaf3d0ae8938f73c00a57755d66df97b6f8a280f5332cae626aa12",
+          "size_bytes": 21215
+        },
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/pydantic-2.12.5-py3-none-any.whl",
+          "sha256": "f27dd6df3cbc35ce8fdc56571bcd431e724dbee4c48aef4012a33201bf737b68",
+          "size_bytes": 463580
+        },
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/pydantic_core-2.41.5-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+          "sha256": "fad0d59f3602537b4b0342ba6f1a997062b991dffe40f74722cc2b69cb95b075",
+          "size_bytes": 1352194
+        },
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/pyparsing-3.3.2-py3-none-any.whl",
+          "sha256": "101eece4e324f842bf46e6f821fe5bc62d79b9ebfa3b399b6aff0e0ab0ee400f",
+          "size_bytes": 122781
+        },
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/python_dateutil-2.9.0.post0-py2.py3-none-any.whl",
+          "sha256": "e0dad39eec43965d30ef0dbe870617bd5a7ca795c65fda722a7ab2bbd2b747e3",
+          "size_bytes": 229892
+        },
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/pytokens-0.4.1-py3-none-any.whl",
+          "sha256": "26cef14744a8385f35d0e095dc8b3a7583f6c953c2e3d269c7f82484bf5ad2de",
+          "size_bytes": 13729
+        },
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/pytz-2026.1.post1-py2.py3-none-any.whl",
+          "sha256": "b746aea4d621b01e8c9c5e8e3a6498daecec99f5bffa429beaf3cd6483b14f61",
+          "size_bytes": 510489
+        },
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/regex-2026.3.32-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+          "sha256": "116203af92638f05a67791cc5a217f860bfab7f6635a41cb6dce08e2691ae6bc",
+          "size_bytes": 203281
+        },
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/requests-2.33.1-py3-none-any.whl",
+          "sha256": "6a7c3f883c3b3daa44f03430d812e0b2ff7b9c1714d64aef6418be0e18b51780",
+          "size_bytes": 64947
+        },
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/scikit_learn-1.8.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+          "sha256": "2ebb90e80c0efc5fe4d392197d6838878a7cd8c899c1aa59369d18d0ffe13ca9",
+          "size_bytes": 4429663
+        },
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/scipy-1.18.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+          "sha256": "4ef1569eac793bec84a92fa2eaf24eafb4529ff10c5ed87d1e335063f26142f3",
+          "size_bytes": 14009071
+        },
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/six-1.17.0-py2.py3-none-any.whl",
+          "sha256": "c6681057bd87fdec57e811b8e4007bad38deea284052817fa400d542c6423e2d",
+          "size_bytes": 11050
+        },
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/sniffio-1.3.1-py3-none-any.whl",
+          "sha256": "4b7eb20cfa667229d721e3b41fd628633f7007a7296af1f731008728bd54145e",
+          "size_bytes": 9560
+        },
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/soupsieve-2.8.3-py3-none-any.whl",
+          "sha256": "5dad54616ed5b536f4801bed57a9b87e392046869047bb83b41843ffd1152379",
+          "size_bytes": 37015
+        },
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/sympy-1.14.0-py3-none-any.whl",
+          "sha256": "b95cce43522f14f9cf476b950a91c752e801be3369c1c1fc043a49f0a24bc2e4",
+          "size_bytes": 4185567
+        },
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/threadpoolctl-3.6.0-py3-none-any.whl",
+          "sha256": "3aaf76e073749216354f3bf597768410ed3d2575e103e79ecaaf100b84e4ac6e",
+          "size_bytes": 18638
+        },
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/tiktoken-0.12.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+          "sha256": "719895996dd047ade3c4083fcba9c327be8b3d492b21adca3e94e6eb398863c5",
+          "size_bytes": 557391
+        },
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/typing_extensions-4.15.0-py3-none-any.whl",
+          "sha256": "213fc049fb8bbea5f8369b06c7270cdddd634c2c000f721ce445e22473d66fd5",
+          "size_bytes": 44613
+        },
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/typing_inspection-0.4.2-py3-none-any.whl",
+          "sha256": "b9719c895b2b6123042043573cbd110c8712d508201dcb3126c378a6face49cb",
+          "size_bytes": 14610
+        },
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/urllib3-2.6.3-py3-none-any.whl",
+          "sha256": "890b138aa020e1f17842d735901a8869585894b994a3d6a8636f704551de29b3",
+          "size_bytes": 131584
+        }
+      ],
+      "provider_exception_count": 5,
+      "provider_exceptions": [
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/numpy-2.4.3-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+          "provider": "numpy"
+        },
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/pandas-3.0.2-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+          "provider": "pandas"
+        },
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/pillow-12.2.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+          "provider": "pillow"
+        },
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/scikit_learn-1.8.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+          "provider": "scikit-learn"
+        },
+        {
+          "path": "opt/open-webui/lib/python3.14/site-packages/open_webui/frontend/pyodide/scipy-1.18.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl",
+          "provider": "scipy"
+        }
+      ],
+      "scope": "Browser-side Pyodide wheel artifacts; not installed server distributions.",
+      "total_bytes": 45929064
+    },
+    "regular_file_bytes": 864287174,
+    "regular_file_count": 25151,
+    "server_provider_boundary": {
+      "distribution_metadata_violations": [],
+      "passed": true,
+      "providers_absent": [
+        "accelerate",
+        "av",
+        "ctranslate2",
+        "faster-whisper",
+        "numpy",
+        "onnxruntime",
+        "opencv-python",
+        "opencv-python-headless",
+        "pandas",
+        "pillow",
+        "pyarrow",
+        "pyclipper",
+        "rapidocr",
+        "scikit-learn",
+        "scipy",
+        "sentence-transformers",
+        "sentencepiece",
+        "shapely",
+        "tokenizers",
+        "torch",
+        "transformers"
+      ],
+      "scope": "opt/open-webui/lib/python3.14/site-packages/",
+      "top_level_root_violations": []
+    }
+  },
+  "residue": {
+    "all_matches": [],
+    "matches": {
+      "build_home": [],
+      "closure_archives": [],
+      "closure_materializers": [],
+      "cypress_cache": [],
+      "node_modules": [],
+      "npm_cache": [],
+      "private_requirements_lock": [],
+      "python_wheelhouse": [],
+      "source_archives": [],
+      "uv_cache": [],
+      "uv_python": []
+    },
+    "passed": true
+  },
+  "schema": "arch-pkgs.open-webui.package-inspection.v1"
+}

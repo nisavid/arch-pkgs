@@ -22,8 +22,11 @@ Lemonade/llama provider root. The dated measurement boundary remains in
   222-wheel private server closure. Both closure archives are immutable
   `makepkg` sources and both installers run in offline mode.
 - The ML and native scientific stack remains pacman-owned. The package verifies
-  that none of the 21 externalized provider distributions appears under
-  `/opt/open-webui`.
+  that none of the 21 externalized provider distributions or their top-level
+  import roots appears in the installed private server closure under
+  `/opt/open-webui/lib/python3.14/site-packages`. The bundled browser-side
+  Pyodide wheels are a separate WebAssembly runtime, not server providers or a
+  security boundary.
 - Native RAG uses the five Qdrant collections under
   `open-webui-rag-v1`, zembed query/document prefixes, and the external zerank
   reranker. Reranker qualification is mandatory for document RAG; ordinary
@@ -201,10 +204,35 @@ python python-offline-closure.py archive \
   --output open-webui-python-offline-closure-0.11.0-cp314-x86_64.tar.zst
 ```
 
-These inputs remove the dependency-network blocker. They do not by themselves
-make the package accepted: build and payload inspection remain package gates,
-and the integrated provider, restore, and rollback evidence required by #68
-must still pass before #69 can begin.
+These inputs remove the dependency-network blocker. The subsequent no-egress
+pkgrel-3 build and payload-inspection gate passed and is recorded in
+[`docs/maintainers/open-webui-offline-package-build-2026-08-19.md`](../../docs/maintainers/open-webui-offline-package-build-2026-08-19.md).
+Reproduce the compact, whole-archive inspection receipt from a retained package
+with:
+
+```bash
+python inspect-open-webui-package.py \
+  open-webui-0.11.0-3-x86_64.pkg.tar.zst \
+  -o open-webui-0.11.0-3-package-inspection.json
+cmp open-webui-0.11.0-3-package-inspection.json \
+  ../../docs/maintainers/evidence/open-webui-offline-package-inspection-2026-08-19.json
+```
+
+The receipt binds every archive member by path, type, mode, ownership, size,
+content digest, and link target while keeping the full 28,087-member listing
+out of the repository. The inspector rejects unsafe paths, ownership or modes,
+links, duplicate members, installer metadata, externalized server providers,
+and package-build residue.
+Python is used for this helper because the contract depends on structured tar
+metadata and canonical JSON; it never extracts or executes package payloads.
+
+The published v1 receipt binds the inspector's exact SHA-256. Keep those
+verifier bytes immutable; a changed receipt contract must use a new schema and
+versioned helper rather than rewriting this historical checkpoint.
+
+That checkpoint does not make the package accepted: the
+integrated provider, restore, and rollback evidence required by #68 must still
+pass before #69 can begin.
 
 ```bash
 makepkg --verifysource
