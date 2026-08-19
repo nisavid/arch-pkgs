@@ -15,12 +15,15 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+from functools import cache
 from pathlib import Path, PurePosixPath
 from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
 
 from compression import zstd
+from packaging.tags import Tag, compatible_tags, cpython_tags
 from packaging.utils import canonicalize_name, parse_wheel_filename
+from packaging.version import InvalidVersion, Version
 
 FORMAT = "open-webui-python-offline-closure-v1"
 TARGET = "cp314-manylinux_2_28_x86_64"
@@ -148,6 +151,7 @@ def verify(
             raise ClosureError(f"manifest filename for {name} is unsafe")
         if not filename.endswith(".whl"):
             raise ClosureError(f"manifest artifact for {name} is not a wheel")
+        validate_wheel_target(filename, name, str(locked_requirement["version"]))
         if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{64}", digest):
             raise ClosureError(f"manifest SHA-256 for {name} is malformed")
         if digest not in locked_requirement["hashes"]:
@@ -213,6 +217,49 @@ def target_platforms() -> list[str]:
             platforms.append(legacy[minor])
     platforms.append("linux_x86_64")
     return platforms
+
+
+@cache
+def target_wheel_tags() -> frozenset[Tag]:
+    platforms = target_platforms()
+    tags = set(
+        cpython_tags(
+            python_version=(3, 14),
+            abis=("cp314", "abi3", "none"),
+            platforms=platforms,
+        )
+    )
+    tags.update(
+        compatible_tags(
+            python_version=(3, 14),
+            interpreter="cp314",
+            platforms=platforms,
+        )
+    )
+    return frozenset(tags)
+
+
+def validate_wheel_target(filename: str, name: str, version: str) -> None:
+    try:
+        distribution, wheel_version, _, tags = parse_wheel_filename(filename)
+    except ValueError as error:
+        raise ClosureError(f"invalid wheel filename for {name}: {filename}") from error
+    if str(canonicalize_name(distribution)) != str(canonicalize_name(name)):
+        raise ClosureError(
+            f"wheel filename distribution differs from {name}: {filename}"
+        )
+    try:
+        locked_version = Version(version)
+    except InvalidVersion as error:
+        raise ClosureError(
+            f"locked version for {name} is invalid: {version}"
+        ) from error
+    if wheel_version != locked_version:
+        raise ClosureError(
+            f"wheel filename version differs from {name}=={version}: {filename}"
+        )
+    if tags.isdisjoint(target_wheel_tags()):
+        raise ClosureError(f"wheel {filename} is not compatible with {TARGET}")
 
 
 def download_wheels(lock_path: Path, wheelhouse: Path) -> None:
@@ -399,6 +446,23 @@ def tar_info(name: str, *, size: int = 0, directory: bool = False) -> tarfile.Ta
     return info
 
 
+def verify_tar_metadata(member: tarfile.TarInfo, *, directory: bool) -> None:
+    expected_mode = 0o755 if directory else 0o644
+    allowed_pax_headers = not member.pax_headers or member.pax_headers == {
+        "path": member.name
+    }
+    if (
+        member.mode != expected_mode
+        or member.uid != 0
+        or member.gid != 0
+        or member.uname != "root"
+        or member.gname != "root"
+        or member.mtime != 0
+        or not allowed_pax_headers
+    ):
+        raise ClosureError(f"noncanonical archive metadata for {member.name!r}")
+
+
 def archive(
     lock_path: Path,
     manifest_path: Path,
@@ -552,6 +616,7 @@ def verify_archive(
             or size < 1
         ):
             raise ClosureError(f"archive manifest artifact for {name} is invalid")
+        validate_wheel_target(filename, name, str(locked[name]["version"]))
         if filename in artifact_by_filename:
             raise ClosureError(f"archive manifest repeats artifact {filename}")
         artifact_by_filename[filename] = artifact
@@ -588,11 +653,13 @@ def verify_archive(
             if position == 0:
                 if not member.isdir():
                     raise ClosureError("archive root is not a directory")
+                verify_tar_metadata(member, directory=True)
                 continue
             if not member.isfile() or member.issym() or member.islnk():
                 raise ClosureError(
                     f"archive member {member.name!r} is not a regular file"
                 )
+            verify_tar_metadata(member, directory=False)
             extracted = archive_reader.extractfile(member)
             if extracted is None:
                 raise ClosureError(f"cannot read archive member {member.name!r}")
