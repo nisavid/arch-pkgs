@@ -17,8 +17,10 @@ Lemonade/llama provider root. The dated measurement boundary remains in
   route is installed and restarted; Caddy does not join the Open WebUI data
   group.
 - The package builds the exact 0.11.0 source archive, seeds and verifies the 60
-  release-authored Pyodide files from the exact release wheel, runs `npm ci`,
-  and installs a hash-locked 222-distribution private server closure.
+  release-authored Pyodide files from the exact release wheel, runs `npm ci`
+  from a verified 1,233-tarball npm cache, and installs a hash-locked
+  222-wheel private server closure. Both closure archives are immutable
+  `makepkg` sources and both installers run in offline mode.
 - The ML and native scientific stack remains pacman-owned. The package verifies
   that none of the 21 externalized provider distributions appears under
   `/opt/open-webui`.
@@ -162,14 +164,47 @@ every selected distribution, and runs the package-local structural verifier
 before replacing the lock. Update the constraint/provider manifests and the
 bound constants deliberately when changing the release or provider boundary.
 
-The current recipe does not yet carry the npm dependency graph or the
-222-distribution private Python closure as `makepkg` source artifacts.
-`makepkg --verifysource`
-therefore verifies the declared release and package assets only; `npm ci` and
-the hash-enforced `uv pip install` still retrieve dependencies during the build.
-This is a G0/G1 blocker for a self-contained, networkless clean build. Bind both
-closures as immutable source artifacts and switch both installers to offline
-mode before treating the candidate as build-complete.
+### Offline dependency closures
+
+The recipe binds two versioned release assets as `noextract` sources:
+
+- `open-webui-npm-offline-closure-0.11.0.tar.zst` contains the 1,233 unique
+  registry tarballs required by the exact release lock. The tracked manifest
+  binds all 1,275 lock records to their SHA-512 integrity values and archive
+  members. `prepare()` verifies the archive and seeds an isolated npm cache;
+  the frontend build then runs `npm ci --offline`.
+- `open-webui-python-offline-closure-0.11.0-cp314-x86_64.tar.zst` contains the
+  222 wheels selected for CPython 3.14 on x86_64 Linux. Its embedded manifest
+  binds every file to the private requirements lock. `prepare()` verifies safe
+  members and exact identities before extraction; installation uses
+  `uv --offline --no-index --require-hashes` against only that wheelhouse.
+
+The closure helpers are deterministic and reject extra, missing, unsafe, or
+digest-mismatched members. Regenerate candidate archives in disposable output
+directories, compare two independent outputs byte-for-byte, and publish only
+the reviewed bytes at the recipe's versioned build-input release:
+
+```bash
+python npm-offline-closure.py materialize \
+  --lock open_webui-0.11.0/package-lock.json \
+  --manifest npm-offline-closure-manifest.json \
+  --archive open-webui-npm-offline-closure-0.11.0.tar.zst \
+  --cache npm-download-cache
+
+python python-offline-closure.py materialize \
+  --lock open-webui-private-requirements.lock \
+  --output python-closure
+python python-offline-closure.py archive \
+  --lock open-webui-private-requirements.lock \
+  --manifest python-closure/manifest.json \
+  --wheelhouse python-closure/wheelhouse \
+  --output open-webui-python-offline-closure-0.11.0-cp314-x86_64.tar.zst
+```
+
+These inputs remove the dependency-network blocker. They do not by themselves
+make the package accepted: build and payload inspection remain package gates,
+and the integrated provider, restore, and rollback evidence required by #68
+must still pass before #69 can begin.
 
 ```bash
 makepkg --verifysource
