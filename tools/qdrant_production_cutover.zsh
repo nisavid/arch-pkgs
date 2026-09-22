@@ -167,6 +167,13 @@ check_repo_identity() {
   done
 }
 
+config_unmodified() {
+  # Capture first: grep -q exiting early must not fail the pipeline.
+  local info
+  info=$(pacman -Qii qdrant 2>/dev/null) || return 1
+  [[ "$info" == *"${config_dir}/config.yaml [unmodified]"* ]]
+}
+
 check_baseline_archive() {
   local archive=$1
   [[ -f "$archive" ]] || { refuse "baseline archive ${archive} is missing"; return; }
@@ -183,7 +190,7 @@ do_preflight() {
   for unit in qdrant-migration qdrant-web-ui; do
     pacman -Q "$unit" >/dev/null 2>&1 && note "note: ${unit} is already installed"
   done
-  pacman -Qii qdrant 2>/dev/null | grep -q "${config_dir}/config.yaml \[unmodified\]" \
+  config_unmodified \
     || refuse "${config_dir}/config.yaml is modified or unowned; reconcile it before cutover so the packaged config applies"
   check_repo_identity
   check_baseline_archive "${pkg_cache}/${baseline_file}"
@@ -274,8 +281,10 @@ wait_for_version() {
 
 stage=
 fail_stage() {
-  if [[ "$stage" == 'stop 1.17.1' || "$stage" == 'save rollback set' ]]; then
+  if [[ "$stage" == 'stop 1.17.1' ]]; then
     hand_back "qdrant cutover FAILED at '${stage}'; 1.17.1 and its state are untouched: run sudo systemctl start qdrant.service"
+  elif [[ "$stage" == 'save rollback set' ]]; then
+    hand_back "qdrant cutover FAILED at '${stage}'; 1.17.1 and its state are untouched: run sudo systemctl start qdrant.service, inspect the partial set ${rollback_root}/${rollback_set}, and retry with a new --rollback-set"
   else
     hand_back "qdrant cutover FAILED at '${stage}'; run: sudo ${script_name} rollback --apply --rollback-set ${rollback_set}"
   fi
@@ -307,10 +316,13 @@ snapshot_restore_drill() {
   [[ "$(curl -sS -m 60 -o /dev/null -w '%{http_code}' -H "@${admin}" \
     -F "snapshot=@${private_dir}/${upload}" \
     "${url}/collections/${name}/snapshots/upload?wait=true&priority=snapshot")" == 200 ]] || return 1
-  [[ "$(http_code DELETE "/collections/${name}/snapshots/${snap}?wait=true" "$admin")" == 200 ]] || return 1
-  [[ "$(http_code DELETE "/collections/${name}/snapshots/${upload}?wait=true" "$admin")" == 200 ]] || return 1
   rm -f -- "${private_dir}/${upload}"
   note "snapshot drill: ${name} snapshot restored"
+  # Cleanup only; a leftover empty snapshot file is not a cutover failure.
+  for snap in "$snap" "$upload"; do
+    [[ "$(http_code DELETE "/collections/${name}/snapshots/${snap}?wait=true" "$admin")" == 200 ]] \
+      || note "warning: could not delete snapshot ${snap} of ${name}; remove it by hand"
+  done
 }
 
 do_cutover() {
@@ -365,7 +377,7 @@ do_cutover() {
   run pacman -S --needed --noconfirm "${repo}/qdrant" "${repo}/qdrant-web-ui" || fail_stage
   if (( apply )); then
     [[ ! -e "${config_dir}/config.yaml.pacnew" ]] || fail_stage
-    pacman -Qii qdrant | grep -q "${config_dir}/config.yaml \[unmodified\]" || fail_stage
+    config_unmodified || fail_stage
   fi
   run systemctl daemon-reload || fail_stage
   run systemctl start qdrant.service || fail_stage
@@ -381,7 +393,7 @@ do_cutover() {
     snapshot_restore_drill "$admin" || fail_stage
 
     stage='deliver runtime JWT'
-    install -d -m 0700 -- "$credstore"
+    install -d -m 0700 -- "$credstore" || fail_stage
     mint_jwt prw 0 | systemd-creds encrypt --name="$credential_name" - \
       "${credstore}/open-webui.${credential_name}" || fail_stage
   else
