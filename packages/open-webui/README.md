@@ -114,9 +114,10 @@ systemd unit that supplies `admin-email`, `admin-name`,
 credentials—not arguments or environment values—so the complete commissioned
 identity is verified.
 
-The helper signs in over the Unix socket, changes the password through the
-exact 0.11 API, proves the bootstrap password no longer works, proves the final
-password works, verifies exactly one intended administrator, and verifies
+The helper signs in over the Unix socket and verifies exactly one intended
+administrator before it changes anything. It then changes the password through
+the exact 0.11 API, proves the bootstrap password no longer works, proves the
+final password works, verifies the sole administrator again, and verifies
 signup is false. After it succeeds, consume and remove every bootstrap input
 and temporary drop-in, restart `open-webui.service` normally, repeat the
 postconditions, and only then make Caddy routing eligible for a later accepted
