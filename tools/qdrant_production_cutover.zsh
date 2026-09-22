@@ -193,7 +193,7 @@ check_baseline_archive() {
 }
 
 do_preflight() {
-  local installed version count established unit
+  local installed version count established unit state
   note "== preflight"
   installed=$(pacman -Q qdrant 2>/dev/null | awk '{print $2}') || true
   [[ "$installed" == "$baseline_version" ]] \
@@ -216,8 +216,11 @@ do_preflight() {
   established=$(ss -tnH state established '( dport = :6333 or dport = :6334 )' 2>/dev/null | wc -l)
   (( established == 0 )) || refuse "${established} client connection(s) to Qdrant are open; stop those consumers first"
   for unit in open-webui.service hayhooks.service; do
-    [[ "$(systemctl is-active "$unit" 2>/dev/null)" == active ]] \
-      && refuse "consumer ${unit} is active; stop it and keep it stopped until verify passes"
+    # Only a stopped unit passes; activating, reloading, and auto-restart
+    # states would still let a consumer reach Qdrant.
+    state=$(systemctl is-active "$unit" 2>/dev/null) || true
+    [[ "$state" == inactive || "$state" == failed ]] \
+      || refuse "consumer ${unit} is ${state:-in an unknown state}; stop it and keep it stopped until verify passes"
   done
   [[ -e "${config_dir}/qdrant.env" ]] \
     && note "secret: ${config_dir}/qdrant.env exists and will be checked by the packaged preflight" \
