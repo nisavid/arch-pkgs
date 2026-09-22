@@ -1,0 +1,77 @@
+{
+ "binary_sha256": {
+  "1.17.1": "1d9e300802fe1588c6b6aef5167c32f8d215b5d79c07eaf6699ea1a80d92bf72",
+  "1.18.3": "97c16f4582cc0b9f86c7b451d88f7ea8ca56a1e45582168241de7487d31546a7",
+  "1.19.0": "bf24efd92208fab1a8f4769a56158280b458b7a42850095ac875824571005f8c"
+ },
+ "disposition": "Informational, non-gating attempt. The accepted G3 evidence in ../qdrant-1.19.0-1/ binds these byte-identical archives, so this run neither gates nor replaces it. It stopped on a host disk precondition, not on a failure of the candidate.",
+ "evidence_date": "2026-09-22",
+ "execute": {
+  "accepted_manifest_written": false,
+  "classification": "host disk precondition, not a candidate or harness defect",
+  "exit_status": 2,
+  "failed_stage": "memory pressure: the below-threshold anchor write to the pressure-anchor collection",
+  "failure": "Qdrant returned 507 because the host filesystem holding the work root was 92% used, above the configured 85% disk quota. The disk-pressure stage passed on its own size-limited tmpfs; the memory-pressure stage stores data in the work root.",
+  "obligations_passed": [
+   "cold_copy_1_17_sealed",
+   "cold_copy_1_18_sealed",
+   "cold_migration_1_17_to_1_18_verified",
+   "cold_migration_1_18_to_1_19_verified",
+   "disk_above_threshold_rejection",
+   "disk_below_threshold_write",
+   "disk_integrity_after_pressure",
+   "disk_release_margin_recovery",
+   "empty_1_17_anchor_sealed",
+   "empty_1_18_start_stop",
+   "empty_1_19_fixture_verified",
+   "fixture_filters_verified",
+   "fixture_pagination_verified",
+   "fixture_queries_captured",
+   "fixture_query_limit_verified",
+   "fixture_schema_verified",
+   "isolation_boundary",
+   "reject_1_17_to_1_18_checksum",
+   "reject_1_17_to_1_18_truncated",
+   "reject_1_18_to_1_19_checksum",
+   "reject_1_18_to_1_19_truncated",
+   "restore_1_17_next_1_18",
+   "restore_1_17_same_1_17",
+   "restore_1_18_next_1_19",
+   "restore_1_18_same_1_18",
+   "restore_1_19_same_1_19",
+   "restore_full_1_17_next_1_18",
+   "restore_full_1_18_next_1_19",
+   "retry_1_17_to_1_18_checksum",
+   "retry_1_17_to_1_18_truncated",
+   "retry_1_18_to_1_19_checksum",
+   "retry_1_18_to_1_19_truncated",
+   "snapshot_collection_1_17",
+   "snapshot_collection_1_18",
+   "snapshot_collection_1_19",
+   "snapshot_full_1_17",
+   "snapshot_full_1_18"
+  ],
+  "obligations_passed_count": 37,
+  "ports": {
+   "grpc": 16334,
+   "http": 16333
+  },
+  "runtime_candidate_written": false,
+  "work_root": "/tmp/<work-root>"
+ },
+ "gating": false,
+ "interrupt_probes": {
+  "INT": {
+   "disposition": "accepted",
+   "exit_status": 130
+  },
+  "TERM": {
+   "disposition": "accepted",
+   "exit_status": 143
+  }
+ },
+ "plan": "passed",
+ "retained_baseline_package_sha256": "d237ac6b804c7b4ec3f73f8ef57340ebaba62abff7853636286f140c8affd5cb",
+ "schema": "arch-pkgs.qdrant.rebind.g3-attempt.v1",
+ "tool_sha256": "459e107bcfcab8dfec6f4aa4b867e9daba1e8dc7a979005ea1d11a1a70156ab2"
+}

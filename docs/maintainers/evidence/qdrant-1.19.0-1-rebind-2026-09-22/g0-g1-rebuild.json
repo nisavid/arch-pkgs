@@ -1,0 +1,103 @@
+{
+ "builder": {
+  "image_id_sha256": "e4c00aadeb4a4d52f48ebd3d2ea32ae9433a02761e925589b0a6d619a837166f",
+  "podman": "6.1.0",
+  "pull_policy": "never",
+  "repository_digest": "localhost/arch-pkgs-qdrant-builder@sha256:876d4b2bfe03167c6d29f368def3050d4b1d16b3f89deead8379b61ccada10b0"
+ },
+ "candidate_store": "Archives were copied to the maintainer candidate store outside git; only name, size, and sha256 are recorded here.",
+ "commands": {
+  "final": "podman run --rm --userns=keep-id --pull=never --network=none --env CARGO_NET_OFFLINE=true --env BUILDDIR=/build/build --env PKGDEST=/build/artifacts --env SRCDEST=/build/sources --env CARGO_HOME=/build/cargo --env CARGO_BUILD_JOBS=12 --env SOURCE_DATE_EPOCH=<lane-epoch> --volume <package-root>:/build/package:Z --volume <build-root>:/build/build:Z --volume <artifact-root>:/build/artifacts:Z --volume <source-cache-root>:/build/sources:Z --volume <cargo-cache-root>:/build/cargo:Z localhost/arch-pkgs-qdrant-builder@sha256:876d4b2bfe03167c6d29f368def3050d4b1d16b3f89deead8379b61ccada10b0 zsh -fc 'cd /build/package && makepkg --verifysource && makepkg --nodeps --cleanbuild --force'",
+  "prefetch": "podman run --rm --userns=keep-id --pull=never --network=pasta --env BUILDDIR=/build/build --env PKGDEST=/build/artifacts --env SRCDEST=/build/sources --env CARGO_HOME=/build/cargo --env CARGO_BUILD_JOBS=12 --env SOURCE_DATE_EPOCH=<lane-epoch> --volume <package-root>:/build/package:Z --volume <build-root>:/build/build:Z --volume <artifact-root>:/build/artifacts:Z --volume <source-cache-root>:/build/sources:Z --volume <cargo-cache-root>:/build/cargo:Z localhost/arch-pkgs-qdrant-builder@sha256:876d4b2bfe03167c6d29f368def3050d4b1d16b3f89deead8379b61ccada10b0 zsh -fc 'cd /build/package && makepkg --verifysource && makepkg --nodeps -o'"
+ },
+ "evidence_date": "2026-09-22",
+ "lanes": {
+  "qdrant": {
+   "archive": {
+    "buildinfo_sha256": "052545fecdfa7473973aa9c1fb8a018a94851c3cff5e5cb9ac8369ba802f78f9",
+    "executable_sha256": "bf24efd92208fab1a8f4769a56158280b458b7a42850095ac875824571005f8c",
+    "mtree_sha256": "79430e8e34f533a3c65629948eab185635decf2eda8700d90acaa7c1f369751f",
+    "name": "qdrant-1.19.0-1-x86_64.pkg.tar.zst",
+    "pkginfo_sha256": "22eb166c025fd9d517c47cd1e7e19b8a6000fbe60d1df49546f37716f3386aeb",
+    "sha256": "15f15fe2c0c774691bf3193bc8fc7883fa530c89db697f7c0bcc2720d231b011",
+    "size": 28018464
+   },
+   "cargo_cache_entries": 67228,
+   "cargo_cache_manifest_sha256": "8f702d5c66e5e158ab0246f9dbdd000feec8778833abcecd318ef6d3cf688280",
+   "cargo_lock_sha256": "ac6941c2dcf706eddda4a1926d987232a981685586b35d407cc2f72605442233",
+   "matches_accepted_final3": true,
+   "output_set_manifest_sha256": "45fbc821701506ea6132ec5f3f2030e4c79c166265fd10b905e9b708cb2c7578",
+   "package_input_entries": 9,
+   "package_input_manifest_sha256": "bdf8247da63b66cf0ba000c41c8c5946c7d3070831fb91bb5b8fbcafc83fd5e3",
+   "pkgbuild_sha256": "319520bbfda127e98ecad6e8c81a4c5fd5ca42ee4aa182d3fa017ecf7e2c97c6",
+   "source_cache_entries": 2,
+   "source_cache_manifest_sha256": "23ad0e53a2863fd9e9c16732a69c075538e5b95bc8fa75e9f245bb49b465ebcf",
+   "source_date_epoch": 1786981317,
+   "srcinfo_sha256": "5b341267cd4d3410fe51b3eb5d96461e20da3a0364bac661a9c76b1919e659e2"
+  },
+  "qdrant-migration": {
+   "archive": {
+    "buildinfo_sha256": "d2e8c2e90b8ab67a7251bf3e499b10ee822b9d08ffecf9591e509424edaf44e8",
+    "executable_sha256": "97c16f4582cc0b9f86c7b451d88f7ea8ca56a1e45582168241de7487d31546a7",
+    "mtree_sha256": "eba7248300bb4fd4680370b2ac8331b2013c4ba02d6e566663cb8d34f73f6fde",
+    "name": "qdrant-migration-1.18.3-1-x86_64.pkg.tar.zst",
+    "pkginfo_sha256": "7d09b328dd1df34a532d0f02ddefddb77542678125e42e583fa75bf79aa3f5a8",
+    "sha256": "591f16328fcff0fc0193353a65f4c783afc1d24258ae251d3a8927283276ce9e",
+    "size": 26721008
+   },
+   "cargo_cache_entries": 67137,
+   "cargo_cache_manifest_sha256": "20f2fba92db772af6aef5235ca74443e854fd7c49e9971bdd7d33b2a951165e4",
+   "cargo_lock_sha256": "dffa39a15c56c6653ba36f4eb6bfb27322fdb428927910b6991ade72fa064d0e",
+   "matches_accepted_final3": true,
+   "output_set_manifest_sha256": "512fb837d2982c7136f784bbea3db43da27645c7200eb98a67e301999aea1077",
+   "package_input_entries": 3,
+   "package_input_manifest_sha256": "104333d098dbf37467b6ae780b62c9d9cc5a15eb7d4b2713fbf9db6185a03869",
+   "pkgbuild_sha256": "b41466d124fb428f6e21e414b9a5496d729e7c451ca4276020dc4d3dd53babb7",
+   "source_cache_entries": 2,
+   "source_cache_manifest_sha256": "989904c23b54cb39720333c9c9413d2a68f86896985cc714ac850312abe18aea",
+   "source_date_epoch": 1786981596,
+   "srcinfo_sha256": "77bd05a15e7047ba5ec44f8d34f301d018cf469c11fa5423e4ecf9e0e18331fe"
+  },
+  "qdrant-web-ui": {
+   "archive": {
+    "buildinfo_sha256": "cb30739c5be698b9775f08eec86d4181c7cbdc526b214083bcc58d475e4e9c44",
+    "mtree_sha256": "8e1867035ceb6d65375606f9abaa98930ef1a6ed0b3ce72684b914b6513a0f0a",
+    "name": "qdrant-web-ui-0.2.16-1-any.pkg.tar.zst",
+    "pkginfo_sha256": "fcc52b5ce15d13c896a4ac03884a9203da6518ac9bffc16d01ef3d32d03d7d00",
+    "sha256": "f3d46e6ff09b8eb87b1465ee6a17a7cc35c574596b7fbf30518d3bc1d42fe10a",
+    "size": 5719063
+   },
+   "cargo_lock_sha256": "not-applicable",
+   "matches_accepted_final3": true,
+   "output_set_manifest_sha256": "713f830bb32d40eaec485fa3f1ed09148c256d315d5cb04187b2086408f2eb6c",
+   "package_input_entries": 8,
+   "package_input_manifest_sha256": "02c58b37049a67723bf515e7e187084d6f1f910f974944a58ea0fa5c387b3bc7",
+   "pkgbuild_sha256": "21ee0e1666ed23947d5994291fa345b11acb21d021862f2fb81f319877a448a2",
+   "source_cache_entries": 2,
+   "source_cache_manifest_sha256": "6c364233db75aff9a0570052837bc6550853aec55f12c53c3d7eb192dae8c570",
+   "source_date_epoch": 1786983811,
+   "srcinfo_sha256": "5a71cd412946774d65538e4aa47421eb7cbd87890d6544ef2a49d80484cd9a2a"
+  }
+ },
+ "manifest_format": "Sorted lines of type, octal mode, size, content sha256, relative path; the digest is the sha256 of the newline-terminated listing.",
+ "procedure_deviations": [
+  "Prefetch used --network=pasta because podman 6.1.0 on the host rejects slirp4netns. Prefetch outputs were discarded and are not candidates.",
+  "Prefetch and final build mounted the same per-lane source and Cargo cache roots instead of copies in fresh final cache roots.",
+  "Cache and input manifests were computed after the final build, not before it.",
+  "The incomplete-cache negative control was not run; every output is byte-identical to the accepted final3 archive.",
+  "The final build mounted fresh package, build, and artifact roots, used --userns=keep-id as the accepted final3 builds did, and set CARGO_BUILD_JOBS=12."
+ ],
+ "purpose": "The accepted final3 archives were no longer retained anywhere on the host. This record rebuilds the three candidates from the unchanged recipes with the reconstruction procedure in the qdrant migration acceptance runbook and compares them with the accepted final3 identities.",
+ "recipe_source": {
+  "base_commit": "51a55e7",
+  "g3_tool_sha256": "459e107bcfcab8dfec6f4aa4b867e9daba1e8dc7a979005ea1d11a1a70156ab2",
+  "g3_tool_unchanged": true,
+  "recipe_files_match_accepted_final3": true
+ },
+ "result": {
+  "accepted_evidence_binds_these_copies": true,
+  "all_archives_byte_identical_to_accepted_final3": true,
+  "note": "The rebuilt archives have the same sha256 as the accepted final3 archives. Identity is the digest: these byte-identical copies are the accepted artifacts, and the existing accepted G0-G3 evidence in ../qdrant-1.19.0-1/ binds them. No G2 redo and no further G3 rerun is required."
+ },
+ "schema": "arch-pkgs.qdrant.rebind.g0-g1.v1"
+}
