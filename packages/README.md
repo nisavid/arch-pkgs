@@ -51,7 +51,7 @@ public historical evidence is documented in
 The three Qdrant rows share the disposable G0-G3 fixture and evidence contract in
 [`docs/maintainers/qdrant-migration-acceptance.md`](../docs/maintainers/qdrant-migration-acceptance.md).
 Building any recipe does not change its deferred disposition.
-The Qdrant rows no longer wait on the coupled Haystack G4 gate.
+The Qdrant rows no longer wait on the coupled Haystack G4 gate; this supersedes the runbook's closing G4 clause, whose bytes stay frozen in the G0-G3 evidence.
 
 Run the local structural check after editing the catalog or any retained
 package baseline:
