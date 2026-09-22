@@ -12,19 +12,21 @@ bundling Faster Whisper and CTranslate2 inside the Open WebUI package.
 - `advisory_references`: AUR `python-faster-whisper` source-package recipe and
   upstream Faster Whisper release and installation documentation
 - `divergence_notes`:
-  - The current package `1.2.1-1` already matches the selected application
-    version, but it has not passed the selected speech acceptance contract.
+  - The current package `1.2.1-1` matches the selected application version.
+    It passed the speech G0-G2 candidate gate with CTranslate2 `4.8.2`; see
+    the [candidate evidence](../../docs/maintainers/evidence/speech-providers-4.8.2-1.2.1/).
   - Preserve the AUR source-build shape and generic `python-ctranslate2` and
     `python-onnxruntime` provider dependencies. The accepted set must compose
-    with CTranslate2 `4.8.1` and the exact Python 3.14/system-provider profile.
+    with CTranslate2 `4.8.2` and the exact Python 3.14/system-provider profile.
   - ROCm-accelerated CTranslate2 remains outside this repository's lane.
 - `update_notes`:
-  - Keep this package deferred and excluded from publication until the complete
-    Open WebUI speech G0-G2 gate passes; matching the selected version is not
-    acceptance.
+  - Keep this package deferred and excluded from publication until
+    [Promote or defer the Open WebUI speech sublane](https://github.com/nisavid/arch-pkgs/issues/50)
+    decides; matching the selected version or passing the candidate gate is
+    not promotion.
   - G0 must verify immutable `1.2.1` sources and checksums, regenerated
     `.SRCINFO`, package-baseline metadata, and the exact speech compatibility
-    matrix with CTranslate2 `4.8.1`.
+    matrix with CTranslate2 `4.8.2`.
   - G1 must clean-build and inspect the package and dependency payload without
     undeclared runtime acquisition or a bundled provider stack.
   - G2 must run offline CPU `int8` transcription and word timestamps against
