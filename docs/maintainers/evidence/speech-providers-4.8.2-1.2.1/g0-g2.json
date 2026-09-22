@@ -1,0 +1,325 @@
+{
+  "schema": "arch-pkgs.speech-providers.g0-g2.v1",
+  "scope": "Public-safe G0-G2 candidate evidence for the Open WebUI speech provider sublane: ctranslate2 and python-ctranslate2 4.8.2-1 and python-faster-whisper 1.2.1-1. It does not promote the sublane; promotion or deferral is the separate disposition ticket. Publication, production installation, and the Open WebUI cutover remain outside this record.",
+  "evidence_date": "2026-09-22",
+  "privacy": {
+    "public_copy_safe": true,
+    "machine_local_paths_omitted": true,
+    "buildinfo_paths_omitted": true,
+    "credential_material_omitted": true
+  },
+  "decision": "https://github.com/nisavid/arch-pkgs/issues/26#issuecomment-5258698835",
+  "repository_source": {
+    "source_commit": "0b4b32705c7873f34405daccb415edc59ca58833",
+    "base_commit": "51a55e7866e37887ab206372a075d814094ef7fe",
+    "files": {
+      "packages/ctranslate2/PKGBUILD": {
+        "sha256": "55136b3155ddc0f0345fc5cb62f7879edea8966ac40f5e3988df70987880c87d",
+        "size": 3735
+      },
+      "packages/ctranslate2/.SRCINFO": {
+        "sha256": "2b5c587ca73eb8bf35fb0efd0655daf8423839cf8209ad88a7a714058cced8cf",
+        "size": 1596
+      },
+      "packages/python-faster-whisper/PKGBUILD": {
+        "sha256": "f0080131a57d5b6ab81c40504721a9d8f5cadfb101aa1ff1ab3f3163daafe30b",
+        "size": 1108
+      },
+      "packages/python-faster-whisper/.SRCINFO": {
+        "sha256": "37220ce8393079b43c2ad6b85cb503315cfb98ef47e9a4bf13dccf7ab2ebc9b9",
+        "size": 808
+      }
+    }
+  },
+  "gates": {
+    "G0": {
+      "pass": true,
+      "upstream_sources": {
+        "ctranslate2": {
+          "repository": "https://github.com/OpenNMT/CTranslate2",
+          "tag": "v4.8.2",
+          "tag_object": "1d07cac8ad21cd579f170cca6ce05c56173a0f67",
+          "commit": "d44d2d069eb88c7b7804da864c10c201501cb4a9",
+          "makepkg_git_sha256": "3ebe3d22a615f1b04710e19aa7d94c26c704bdd1e3ed3b3d31f7f7e77dfc2ebd",
+          "submodule_gitlinks": {
+            "third_party/cpu_features": "8a494eb1e158ec2050e5f699a504fbc9b896a43b",
+            "third_party/cutlass": "bbe579a9e3beb6ea6626d9227ec32d0dae119a49",
+            "third_party/cxxopts": "44380e5a44706ab7347f400698c703eb2a196202 (jarro2783/cxxopts v3.3.1)",
+            "third_party/googletest": "f8d7d77c06936315286eb55f8de22cd23c188571",
+            "third_party/ruy": "363f252289fb7a1fba1703d99196524698cb884d",
+            "third_party/ruy/third_party/cpuinfo": "082deffc80ce517f81dc2f3aebe6ba671fcd09c9",
+            "third_party/ruy/third_party/googletest": "6c58c11d5497b6ee1df3cb400ce30deb72fc28c0",
+            "third_party/spdlog": "76fb40d95455f249bd70824ecfcae7a8f0930fa3",
+            "third_party/thrust": "b5fe509fd11a925f90d6495176707cc1184eed9d (NVIDIA/cccl v2.7.0)"
+          },
+          "submodule_resolution": "Submodule sources are fetched as makepkg git sources and checked out at the tag's gitlinks, so only the CTranslate2 tag carries a checksum; the gitlinks fix every submodule commit."
+        },
+        "python-faster-whisper": {
+          "repository": "https://github.com/SYSTRAN/faster-whisper",
+          "tag": "v1.2.1",
+          "archive": "faster-whisper-1.2.1.tar.gz",
+          "b2sum": "771e25eb86e8c64c319245d07070ed0ccc8378a44a93ffb064712985322a5fd187cbba89d4bc03dcf4beb04fe691da07590c7f0620da14c894e0dccdcff4fdb9",
+          "sha256": "ff0b5428b3a074cd63f580ae73fa21f7d9fd3bba28e0e2e097868d78d5b06f2f"
+        }
+      },
+      "checks": {
+        "verifysource": "makepkg --verifysource passed for both recipes",
+        "srcinfo_regenerated": "makepkg --printsrcinfo matches the committed .SRCINFO for both recipes",
+        "compatibility_matrix": "Faster Whisper 1.2.1 requires ctranslate2>=4.0,<5, huggingface_hub>=0.21, tokenizers>=0.13,<1, onnxruntime>=1.14,<2, av>=11, and tqdm; CTranslate2 4.8.2 requires numpy and pyyaml>=5.3,<7. The observed host provider set satisfies every bound (see G2 provider_profile).",
+        "upstream_release_review": "4.8.0 moves Thrust to CCCL 2.7.0; 4.8.1 fixes the model-load heap overflow (#2068) and the Whisper align() division by zero (#2065) and hardens legacy converter checkpoint loading (#2036); 4.8.2 fixes StorageView index out-of-bounds reads (#2073), validates model variable sizes (#2091) and StorageView reserve sizes (#2094) before allocation, updates cxxopts to v3.3.1 (#2084), imports converters and specs lazily (#2080), and removes the runtime setuptools requirement (#2096). The 4.8.1..4.8.2 diff touches only those areas, the version, the changelog, and tests. Faster Whisper 1.2.1 has no CTranslate2 4.8 incompatibility.",
+        "secret_or_host_material": "none in the recipe diffs",
+        "ctranslate2_4_8_2_mapping": "third_party/thrust maps to NVIDIA/cccl; the separate Cub source and nested Thrust submodule setup stay removed; the 4.8.2 cxxopts gitlink is v3.3.1, which already contains the GCC 15 fix (jarro2783/cxxopts 63d1b65a694cfceafc20863afa75df49dfbe6b2a is an ancestor), so the cherry-pick is dropped; the only remaining source edit is the pybind11 pin relaxation; python-ctranslate2 no longer depends on python-setuptools because upstream removed it from install_requires, and python-pytorch stays an optional converter dependency"
+      }
+    },
+    "G1": {
+      "pass": true,
+      "builder": {
+        "tool": "makepkg -C -f (clean build) on the host with every makedepend already installed; no --nodeps",
+        "makepkg": "7.1.0",
+        "gcc": "16.2.1",
+        "cmake": "4.4.2-1.1",
+        "ninja": "1.13.2-3.1",
+        "pybind11": "3.1.0-1",
+        "python": "3.14.6 (python-gfx1151 3.14.6-1)",
+        "openblas": "0.3.34-1",
+        "cmake_backend": "CPU only: WITH_OPENBLAS=ON, WITH_RUY=ON, WITH_MKL=OFF, WITH_DNNL=OFF, no CUDA"
+      },
+      "archives": {
+        "ctranslate2-4.8.2-1-x86_64.pkg.tar.zst": {
+          "name": "ctranslate2",
+          "version": "4.8.2-1",
+          "architecture": "x86_64",
+          "size": 1055772,
+          "sha256": "d0843d9254afde3dedd7d92e6e218aae63d559926f3ebffcdbf2827373d8267b",
+          "installed_size": 3243431,
+          "pkgbuild_sha256": "55136b3155ddc0f0345fc5cb62f7879edea8966ac40f5e3988df70987880c87d",
+          "payload_file_count": 117,
+          "depends": [
+            "openblas",
+            "glibc",
+            "libgcc",
+            "libgomp",
+            "libstdc++"
+          ],
+          "optdepends": [],
+          "key_payload_sha256": {
+            "usr/lib/libctranslate2.so.4.8.2": "97d1305fe298957249614a4887b8b9ae81c6c78b5eade36b6291375701d5ef1f"
+          }
+        },
+        "python-ctranslate2-4.8.2-1-x86_64.pkg.tar.zst": {
+          "name": "python-ctranslate2",
+          "version": "4.8.2-1",
+          "architecture": "x86_64",
+          "size": 431574,
+          "sha256": "6c8e5813e12e1a36d68af357afdce744481eca359a4d1576bfcd2d46ec765d0e",
+          "installed_size": 1368877,
+          "pkgbuild_sha256": "55136b3155ddc0f0345fc5cb62f7879edea8966ac40f5e3988df70987880c87d",
+          "payload_file_count": 38,
+          "depends": [
+            "ctranslate2",
+            "python",
+            "python-numpy",
+            "python-yaml",
+            "glibc",
+            "libgcc",
+            "libstdc++"
+          ],
+          "optdepends": [
+            "python-pytorch: model conversion with the ct2-*-converter tools"
+          ],
+          "key_payload_sha256": {
+            "usr/lib/python3.14/site-packages/ctranslate2/_ext.cpython-314-x86_64-linux-gnu.so": "a15476ae62105bbfcaca88f98d1fe6cd066020c731f5693708e90dfde70cf718"
+          }
+        },
+        "python-faster-whisper-1.2.1-1-any.pkg.tar.zst": {
+          "name": "python-faster-whisper",
+          "version": "1.2.1-1",
+          "architecture": "any",
+          "size": 1087994,
+          "sha256": "9b052be890fd7f21135ca2ebc090ff140432e0e8493dd484b44585386ae8d1cb",
+          "installed_size": 1383417,
+          "pkgbuild_sha256": "f0080131a57d5b6ab81c40504721a9d8f5cadfb101aa1ff1ab3f3163daafe30b",
+          "payload_file_count": 16,
+          "depends": [
+            "python",
+            "python-av",
+            "python-ctranslate2",
+            "python-huggingface-hub",
+            "python-numpy",
+            "python-onnxruntime",
+            "python-tokenizers",
+            "python-tqdm"
+          ],
+          "optdepends": [],
+          "key_payload_sha256": {
+            "usr/lib/python3.14/site-packages/faster_whisper/assets/silero_vad_v6.onnx": "4cbf549b8326f60f80f2536d9eefeb450a9abe83365a098031c89719f1be17d2"
+          },
+          "reused": "Same bytes as the archive in the superseded 4.8.1 evidence; its recipe did not change, so it was not rebuilt."
+        }
+      },
+      "payload_checks": {
+        "licenses": "each package installs its MIT LICENSE under /usr/share/licenses/<pkgname>",
+        "elf_linkage": "libctranslate2.so.4.8.2 needs only libgomp, libopenblas, libstdc++, libm, libgcc_s, libc; the Python extension and ct2-translator need libctranslate2.so.4 and the C/C++ runtime; no RPATH or RUNPATH remains",
+        "no_bundled_provider_stack": "python-faster-whisper ships only its own modules and the upstream Silero VAD v6 ONNX asset; python-ctranslate2 ships only the ctranslate2 package and its console converters",
+        "no_local_paths_in_payload": "no build or home path appears in any installed payload file",
+        "dependency_resolution": "pacman -U --print on the three archives resolves against the host package set without pulling further packages",
+        "no_setuptools_runtime": "the ctranslate2 4.8.2 dist-info declares only numpy and pyyaml; no ctranslate2 module or console script imports setuptools or pkg_resources"
+      }
+    },
+    "G2": {
+      "pass": true,
+      "fixture": {
+        "kind": "declared Python 3.14 CPU provider fixture: the three candidate archives extracted into one overlay root that leads PYTHONPATH and LD_LIBRARY_PATH over the host's installed system providers, run inside an unprivileged network namespace that has only loopback",
+        "environment": "env -i; HF_HUB_OFFLINE=1; CUDA_VISIBLE_DEVICES, HIP_VISIBLE_DEVICES, and ROCR_VISIBLE_DEVICES empty; PYTHONNOUSERSITE=1; PYTHONDONTWRITEBYTECODE=1",
+        "harness": "g2_fixture.py",
+        "harness_sha256": "7b79bc037804ea95ffbb297d58aa4fdc64ad55ddb8ab2975ab3d197c527d1d37",
+        "inputs": {
+          "ctranslate2_bundled_model": {
+            "source": "CTranslate2 tests/data/models/v2/aren-transliteration (unchanged between v4.8.1 and v4.8.2)",
+            "model.bin_sha256": "8870c0c32eb5dcce3f0a004cd5e13383d365d16d905a6f3c8d9732b98a30112d"
+          },
+          "ctranslate2_test_data": {
+            "source": "https://opennmt-models.s3.amazonaws.com/transliteration-aren-all.tar.gz (upstream python/tools/prepare_test_environment.sh)",
+            "sha256": "ce8db1659fe1a42f987cb0c80a99ac37f06314f988145e62125bcd3ae31ac8b7",
+            "size": 71048675
+          },
+          "whisper_model": {
+            "repository": "Systran/faster-whisper-tiny",
+            "revision": "d90ca5fe260221311c53c58e660288d3deb8d356",
+            "model.bin_sha256": "dcb76c6586fc06cbdac6dd21f14cfd129cc4cdd9dce19bf4ffa62e59cbe6e6d1"
+          },
+          "audio": {
+            "source": "faster-whisper 1.2.1 tests/data/jfk.flac",
+            "sha256": "63a4b1e4c1dc655ac70961ffbf518acd249df237e5a0152faae9a4a836949715"
+          }
+        },
+        "harness_change": "Only the identity check's expected CTranslate2 version changed, from 4.8.1 to 4.8.2; the method and inputs are unchanged."
+      },
+      "ctranslate2_upstream_tests": {
+        "command": "python3 -m pytest python/tests/test_translator.py python/tests/test_storage_view.py python/tests/test_misc.py python/tests/test_spec.py -k 'not test_logging'",
+        "result": "110 passed, 2 skipped, 1 deselected in 30.35s",
+        "selection": "upstream CI's Python wheel suite minus the converter suites (Transformers, Marian, Fairseq, OpenNMT), which need framework downloads rather than inference; test_logging is deselected because it needs wurlitzer, which the host lacks; the two skips need a CUDA device; 4.8.2 adds three test_misc cases, including a check that importing ctranslate2 loads neither torch nor transformers",
+        "source": "python/tests from the v4.8.2 tag"
+      },
+      "checks": {
+        "identity": {
+          "pass": true
+        },
+        "libctranslate2_from_candidate": {
+          "pass": true,
+          "mapped": [
+            "usr/lib/libctranslate2.so.4.8.2"
+          ]
+        },
+        "cpu_only": {
+          "pass": true,
+          "cuda_device_count": 0,
+          "cpu_compute_types": [
+            "float32",
+            "int8",
+            "int8_float32"
+          ]
+        },
+        "ct2_bundled_model": {
+          "pass": true,
+          "outputs": {
+            "float32": "a t z m o n",
+            "int8": "a t z m o n"
+          }
+        },
+        "ct2_malformed_model_fails_without_crash": {
+          "pass": true,
+          "variants": {
+            "empty": {
+              "returncode": 0,
+              "raised": "RuntimeError"
+            },
+            "truncated_16_bytes": {
+              "returncode": 0,
+              "raised": "RuntimeError"
+            },
+            "truncated_half": {
+              "returncode": 0,
+              "raised": "RuntimeError"
+            },
+            "oversized_first_length": {
+              "returncode": 0,
+              "raised": "UnicodeDecodeError"
+            }
+          }
+        },
+        "fw_int8_transcription_word_timestamps": {
+          "pass": true,
+          "language": "en",
+          "duration": 11.0,
+          "text": "And so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.",
+          "word_count": 22,
+          "first_word": [
+            "And",
+            0.0,
+            0.74
+          ],
+          "last_word": [
+            "country.",
+            10.5
+          ]
+        },
+        "fw_int8_with_onnxruntime_cpu_vad": {
+          "pass": true,
+          "language": "en",
+          "word_count": 22
+        }
+      },
+      "ownership": {
+        "candidate_files_loaded": {
+          "ctranslate2-4.8.2-1-x86_64.pkg.tar.zst": 1,
+          "python-ctranslate2-4.8.2-1-x86_64.pkg.tar.zst": 6,
+          "python-faster-whisper-1.2.1-1-any.pkg.tar.zst": 8
+        },
+        "candidate_files_outside_archive_manifests": 0,
+        "host_files_loaded": 607,
+        "host_files_owned_by_pacman": 605,
+        "host_files_unowned": [
+          "/usr/lib/gconv/gconv-modules.cache",
+          "/usr/lib/locale/locale-archive"
+        ],
+        "unowned_note": "Both unowned files are generated system caches, not imported modules. Every imported module and native library outside the overlay is owned by an installed package per pacman -Qo.",
+        "scope_note": "Host files are the loaded files under /usr. Three other mapped paths are not package payload: the dynamic linker cache, an anonymous POSIX semaphore, and the fixture script itself.",
+        "owning_package_count": 135
+      },
+      "provider_profile": {
+        "python-gfx1151": "3.14.6-1",
+        "python-numpy-gfx1151": "2.4.6-1",
+        "python-setuptools": "1:84.0.0-1",
+        "openblas": "0.3.34-1",
+        "python-av": "18.1.0-1.1",
+        "python-huggingface-hub": "1:1.27.0-1",
+        "python-onnxruntime-opt-rocm": "1.28.0-1",
+        "python-tokenizers-gfx1151": "0.22.2-1",
+        "python-tqdm": "4.70.0-1",
+        "python-pytorch-opt-rocm-gfx1151": "2.12.0-4",
+        "python-transformers-gfx1151": "5.8.1-1",
+        "python-pyyaml-gfx1151": "6.0.3-1"
+      },
+      "provider_notes": [
+        "Importing ctranslate2 4.8.2 no longer loads PyTorch or Transformers: neither appears among the loaded files, although the host's ROCm PyTorch and Transformers remain installed. The loaded host file count fell from 1931 to 607 compared with the 4.8.1 run.",
+        "The only setuptools file loaded is _distutils_hack, which the host's setuptools .pth file loads at interpreter start; CTranslate2 does not import setuptools.",
+        "PyAV 18.1.0 is installed where the decision's composed profile names 18.0.0; Faster Whisper needs av>=11."
+      ]
+    }
+  },
+  "decision_amendment": "https://github.com/nisavid/arch-pkgs/issues/26#issuecomment-5783734367",
+  "supersedes": {
+    "note": "This record replaces the 4.8.1-1 candidate evidence. The target moved to 4.8.2 for security, so the 4.8.1-1 archives are superseded and are not acceptance candidates. The python-faster-whisper archive below is the same bytes as in the superseded set.",
+    "archives": {
+      "ctranslate2-4.8.1-1-x86_64.pkg.tar.zst": {
+        "size": 1053192,
+        "sha256": "26ccc21383436f55c9e351352e6607cba8e7d25da133d463591a81010fcb3f73"
+      },
+      "python-ctranslate2-4.8.1-1-x86_64.pkg.tar.zst": {
+        "size": 431169,
+        "sha256": "800d04bfe1edb3be4105a41074deefc0b1399d0b067d14ab367fa1b154263e7a"
+      }
+    }
+  }
+}
