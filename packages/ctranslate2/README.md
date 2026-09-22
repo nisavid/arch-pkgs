@@ -31,9 +31,11 @@ application-private tree.
     converters lazily, so `python-ctranslate2` depends on neither
     `python-setuptools` nor PyTorch. PyTorch stays optional for conversion.
 - `update_notes`:
-  - Keep both split packages deferred and excluded from publication until the
-    Open WebUI speech G0-G2 gate passes with Faster Whisper `1.2.1`; version
-    selection alone is not acceptance.
+  - The Open WebUI speech G0-G2 gate passed with Faster Whisper `1.2.1`; see
+    the [candidate evidence](../../docs/maintainers/evidence/speech-providers-4.8.2-1.2.1/).
+    Keep both split packages deferred and excluded from publication until
+    [Promote or defer the Open WebUI speech sublane](https://github.com/nisavid/arch-pkgs/issues/50)
+    decides; a passed candidate gate is not promotion.
   - G0 must verify immutable sources, checksums, regenerated `.SRCINFO`, the
     `4.8.2` source/dependency mapping, patch intent, and the exact speech
     compatibility matrix.
