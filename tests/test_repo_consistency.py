@@ -956,7 +956,11 @@ class RepositoryConsistencyWorkflowTests(unittest.TestCase):
         self.assertEqual(attempts, 2)
         self.assertEqual(
             arguments,
-            ["-Syyu --noconfirm git jq python python-yaml rsync zsh"] * attempts,
+            [
+                "-Syyu --noconfirm bubblewrap git jq npm python python-fastapi "
+                "python-packaging python-requests python-typer python-yaml rsync uv "
+                "uvicorn zsh"
+            ] * attempts,
         )
 
     def test_workflow_dependency_sync_retry_is_bounded(self):
@@ -966,7 +970,11 @@ class RepositoryConsistencyWorkflowTests(unittest.TestCase):
         self.assertEqual(attempts, 4)
         self.assertEqual(
             arguments,
-            ["-Syyu --noconfirm git jq python python-yaml rsync zsh"] * attempts,
+            [
+                "-Syyu --noconfirm bubblewrap git jq npm python python-fastapi "
+                "python-packaging python-requests python-typer python-yaml rsync uv "
+                "uvicorn zsh"
+            ] * attempts,
         )
 
     def test_workflow_runs_stable_unprivileged_gate_on_prs_and_main(self):
