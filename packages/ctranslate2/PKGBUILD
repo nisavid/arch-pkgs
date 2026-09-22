@@ -3,7 +3,7 @@
 
 pkgbase=ctranslate2
 pkgname=('ctranslate2' 'python-ctranslate2')
-pkgver=4.7.2
+pkgver=4.8.2
 pkgrel=1
 pkgdesc="A C++ and Python library for efficient inference with Transformer models"
 arch=('x86_64')
@@ -24,17 +24,15 @@ makedepends=(
 source=(
   "git+${url}.git#tag=v${pkgver}"
   'git+https://github.com/jarro2783/cxxopts.git'
-  'git+https://github.com/NVIDIA/thrust.git'
+  'git+https://github.com/NVIDIA/cccl.git'
   'git+https://github.com/google/googletest.git'
   'git+https://github.com/google/cpu_features.git'
   'git+https://github.com/gabime/spdlog.git'
   'git+https://github.com/google/ruy.git'
   'git+https://github.com/pytorch/cpuinfo.git'
   'git+https://github.com/NVIDIA/cutlass.git'
-  'git+https://github.com/NVIDIA/cub.git'
 )
-sha256sums=('169cb72186ab48f705594e3a836ccf36a560d35a72e70e89be9ddb5a2209174f'
-            'SKIP'
+sha256sums=('3ebe3d22a615f1b04710e19aa7d94c26c704bdd1e3ed3b3d31f7f7e77dfc2ebd'
             'SKIP'
             'SKIP'
             'SKIP'
@@ -49,9 +47,11 @@ prepare() {
 
   git submodule init
   local submodule
-  for submodule in cxxopts thrust googletest cpu_features spdlog ruy cutlass; do
+  for submodule in cxxopts googletest cpu_features spdlog ruy cutlass; do
     git config "submodule.third_party/${submodule}.url" "${srcdir}/${submodule}"
   done
+  # Since 4.8.0 the third_party/thrust submodule tracks NVIDIA CCCL.
+  git config "submodule.third_party/thrust.url" "${srcdir}/cccl"
   git -c protocol.file.allow=always submodule update
 
   pushd third_party/ruy
@@ -61,20 +61,10 @@ prepare() {
   git -c protocol.file.allow=always submodule update
   popd
 
-  pushd third_party/thrust
-  git submodule init
-  git config submodule.cub.url "${srcdir}/cub"
-  git -c protocol.file.allow=always submodule update
-  popd
-
   git clean python -dfx
 
   # Use the packaged pybind11 module instead of downloading a pinned wheel.
   sed -i 's/pybind11==2.11.1/pybind11/g' python/pyproject.toml
-
-  pushd third_party/cxxopts
-  git cherry-pick -X theirs -n 63d1b65a694cfceafc20863afa75df49dfbe6b2a
-  popd
 }
 
 build() {
@@ -130,11 +120,13 @@ package_python-ctranslate2() {
     'ctranslate2'
     'python'
     'python-numpy'
-    'python-pytorch'
     'python-yaml'
     'glibc'
     'libgcc'
     'libstdc++'
+  )
+  optdepends=(
+    'python-pytorch: model conversion with the ct2-*-converter tools'
   )
 
   cd CTranslate2/python
