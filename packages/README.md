@@ -53,6 +53,8 @@ The three Qdrant rows share the disposable G0-G3 fixture and evidence contract i
 [`docs/maintainers/qdrant-migration-acceptance.md`](../docs/maintainers/qdrant-migration-acceptance.md).
 Building any recipe does not change its deferred disposition.
 The Qdrant rows no longer wait on the coupled Haystack G4 gate; this supersedes the runbook's closing G4 clause, whose bytes stay frozen in the G0-G3 evidence.
+G4 now runs in the Open WebUI household acceptance, and the production route is
+[`docs/maintainers/qdrant-production-cutover.md`](../docs/maintainers/qdrant-production-cutover.md).
 
 Run the local structural check after editing the catalog or any retained
 package baseline:
