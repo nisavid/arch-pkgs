@@ -26,6 +26,14 @@ Each archive's `.BUILDINFO` `pkgbuild_sha256sum` matches the PKGBUILD digests
 recorded in `g0-g2.json`. A rebuild produces a new candidate, even at the same
 version.
 
+The source commit predates the rebase that landed this record, so its hash is
+not on `main`. The landed recipe is still the built recipe. Its build inputs,
+`PKGBUILD` and `.SRCINFO` in `packages/ctranslate2/` and
+`packages/python-faster-whisper/`, are byte-identical to the build's inputs.
+Only the package-local `README.md` notes changed afterward, and `makepkg` does
+not read them. The archive digests above remain the candidate identity, and
+each `.BUILDINFO` binds its `PKGBUILD`, so no rebuild follows the merge.
+
 The earlier `ctranslate2` and `python-ctranslate2` 4.8.1-1 archives passed the
 same G0-G2 procedure but are superseded. `g0-g2.json` keeps their names, sizes,
 and digests under `supersedes`. They are not acceptance candidates.
@@ -78,12 +86,14 @@ env -i HOME="$HOME" PATH=/usr/bin LANG=C.UTF-8 \
 
 ## Host Provider Seam
 
-This seam is pending the lead's confirmation.
+The lead confirmed this seam on 2026-09-22.
 
 The host has `ctranslate2-gfx1151` and `python-ctranslate2-gfx1151` 4.7.2-1
-installed from the Strix Halo package repository. Each provides and conflicts
-with the generic `ctranslate2` or `python-ctranslate2`. On the host,
-`python-faster-whisper` resolves `python-ctranslate2` from that ROCm build.
+installed from the Strix Halo package repository. That repository rebuilds
+the gfx1151 provider at CTranslate2 4.8.2 in its generation C. Each provides
+and conflicts with the generic `ctranslate2` or `python-ctranslate2`. On the
+host, `python-faster-whisper` resolves `python-ctranslate2` from that ROCm
+build.
 
 The Open WebUI cutover installs only `python-faster-whisper` and keeps the
 ROCm provider. The generic `ctranslate2` 4.8.2 split package in this
