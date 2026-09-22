@@ -85,6 +85,23 @@ def signin(socket_path: Path, email: str, password: str) -> dict[str, object]:
     return response
 
 
+def require_sole_administrator(socket_path: Path, token: str, email: str, name: str) -> None:
+    _, users = request_json(socket_path, "GET", "/api/v1/users/", token=token)
+    if not isinstance(users, dict) or users.get("total") != 1:
+        raise CommissioningError("commissioned runtime does not contain exactly one user")
+    user_list = users.get("users")
+    if not isinstance(user_list, list) or len(user_list) != 1:
+        raise CommissioningError("commissioned runtime user inventory is malformed")
+    intended = user_list[0]
+    if (
+        not isinstance(intended, dict)
+        or str(intended.get("email", "")).casefold() != email
+        or intended.get("name") != name
+        or intended.get("role") != "admin"
+    ):
+        raise CommissioningError("the sole user is not the intended administrator")
+
+
 def main() -> int:
     socket_path = Path(os.environ.get("OPEN_WEBUI_SOCKET", "/run/open-webui/open-webui.sock"))
     email = credential("admin-email").casefold()
@@ -96,6 +113,7 @@ def main() -> int:
 
     initial_session = signin(socket_path, email, bootstrap_password)
     token = str(initial_session["token"])
+    require_sole_administrator(socket_path, token, email, name)
     _, changed = request_json(
         socket_path,
         "POST",
@@ -116,20 +134,7 @@ def main() -> int:
     final_session = signin(socket_path, email, final_password)
     final_token = str(final_session["token"])
 
-    _, users = request_json(socket_path, "GET", "/api/v1/users/", token=final_token)
-    if not isinstance(users, dict) or users.get("total") != 1:
-        raise CommissioningError("commissioned runtime does not contain exactly one user")
-    user_list = users.get("users")
-    if not isinstance(user_list, list) or len(user_list) != 1:
-        raise CommissioningError("commissioned runtime user inventory is malformed")
-    intended = user_list[0]
-    if (
-        not isinstance(intended, dict)
-        or str(intended.get("email", "")).casefold() != email
-        or intended.get("name") != name
-        or intended.get("role") != "admin"
-    ):
-        raise CommissioningError("the sole user is not the intended administrator")
+    require_sole_administrator(socket_path, final_token, email, name)
 
     _, config = request_json(socket_path, "GET", "/api/config", token=final_token)
     if not isinstance(config, dict) or not isinstance(config.get("features"), dict):
