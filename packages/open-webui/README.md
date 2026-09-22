@@ -5,10 +5,10 @@ native-RAG boundary.
 
 This candidate is not approved for production activation or publication. A
 successful source verification or build is only a package gate;
-[Measure the disposable Open WebUI household-service envelope](https://github.com/nisavid/arch-pkgs/issues/68)
-still requires the exact
-composed runtime and disposable evidence, including the accepted patched
-Lemonade/llama provider root. The dated measurement boundary remains in
+[Acceptance-deploy the Open WebUI household candidate set](https://github.com/nisavid/arch-pkgs/issues/89)
+still requires the one integrated trial set against the exact composed runtime
+and the live-validated Lemonade provider. The dated measurement boundary
+remains in
 [`docs/maintainers/open-webui-household-envelope.md`](../../docs/maintainers/open-webui-household-envelope.md).
 
 ## Packaged Boundary
@@ -241,11 +241,9 @@ verifier bytes immutable; a changed receipt contract must use a new schema and
 versioned helper rather than rewriting this historical checkpoint.
 
 That checkpoint does not make the package accepted: the
-integrated provider, restore, and rollback evidence required by
-[Measure the disposable Open WebUI household-service envelope](https://github.com/nisavid/arch-pkgs/issues/68)
-(one integrated trial set) must still pass before the single ticket-creation
-step in
-[Set Open WebUI acceptance limits and create its execution tickets](https://github.com/nisavid/arch-pkgs/issues/70).
+integrated provider, restore, and rollback evidence of the one integrated trial
+set must still pass under
+[Acceptance-deploy the Open WebUI household candidate set](https://github.com/nisavid/arch-pkgs/issues/89).
 
 ```bash
 makepkg --verifysource

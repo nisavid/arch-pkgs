@@ -5,7 +5,8 @@
 Incomplete. The run establishes useful behavior and provisional measurements,
 but it does not define production limits, make the package publication
 eligible, or make the service deployable.
-[Measure the disposable Open WebUI household-service envelope](https://github.com/nisavid/arch-pkgs/issues/68) remains open.
+The integrated trial set that completes this measurement moved to
+[Acceptance-deploy the Open WebUI household candidate set](https://github.com/nisavid/arch-pkgs/issues/89).
 
 ## Amended acceptance scope
 
@@ -25,7 +26,7 @@ unchanged.
 - [Set Open WebUI readiness, resource, privacy, and rollback limits](https://github.com/nisavid/arch-pkgs/issues/69)
   is folded into
   [Set Open WebUI acceptance limits and create its execution tickets](https://github.com/nisavid/arch-pkgs/issues/70),
-  a single ticket-creation step.
+  a single ticket-creation step, which is done.
 
 ## Scope and authority
 
