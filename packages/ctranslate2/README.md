@@ -13,26 +13,29 @@ application-private tree.
 
 ## Maintenance Baseline
 
-- `authoritative_reference`: upstream `OpenNMT/CTranslate2` release `v4.8.1`,
-  the selected Open WebUI speech target
+- `authoritative_reference`: upstream `OpenNMT/CTranslate2` release `v4.8.2`,
+  the selected Open WebUI speech target, amended from `v4.8.1` for security
 - `advisory_references`: AUR `ctranslate2` split-package recipe and upstream
   CTranslate2 release notes and build documentation
 - `divergence_notes`:
-  - The current split recipe packages `4.7.2-1`; the selected target is `4.8.1`
-    for its model-load heap-overflow and Whisper correctness fixes.
+  - The split recipe packages `4.8.2` for its StorageView index
+    out-of-bounds-read fixes and its size validation before allocation, on top
+    of the `4.8.1` model-load heap-overflow and Whisper correctness fixes.
   - Preserve the generic CPU/OpenBLAS split-package lane and omit the unused
     Intel oneAPI MKL dependency while `WITH_MKL=OFF`. ROCm/HIP acceleration
     remains outside this repository's lane.
-  - For `4.8.1`, map the Thrust source to NVIDIA CCCL, remove the obsolete
-    separate Cub source and setup, retain the required GCC 15 `cxxopts` fix,
-    add `python-setuptools` as a runtime dependency of `python-ctranslate2`, and
-    keep PyTorch optional for conversion rather than required for inference.
+  - Map the Thrust source to NVIDIA CCCL (since `4.8.0`) and keep the separate
+    Cub source removed. `4.8.2` pins `cxxopts` `v3.3.1`, which already carries
+    the GCC 15 fix, so the recipe no longer cherry-picks it.
+  - `4.8.2` drops the runtime `setuptools` requirement and imports its
+    converters lazily, so `python-ctranslate2` depends on neither
+    `python-setuptools` nor PyTorch. PyTorch stays optional for conversion.
 - `update_notes`:
   - Keep both split packages deferred and excluded from publication until the
     Open WebUI speech G0-G2 gate passes with Faster Whisper `1.2.1`; version
     selection alone is not acceptance.
   - G0 must verify immutable sources, checksums, regenerated `.SRCINFO`, the
-    `4.8.1` source/dependency mapping, patch intent, and the exact speech
+    `4.8.2` source/dependency mapping, patch intent, and the exact speech
     compatibility matrix.
   - G1 must clean-build and inspect both package payloads and dependency edges
     without an undeclared network or runtime acquisition path.
