@@ -60,14 +60,15 @@ empty.
 | `oauth-session-token-encryption-key` | distinct stable OAuth session key |
 | `valkey-url` | dedicated Valkey ACL URL |
 | `qdrant-runtime-api-key` | collection-scoped runtime `prw` JWT only |
-| `lemonade-inference-api-key` | inference-only embedding/reranking credential |
+| `lemonade-inference-api-key` | operator-provisioned loopback Lemonade key for embedding and reranking |
 | `session-epoch` | read-only copy of the external root-owned epoch ledger |
 
 Provision the six encrypted service credentials once under the exact paths
-declared by `open-webui.service`. The service receives no Qdrant or Lemonade
-administrative credential. Manual delivery is not part of ordinary startup;
-operator handling is limited to initial provisioning, deliberate rotation, or
-restore.
+declared by `open-webui.service`. The service receives no Qdrant administrative
+credential. The inference-only Lemonade credential class is deferred; the
+single loopback key is the accepted interim boundary. Manual delivery is not
+part of ordinary startup; operator handling is limited to initial
+provisioning, deliberate rotation, or restore.
 
 The Lemonade embedding and reranking keys remain external service authority:
 Open WebUI neither persists nor exports them, and its document settings do not
@@ -231,8 +232,9 @@ verifier bytes immutable; a changed receipt contract must use a new schema and
 versioned helper rather than rewriting this historical checkpoint.
 
 That checkpoint does not make the package accepted: the
-integrated provider, restore, and rollback evidence required by #68 must still
-pass before #69 can begin.
+integrated provider, restore, and rollback evidence required by #68 (one
+integrated trial set) must still pass before the single ticket-creation step
+that folds #69 and #70.
 
 ```bash
 makepkg --verifysource
