@@ -4,8 +4,9 @@ Disposable Arch package candidate for Open WebUI 0.11.0 and the fresh household
 native-RAG boundary.
 
 This candidate is not approved for production activation or publication. A
-successful source verification or build is only a package gate; issue
-[#68](https://github.com/nisavid/arch-pkgs/issues/68) still requires the exact
+successful source verification or build is only a package gate;
+[Measure the disposable Open WebUI household-service envelope](https://github.com/nisavid/arch-pkgs/issues/68)
+still requires the exact
 composed runtime and disposable evidence, including the accepted patched
 Lemonade/llama provider root. The dated measurement boundary remains in
 [`docs/maintainers/open-webui-household-envelope.md`](../../docs/maintainers/open-webui-household-envelope.md).
@@ -31,6 +32,11 @@ Lemonade/llama provider root. The dated measurement boundary remains in
   `open-webui-rag-v1`, zembed query/document prefixes, and the external zerank
   reranker. Reranker qualification is mandatory for document RAG; ordinary
   chat remains available when that provider is unhealthy.
+- Qualification runs at service start and when an administrator saves the
+  document settings. After any runtime reranker fault, document RAG stays
+  closed (the authenticated `/api/v1/retrieval/health` probe returns 503)
+  until one of those requalifies it; once the provider is healthy again,
+  restart `open-webui.service`.
 - Before service start, an operator with Qdrant administrative authority must
   precreate the exact 2560-dimensional cosine collections
   `open-webui-rag-v1_memories`, `open-webui-rag-v1_knowledge`,
@@ -232,9 +238,11 @@ verifier bytes immutable; a changed receipt contract must use a new schema and
 versioned helper rather than rewriting this historical checkpoint.
 
 That checkpoint does not make the package accepted: the
-integrated provider, restore, and rollback evidence required by #68 (one
-integrated trial set) must still pass before the single ticket-creation step
-that folds #69 and #70.
+integrated provider, restore, and rollback evidence required by
+[Measure the disposable Open WebUI household-service envelope](https://github.com/nisavid/arch-pkgs/issues/68)
+(one integrated trial set) must still pass before the single ticket-creation
+step in
+[Set Open WebUI acceptance limits and create its execution tickets](https://github.com/nisavid/arch-pkgs/issues/70).
 
 ```bash
 makepkg --verifysource

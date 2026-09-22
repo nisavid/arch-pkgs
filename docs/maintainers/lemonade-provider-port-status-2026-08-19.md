@@ -7,8 +7,8 @@
 > [Resurrect the Strix Halo stack, arch-pkgs, and the Lemonade fork through deployment](https://github.com/nisavid/arch-strix-halo-pkgs/issues/134).
 > The Open WebUI prerequisites need no new fork features: zembed prefixing goes
 > through Open WebUI embedding settings, and one operator-provisioned loopback
-> key replaces the inference-only credential class. This note remains a dated
-> record.
+> key serves in the interim; the inference-only credential class is deferred.
+> This note remains a dated record.
 
 ## Verdict
 
