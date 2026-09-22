@@ -36,8 +36,6 @@ fi
 load_credential valkey-url REDIS_URL
 export WEBSOCKET_REDIS_URL=$REDIS_URL
 load_credential qdrant-runtime-api-key QDRANT_API_KEY
-load_credential lemonade-inference-api-key RAG_OPENAI_API_KEY
-export RAG_EXTERNAL_RERANKER_API_KEY=$RAG_OPENAI_API_KEY
 
 # A deployment-only drop-in may expose the transient bootstrap inputs on the
 # first closed-socket start. A partial set fails rather than falling through to

@@ -123,7 +123,7 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
             text=True,
         ).stdout
 
-        self.assertIn("pkgrel=3", recipe)
+        self.assertIn("pkgrel=4", recipe)
         for asset, digest in (
             (
                 "open-webui-npm-offline-closure-0.11.0.tar.zst",
@@ -323,7 +323,6 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
             "oauth-session-token-encryption-key",
             "valkey-url",
             "qdrant-runtime-api-key",
-            "lemonade-inference-api-key",
         ):
             self.assertIn(f"LoadCredentialEncrypted={credential}:", service)
             self.assertIn(credential, wrapper)
@@ -341,7 +340,10 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
         self.assertNotIn("lemonade-admin", service.casefold())
         self.assertNotIn("qdrant-admin", wrapper.casefold())
         self.assertNotIn("lemonade-admin", wrapper.casefold())
-        self.assertIn("RAG_EXTERNAL_RERANKER_API_KEY=$RAG_OPENAI_API_KEY", wrapper)
+        # Open WebUI's Lemonade connection uses no credential in this refresh.
+        self.assertNotIn("lemonade-inference-api-key", service)
+        self.assertNotIn("RAG_OPENAI_API_KEY", wrapper)
+        self.assertNotIn("RAG_EXTERNAL_RERANKER_API_KEY", wrapper)
         self.assertIn("IPAddressDeny=any", service)
         self.assertIn("IPAddressAllow=localhost", service)
 
@@ -353,7 +355,6 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
             "oauth-session-token-encryption-key": "independent-session-secret",
             "valkey-url": "redis://open-webui@127.0.0.1:6379/0",
             "qdrant-runtime-api-key": "qdrant-runtime-only",
-            "lemonade-inference-api-key": "lemonade-inference-only",
         }
         with tempfile.TemporaryDirectory() as directory:
             credential_directory = Path(directory)
@@ -398,16 +399,39 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
             "ENABLE_QDRANT_MULTITENANCY_MODE=true",
             "RAG_RERANKING_ENGINE=external",
             "ENABLE_RAG_HYBRID_SEARCH=true",
-            "RAG_EXTERNAL_RERANKER_URL=http://127.0.0.1:8000/api/v1/rerank",
+            "RAG_OPENAI_API_BASE_URL=http://127.0.0.1:13305/api/v1",
+            "RAG_EXTERNAL_RERANKER_URL=http://127.0.0.1:13305/api/v1/rerank",
             "RAG_EXTERNAL_RERANKER_TIMEOUT=30",
-            "RAG_EMBEDDING_QUERY_PREFIX=query",
-            "RAG_EMBEDDING_CONTENT_PREFIX=document",
-            "RAG_EMBEDDING_PREFIX_FIELD_NAME=input_type",
             "ENABLE_STAR_SESSIONS_MIDDLEWARE=true",
             "WEBSOCKET_MANAGER=redis",
         ):
             self.assertIn(setting, environment)
         self.assertNotIn("RAG_RERANKING_ENGINE=openai", environment)
+
+    def test_embedding_prefixes_are_the_zembed_wrapper_heads(self):
+        environment = read(OPEN_WEBUI / "open-webui.env")
+        provider_path = REPO_ROOT / "tools" / "fixtures" / "open-webui-household" / "provider.py"
+        spec = importlib.util.spec_from_file_location("open_webui_household_provider", provider_path)
+        provider = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(provider)
+
+        # No JSON discriminator: the wrapper heads travel as text prefixes.
+        self.assertNotIn("RAG_EMBEDDING_PREFIX_FIELD_NAME", environment)
+        for setting, input_type in (
+            ("RAG_EMBEDDING_QUERY_PREFIX", "query"),
+            ("RAG_EMBEDDING_CONTENT_PREFIX", "document"),
+        ):
+            # systemd reads a double-quoted EnvironmentFile value across lines.
+            match = re.search(rf'^{setting}="([^"]*)"$', environment, re.MULTILINE)
+            self.assertIsNotNone(match, setting)
+            prefix = match.group(1)
+            # Open WebUI 0.11.0 joins a text prefix as f"{prefix}{text}".
+            text = "household canary"
+            self.assertTrue(
+                provider.format_zembed_input(text, input_type).startswith(f"{prefix}{text}"),
+                setting,
+            )
+            self.assertEqual(prefix, f"<|im_start|>system\n{input_type}<|im_end|>\n<|im_start|>user\n")
 
     def test_session_epoch_state_is_root_owned_and_outside_restore_state(self):
         tmpfiles = read(OPEN_WEBUI / "open-webui.tmpfiles")
