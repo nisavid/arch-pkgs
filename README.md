@@ -7,8 +7,8 @@ and installable through a local pacman repository. It is not a public distro or 
 general AUR mirror. It is a small workspace for reproducible local packages:
 vector storage, Haystack services, their Python dependencies, and an
 experimental GPU inspection tool.
-It also keeps a source-build Thorium Browser recipe when a local browser package
-needs the fixed tarball/tag build path.
+Its retired Thorium Browser recipe stays only until cleanup; the AUR provides
+Alacrium, its successor.
 
 ## What You Can Install
 
@@ -18,14 +18,14 @@ notes.
 
 Start with the package family that matches what you want to install:
 
-- [`qdrant`](packages/qdrant/) and [`hayhooks`](packages/hayhooks/) provide the
-  local service layer for vector storage and Haystack pipeline serving.
+- [`qdrant`](packages/qdrant/) provides local vector storage; the
+  [`hayhooks`](packages/hayhooks/) Haystack pipeline service is deferred.
 - [`python-haystack-ai`](packages/haystack-ai/) and its companion Python
   packages support local Haystack work where the desired versions are not
   available in the right shape.
-- [`thorium-browser-updated`](packages/thorium-browser-updated/) packages
-  Thorium Browser from source with the fixed Chromium tarball and Thorium tag
-  recipe.
+- [`thorium-browser-updated`](packages/thorium-browser-updated/) is retired
+  and kept only until cleanup; install Alacrium from the AUR
+  (`alacrium-browser` or `alacrium-browser-bin`) instead.
 - [`utilyze`](packages/utilyze/) is an experimental NVIDIA GPU utilization TUI
   with Arch runtime, config, update, and telemetry-consent patches.
 
@@ -69,11 +69,14 @@ The full local-repo setup, including the pacman stanza, is in
   install disabled and must be enabled explicitly.
 - **I want to try `utilyze`.** Read
   [`packages/utilyze/README.Arch.md`](packages/utilyze/README.Arch.md), then
-  check the active validation work in [`docs/backlog.md`](docs/backlog.md).
+  check its deferral gate,
+  [Resume the utilyze lane when NVIDIA validation is available](https://github.com/nisavid/arch-pkgs/issues/84).
 - **I am maintaining the repo.** Read `AGENTS.md`, the checked
   [`packages/`](packages/) refresh index, and the repo-local skills in
-  `.agents/skills/`. Before review, run
-  `python3 tools/check_repo_consistency.py` from the repository root.
+  `.agents/skills/`. Current lane state lives in the refresh map
+  [Execute the accepted Arch package refresh](https://github.com/nisavid/arch-pkgs/issues/46).
+  Before review, run `python3 tools/check_repo_consistency.py` from the
+  repository root.
 
 ## Repository Map
 

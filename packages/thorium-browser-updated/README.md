@@ -1,5 +1,13 @@
 # thorium-browser-updated
 
+> [!WARNING]
+> Retired on 2026-09-22. Thorium and the planned Alacrium successor left
+> arch-pkgs because the AUR provides source and binary Alacrium packages
+> (`alacrium-browser`, `alacrium-browser-bin`). This directory is kept only
+> until preservation-aware cleanup under
+> [Release retained rollback anchors and clean target-local state](https://github.com/nisavid/arch-pkgs/issues/62).
+> Do not build or publish it.
+
 Arch source-build package for Thorium Browser.
 
 Use this package when you want Thorium built from source with the fixed
