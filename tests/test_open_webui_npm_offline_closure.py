@@ -18,6 +18,22 @@ RELEASE_MANIFEST = (
 )
 
 
+def network_isolation_prefix() -> list[str]:
+    """Isolate the network with bubblewrap where user namespaces are allowed.
+
+    Unprivileged CI containers cannot create namespaces; there the caller's
+    unroutable proxy environment still refuses any registry request.
+    """
+    probe = subprocess.run(
+        ["bwrap", "--unshare-net", "--bind", "/", "/", "/usr/bin/true"],
+        capture_output=True,
+        check=False,
+    )
+    if probe.returncode == 0:
+        return ["bwrap", "--unshare-net", "--bind", "/", "/"]
+    return []
+
+
 def make_package_tarball(path: Path, name: str, version: str) -> str:
     package_json = json.dumps(
         {"name": name, "version": version, "main": "index.js"},
@@ -234,14 +250,14 @@ class OpenWebUINpmOfflineClosureTests(unittest.TestCase):
                 "NPM_CONFIG_AUDIT": "false",
                 "NPM_CONFIG_FUND": "false",
                 "NPM_CONFIG_UPDATE_NOTIFIER": "false",
+                "NPM_CONFIG_REGISTRY": "http://127.0.0.1:9/",
+                "HTTP_PROXY": "http://127.0.0.1:9",
+                "HTTPS_PROXY": "http://127.0.0.1:9",
+                "NO_PROXY": "",
             }
             install = subprocess.run(
                 [
-                    "bwrap",
-                    "--unshare-net",
-                    "--bind",
-                    "/",
-                    "/",
+                    *network_isolation_prefix(),
                     "/usr/bin/npm",
                     "ci",
                     "--offline",
