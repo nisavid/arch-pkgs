@@ -1,5 +1,15 @@
 # Lemonade provider port status — 2026-08-19
 
+> **Superseded provider plan (2026-09-22).** The approved refresh scope replaces
+> the path below. The Open WebUI provider is the Lemonade family built from the
+> fork's v11.7-based `main` on the current llama.cpp b9442 foundation, deployed
+> and live-validated under
+> [Resurrect the Strix Halo stack, arch-pkgs, and the Lemonade fork through deployment](https://github.com/nisavid/arch-strix-halo-pkgs/issues/134).
+> The Open WebUI prerequisites need no new fork features: zembed prefixing goes
+> through Open WebUI embedding settings, and one operator-provisioned loopback
+> key replaces the inference-only credential class. This note remains a dated
+> record.
+
 ## Verdict
 
 **Not ready for a new accepted Open WebUI household-envelope run.** The

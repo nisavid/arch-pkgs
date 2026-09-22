@@ -7,6 +7,26 @@ but it does not define production limits, make the package publication
 eligible, or make the service deployable. Issue
 [#68](https://github.com/nisavid/arch-pkgs/issues/68) remains open.
 
+## Amended acceptance scope
+
+The approved scope of
+[Execute the accepted Arch package refresh](https://github.com/nisavid/arch-pkgs/issues/46)
+(2026-09-22) amends the gates and remaining work below. The observations are
+unchanged.
+
+- Acceptance needs one integrated trial set against the deployed and
+  live-validated Lemonade provider: one restore and one rollback, not five of
+  each.
+- The versioned vector-generation rebuild, cutover, and rollback machinery is
+  deferred.
+- zembed query/document prefixing goes through Open WebUI embedding settings.
+  Open WebUI receives one operator-provisioned loopback Lemonade key through a
+  systemd credential. The inference-only credential class is deferred.
+- [Set Open WebUI readiness, resource, privacy, and rollback limits](https://github.com/nisavid/arch-pkgs/issues/69)
+  and
+  [Choose the Open WebUI evidence, promotion, and deployment issue graph](https://github.com/nisavid/arch-pkgs/issues/70)
+  are folded into a single ticket-creation step.
+
 ## Scope and authority
 
 This run measures the fresh native-RAG boundary accepted in

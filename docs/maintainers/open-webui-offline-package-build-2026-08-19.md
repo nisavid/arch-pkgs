@@ -120,6 +120,13 @@ including the zembed role-aware input contract and zerank selected-logit
 adapter. Then run the accepted disposable start, provider-failure, restore,
 rollback, and generation trials against this exact Open WebUI package source.
 
+The approved refresh scope (2026-09-22) amends this gate. The provider is the
+Lemonade family deployed and live-validated under the Strix Halo refresh, not a
+new 11.6 family. One integrated trial set (start, provider failure, one
+restore, one rollback) replaces the repeated trials, and the generation trials
+are deferred. See the amended acceptance scope in
+[`open-webui-household-envelope.md`](open-webui-household-envelope.md).
+
 No package was installed, activated, added to a pacman repository, promoted,
 or deployed in this checkpoint.
 
