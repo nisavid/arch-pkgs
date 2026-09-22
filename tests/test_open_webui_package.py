@@ -397,6 +397,7 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
             "QDRANT_COLLECTION_PREFIX=open-webui-rag-v1",
             "ENABLE_QDRANT_MULTITENANCY_MODE=true",
             "RAG_RERANKING_ENGINE=external",
+            "ENABLE_RAG_HYBRID_SEARCH=true",
             "RAG_EXTERNAL_RERANKER_URL=http://127.0.0.1:8000/api/v1/rerank",
             "RAG_EXTERNAL_RERANKER_TIMEOUT=30",
             "RAG_EMBEDDING_QUERY_PREFIX=query",

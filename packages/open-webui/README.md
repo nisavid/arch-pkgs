@@ -30,8 +30,10 @@ Lemonade/llama provider root. The dated measurement boundary remains in
   security boundary.
 - Native RAG uses the five Qdrant collections under
   `open-webui-rag-v1`, zembed query/document prefixes, and the external zerank
-  reranker. Reranker qualification is mandatory for document RAG; ordinary
-  chat remains available when that provider is unhealthy.
+  reranker. The packaged defaults enable hybrid search because the reranker
+  gate rejects non-hybrid document retrieval. Reranker qualification is
+  mandatory for document RAG; ordinary chat remains available when that
+  provider is unhealthy.
 - Qualification runs at service start and when an administrator saves the
   document settings. After any runtime reranker fault, document RAG stays
   closed (the authenticated `/api/v1/retrieval/health` probe returns 503)
