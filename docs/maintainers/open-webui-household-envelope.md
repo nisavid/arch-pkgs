@@ -4,8 +4,8 @@
 
 Incomplete. The run establishes useful behavior and provisional measurements,
 but it does not define production limits, make the package publication
-eligible, or make the service deployable. Issue
-[#68](https://github.com/nisavid/arch-pkgs/issues/68) remains open.
+eligible, or make the service deployable.
+[Measure the disposable Open WebUI household-service envelope](https://github.com/nisavid/arch-pkgs/issues/68) remains open.
 
 ## Amended acceptance scope
 
@@ -23,9 +23,9 @@ unchanged.
   Open WebUI receives one operator-provisioned loopback Lemonade key through a
   systemd credential. The inference-only credential class is deferred.
 - [Set Open WebUI readiness, resource, privacy, and rollback limits](https://github.com/nisavid/arch-pkgs/issues/69)
-  and
-  [Choose the Open WebUI evidence, promotion, and deployment issue graph](https://github.com/nisavid/arch-pkgs/issues/70)
-  are folded into a single ticket-creation step.
+  is folded into
+  [Set Open WebUI acceptance limits and create its execution tickets](https://github.com/nisavid/arch-pkgs/issues/70),
+  a single ticket-creation step.
 
 ## Scope and authority
 
