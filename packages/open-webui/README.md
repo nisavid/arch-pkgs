@@ -30,10 +30,15 @@ remains in
   security boundary.
 - Native RAG uses the five Qdrant collections under
   `open-webui-rag-v1`, zembed query/document prefixes, and the external zerank
-  reranker. The packaged defaults enable hybrid search because the reranker
-  gate rejects non-hybrid document retrieval. Reranker qualification is
-  mandatory for document RAG; ordinary chat remains available when that
-  provider is unhealthy.
+  reranker. The packaged defaults send embedding and reranking requests to
+  Lemonade at `http://127.0.0.1:13305/api/v1` and enable hybrid search,
+  because the reranker gate rejects non-hybrid document retrieval. Reranker
+  qualification is mandatory for document RAG; ordinary chat remains
+  available when that provider is unhealthy.
+- Open WebUI's Lemonade connection uses no credential in this refresh (owner
+  decision). The package still keeps the embedding and reranking API-key
+  settings out of persistent configuration and out of the document settings
+  form.
 - Qualification runs at service start and when an administrator saves the
   document settings. After any runtime reranker fault, document RAG stays
   closed (the authenticated `/api/v1/retrieval/health` probe returns 503)
@@ -68,20 +73,35 @@ empty.
 | `oauth-session-token-encryption-key` | distinct stable OAuth session key |
 | `valkey-url` | dedicated Valkey ACL URL |
 | `qdrant-runtime-api-key` | collection-scoped runtime `prw` JWT only |
-| `lemonade-inference-api-key` | operator-provisioned loopback Lemonade key for embedding and reranking |
 | `session-epoch` | read-only copy of the external root-owned epoch ledger |
 
-Provision the six encrypted service credentials once under the exact paths
+Provision the five encrypted service credentials once under the exact paths
 declared by `open-webui.service`. The service receives no Qdrant administrative
-credential. The inference-only Lemonade credential class is deferred; the
-single loopback key is the accepted interim boundary. Manual delivery is not
-part of ordinary startup; operator handling is limited to initial
-provisioning, deliberate rotation, or restore.
+credential. Manual delivery is not part of ordinary startup; operator handling
+is limited to initial provisioning, deliberate rotation, or restore.
 
-The Lemonade embedding and reranking keys remain external service authority:
-Open WebUI neither persists nor exports them, and its document settings do not
-accept replacements. Rotate that credential at its systemd source and restart
-the service.
+## zembed Prefixes
+
+zembed expects each input wrapped as a short chat transcript whose system turn
+names the input type. The packaged defaults carry the opening part of that
+wrapper, with real newlines, as Open WebUI text prefixes:
+
+- `RAG_EMBEDDING_QUERY_PREFIX`:
+  `<|im_start|>system\nquery<|im_end|>\n<|im_start|>user\n`
+- `RAG_EMBEDDING_CONTENT_PREFIX`:
+  `<|im_start|>system\ndocument<|im_end|>\n<|im_start|>user\n`
+
+Each `\n` stands for a real newline. In `open-webui.env` each value is a
+double-quoted string that spans lines, which systemd reads with its newlines
+intact. `RAG_EMBEDDING_PREFIX_FIELD_NAME` stays unset, so Open WebUI sends no
+`input_type` request field.
+
+Open WebUI 0.11.0 joins a prefix directly to the text. Settings can only
+prefix, so the wrapper's closing `<|im_end|>` and newline are not sent. The
+zembed semantic canary in
+[Acceptance-deploy the Open WebUI household candidate set](https://github.com/nisavid/arch-pkgs/issues/89)
+decides whether this is enough. If it fails, the result is escalated for a
+decision; neither a formatting adapter nor threshold tuning replaces it.
 
 ## Session Epoch
 

@@ -21,8 +21,8 @@ unchanged.
 - The versioned vector-generation rebuild, cutover, and rollback machinery is
   deferred.
 - zembed query/document prefixing goes through Open WebUI embedding settings.
-  Open WebUI receives one operator-provisioned loopback Lemonade key through a
-  systemd credential. The inference-only credential class is deferred.
+  Open WebUI's Lemonade connection uses no credential in this refresh (owner
+  decision).
 - [Set Open WebUI readiness, resource, privacy, and rollback limits](https://github.com/nisavid/arch-pkgs/issues/69)
   is folded into
   [Set Open WebUI acceptance limits and create its execution tickets](https://github.com/nisavid/arch-pkgs/issues/70),
