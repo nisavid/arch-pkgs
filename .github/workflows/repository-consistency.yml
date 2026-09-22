@@ -22,7 +22,7 @@ jobs:
         run: |
           set -euo pipefail
           for attempt in 1 2 3 4; do
-            if pacman -Syyu --noconfirm git jq python python-yaml rsync zsh; then
+            if pacman -Syyu --noconfirm bubblewrap git jq npm python python-fastapi python-packaging python-requests python-typer python-yaml rsync uv uvicorn zsh; then
               break
             fi
             if [[ "${attempt}" == 4 ]]; then
@@ -40,10 +40,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for command in bsdtar git makepkg python3 repo-add repo-remove rsync zsh zstd; do
+          for command in bsdtar bwrap git makepkg npm python3 repo-add repo-remove rsync uv zsh zstd; do
             command -v "${command}"
           done
-          python3 -c 'import yaml'
+          python3 -c 'import fastapi, packaging, requests, typer, uvicorn, yaml'
 
       - name: Run repository consistency gate
         shell: bash
