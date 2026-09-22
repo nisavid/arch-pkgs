@@ -206,7 +206,7 @@ do_preflight() {
   (( established == 0 )) || refuse "${established} client connection(s) to Qdrant are open; stop those consumers first"
   for unit in open-webui.service hayhooks.service; do
     [[ "$(systemctl is-active "$unit" 2>/dev/null)" == active ]] \
-      && note "consumer: ${unit} is active; it must not write to Qdrant until the cutover is verified"
+      && refuse "consumer ${unit} is active; stop it and keep it stopped until verify passes"
   done
   [[ -e "${config_dir}/qdrant.env" ]] \
     && note "secret: ${config_dir}/qdrant.env exists and will be checked by the packaged preflight" \
@@ -447,7 +447,11 @@ do_verify() {
   runtime=$(systemd-creds decrypt --name="$credential_name" "${credstore}/open-webui.${credential_name}" - | bearer_header runtime)
   readonly_h=$(mint_jwt r 300 | bearer_header readonly)
   name="${collection_prefix}_knowledge"
-  point='00000000-0000-4000-8000-0000000c0de0'
+  # A fresh ID per run, confirmed absent, so the smoke write cannot overwrite
+  # or later delete an existing point.
+  point=$(</proc/sys/kernel/random/uuid)
+  [[ "$(http_code GET "/collections/${name}/points/${point}" "$admin")" == 404 ]] \
+    || refuse "smoke point ID ${point} is not free in ${name}"
   vector=$(jq -nc '[1] + [range(2559) | 0]')
   before=$(http_json "/collections/${name}" "$admin" | jq -r '.result.points_count')
   [[ "$(http_code PUT "/collections/${name}/points?wait=true" "$runtime" \
@@ -475,6 +479,9 @@ do_rollback() {
   [[ -f "${set_dir}/MANIFEST" && -d "${set_dir}/state" && -d "${set_dir}/config" ]] \
     || { refuse "rollback set ${set_dir} is incomplete"; finish_or_refuse rollback; }
   check_baseline_archive "${set_dir}/${baseline_file}"
+  [[ -r "${set_dir}/state.sha256" ]] \
+    && (cd "${set_dir}/state" && sha256sum --quiet -c "${set_dir}/state.sha256") \
+    || refuse "saved state in ${set_dir} does not match state.sha256 (or is unreadable; run as root)"
   finish_or_refuse rollback
   (( apply )) || note "(dry run: pass --apply as root to perform these steps)"
   failed_dir="${storage_dir}.failed-$(date -u +%Y%m%dT%H%M%SZ)"

@@ -100,9 +100,9 @@ It refuses when any of these fails:
   after the rollback copy.
 - **State.** The running server reports 1.17.1 and holds zero collections. A
   non-empty host must take the runbook's full migration route instead.
-- **Consumers.** No client connection to 6333 or 6334 is open. Active
-  `open-webui.service` or `hayhooks.service` units are listed. They must not
-  write to Qdrant until verify passes.
+- **Consumers.** No client connection to 6333 or 6334 is open, and neither
+  `open-webui.service` nor `hayhooks.service` is active. Keep them stopped
+  until verify passes.
 - **Fresh names.** The rollback set and the runtime credential do not exist
   yet.
 
@@ -174,7 +174,7 @@ Verify checks that:
 - an unauthenticated `GET /collections` is refused with 401
 - the storage filesystem is below the disk quota
 - each of the five collections has the expected shape
-- the decrypted runtime `prw` JWT can write one point to
+- the decrypted runtime `prw` JWT can write one fresh, previously absent point to
   `open-webui-rag-v1_knowledge`, can delete that point again, and is refused
   (403) when it tries to create a collection
 - a five-minute read-only (`r`) JWT is refused (403) when it tries to write
@@ -201,7 +201,9 @@ sudo tools/qdrant_production_cutover.zsh rollback --apply
 
 `rollback --apply`:
 
-1. Verifies the saved 1.17.1-1 archive digest.
+1. Verifies the saved 1.17.1-1 archive digest and checks the saved state
+   against its `state.sha256` listing. It refuses before touching anything if
+   either check fails.
 2. Stops `qdrant.service`.
 3. Moves `/var/lib/qdrant` aside to `/var/lib/qdrant.failed-<UTC time>`, which
    is kept for inspection.
