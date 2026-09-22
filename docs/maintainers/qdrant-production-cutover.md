@@ -97,7 +97,8 @@ It refuses when any of these fails:
 - **Baseline.** The pacman cache holds the 1.17.1-1 archive with the digest
   above.
 - **Disk.** The storage filesystem is below the 85% quota, and stays below it
-  after the rollback copy.
+  after the rollback copy. If `--rollback-root` is on another filesystem, that
+  filesystem must have room for the copy.
 - **State.** The running server reports 1.17.1 and holds zero collections. A
   non-empty host must take the runbook's full migration route instead.
 - **Consumers.** No client connection to 6333 or 6334 is open, and neither
@@ -173,7 +174,9 @@ Verify checks that:
   else listens on a Qdrant port
 - an unauthenticated `GET /collections` is refused with 401
 - the storage filesystem is below the disk quota
-- each of the five collections has the expected shape
+- each of the five collections has the expected shape: 2560 cosine vectors,
+  `hnsw_config` `m: 0` and `payload_m: 16`, `tenant_id` as a tenant keyword
+  index, and keyword indexes on `metadata.hash` and `metadata.file_id`
 - the decrypted runtime `prw` JWT can write one fresh, previously absent point to
   `open-webui-rag-v1_knowledge`, can delete that point again, and is refused
   (403) when it tries to create a collection

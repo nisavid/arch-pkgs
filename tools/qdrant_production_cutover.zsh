@@ -143,8 +143,19 @@ check_disk() {
       || { refuse "could not size ${storage_dir} and ${config_dir}; run preflight as root"; return; }
     projected=$(( (size - avail + need) * 100 / size ))
     note "disk: rollback copy needs ${need} bytes; projected ${projected}% used"
-    (( projected < disk_quota_percent )) \
-      || refuse "the rollback copy would raise the storage filesystem to ${projected}%, at or above the ${disk_quota_percent}% disk quota"
+    local dest=$rollback_root dest_fs dest_avail storage_fs
+    while [[ ! -e "$dest" ]]; do dest=${dest:h}; done
+    read -r dest_fs dest_avail < <(df -B1 --output=target,avail -- "$dest" | awk 'NR == 2 { print $1, $2 }') \
+      || { refuse "could not read filesystem usage for ${rollback_root}"; return; }
+    storage_fs=$(df --output=target -- "$storage_dir" | awk 'NR == 2 { print $1 }')
+    if [[ "$dest_fs" == "$storage_fs" ]]; then
+      (( projected < disk_quota_percent )) \
+        || refuse "the rollback copy would raise the storage filesystem to ${projected}%, at or above the ${disk_quota_percent}% disk quota"
+    else
+      note "disk: rollback set is on ${dest_fs}, ${dest_avail} bytes free"
+      (( dest_avail > need )) \
+        || refuse "the rollback destination ${rollback_root} has ${dest_avail} bytes free; the copy needs ${need}"
+    fi
   fi
 }
 
@@ -440,7 +451,11 @@ do_verify() {
     name="${collection_prefix}_${name}"
     http_json "/collections/${name}" "$admin" | jq -e '
       .result.config.params.vectors.size == 2560 and .result.config.params.vectors.distance == "Cosine"
-      and (.result.payload_schema | has("tenant_id") and has("metadata.hash") and has("metadata.file_id"))' >/dev/null \
+      and .result.config.hnsw_config.m == 0 and .result.config.hnsw_config.payload_m == 16
+      and .result.payload_schema["tenant_id"].data_type == "keyword"
+      and .result.payload_schema["tenant_id"].params.is_tenant == true
+      and .result.payload_schema["metadata.hash"].data_type == "keyword"
+      and .result.payload_schema["metadata.file_id"].data_type == "keyword"' >/dev/null \
       || refuse "collection ${name} is missing or has the wrong shape"
   done
 
