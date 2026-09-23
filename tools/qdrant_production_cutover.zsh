@@ -345,9 +345,13 @@ trap cleanup EXIT
 on_signal() {
   # Remove the private header directory, then hand back the next commands.
   # Rollback refuses before touching anything if the set is incomplete.
+  # Before the rollback set is complete, give the same guidance as fail_stage.
   trap - INT TERM HUP
   cleanup
-  hand_back "qdrant ${command:-run} INTERRUPTED at '${stage:-before any host change}'; private headers removed; if ${rollback_root}/${rollback_set} exists, roll back with: $(rollback_command); once the cause is fixed, re-enter with: $(reentry_command)"
+  case "$stage" in
+    ('stop 1.17.1'|'save rollback set') stage_hand_back INTERRUPTED ;;
+    (*) hand_back "qdrant ${command:-run} INTERRUPTED at '${stage:-before any host change}'; private headers removed; if ${rollback_root}/${rollback_set} exists, roll back with: $(rollback_command); once the cause is fixed, re-enter with: $(reentry_command)" ;;
+  esac
   exit 130
 }
 trap on_signal INT TERM HUP
@@ -414,16 +418,17 @@ unit_property() {
 }
 
 stage=
-fail_stage() {
+stage_hand_back() {
+  # $1 is FAILED or INTERRUPTED.
   if [[ "$stage" == 'stop 1.17.1' ]]; then
-    hand_back "qdrant cutover FAILED at '${stage}'; 1.17.1 and its state are untouched: run sudo systemctl start qdrant.service"
+    hand_back "qdrant cutover $1 at '${stage}'; 1.17.1 and its state are untouched: run sudo systemctl start qdrant.service"
   elif [[ "$stage" == 'save rollback set' ]]; then
-    hand_back "qdrant cutover FAILED at '${stage}'; 1.17.1 and its state are untouched: run sudo systemctl start qdrant.service, inspect the partial set ${rollback_root}/${rollback_set}, then re-enter with: $(reentry_command)"
+    hand_back "qdrant cutover $1 at '${stage}'; 1.17.1 and its state are untouched: run sudo systemctl start qdrant.service, inspect the partial set ${rollback_root}/${rollback_set}, then re-enter with: $(reentry_command)"
   else
-    hand_back "qdrant cutover FAILED at '${stage}'; roll back with: $(rollback_command); once the cause is fixed, re-enter with: $(reentry_command)"
+    hand_back "qdrant cutover $1 at '${stage}'; roll back with: $(rollback_command); once the cause is fixed, re-enter with: $(reentry_command)"
   fi
-  exit 1
 }
+fail_stage() { stage_hand_back FAILED; exit 1; }
 
 provision_secret() {
   # Write the new HMAC secret to a temporary file beside the target and
@@ -490,7 +495,7 @@ snapshot_restore_drill() {
 }
 
 do_cutover() {
-  local set_dir="${rollback_root}/${rollback_set}" admin
+  local set_dir="${rollback_root}/${rollback_set}" admin unit_env_files unit_drop_ins
   do_preflight
   finish_or_refuse preflight
   note "== cutover"
@@ -505,12 +510,15 @@ do_cutover() {
   run cp -a -- "$config_dir" "${set_dir}/config" || fail_stage
   run cp -a -- "${pkg_cache}/${baseline_file}" "${set_dir}/${baseline_file}" || fail_stage
   if (( apply )); then
+    # Resolve the unit shape first, so a failed lookup is not recorded as empty.
+    unit_env_files=$(unit_property EnvironmentFiles) || fail_stage
+    unit_drop_ins=$(unit_property DropInPaths) || fail_stage
     {
       print -r -- "baseline ${baseline_file} ${baseline_sha}"
       pacman -Q qdrant qdrant-migration qdrant-web-ui 2>/dev/null | sed 's/^/installed /' || true
       # The pre-cutover unit shape that rollback must return to.
-      print -r -- "unit-environment-files=$(unit_property EnvironmentFiles)"
-      print -r -- "unit-drop-in-paths=$(unit_property DropInPaths)"
+      print -r -- "unit-environment-files=${unit_env_files}"
+      print -r -- "unit-drop-in-paths=${unit_drop_ins}"
     } >| "${set_dir}/MANIFEST" || fail_stage
     (cd "$storage_dir" && find . -type f -print0 | sort -z | xargs -0r sha256sum) >| "${set_dir}/state.sha256" || fail_stage
     (cd "${set_dir}/state" && sha256sum --quiet -c "${set_dir}/state.sha256") || fail_stage
