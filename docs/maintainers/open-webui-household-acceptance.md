@@ -93,8 +93,8 @@ committed; the evidence records each value used.
 | `--manifest FILE` | none; required | The candidate manifest of record from the build ticket (name, size, SHA-256, source commit). |
 | `--lemond-url URL` | `http://127.0.0.1:13305` | Lemonade base URL. Only `GET /api/v1/health`, `GET /api/v1/models`, and inference requests are sent. In record mode it must be the provider origin of the packaged `open-webui.env` (`RAG_OPENAI_API_BASE_URL` and `RAG_EXTERNAL_RERANKER_URL`); otherwise preflight and every re-entry exit 75. |
 | `--chat-model ID` | none; the lead designates it | The resident chat model used for ordinary chat and the cited answer. |
-| `--embedding-model ID` | `zembed-1-Q4_K_M-GGUF-Q4_K_M` (the packaged env) | zembed id that must be served and loaded. |
-| `--reranking-model ID` | `zerank-2-GGUF-Q8_0` (the packaged env) | zerank id that must be served and loaded. |
+| `--embedding-model ID` | the packaged env's `RAG_EMBEDDING_MODEL` | zembed id that must be served and loaded. |
+| `--reranking-model ID` | the packaged env's `RAG_RERANKING_MODEL` | zerank id that must be served and loaded. |
 | `--whisper-model NAME` | `tiny` | Whisper size; the pinned revision and `model.bin` SHA-256 are recorded. |
 | `--provider stub\|lemond` | `lemond` | `stub` serves the rehearsal from `stub_provider.py`; `lemond` is the trial. |
 | `--rehearsal` | off | Required with `--provider stub`; marks every output `mode=rehearsal`. |

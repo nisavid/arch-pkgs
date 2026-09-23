@@ -207,8 +207,9 @@ class EnvironTests(unittest.TestCase):
 
     def test_settings_come_from_the_filtered_environ(self):
         settings = scenarios.settings_from_environ(packaged_env())
-        self.assertEqual(settings.embedding_model, "zembed-1-Q4_K_M-GGUF-Q4_K_M")
-        self.assertEqual(settings.reranking_model, "zerank-2-GGUF-Q8_0")
+        self.assertEqual(settings.embedding_model, packaged_env()["RAG_EMBEDDING_MODEL"])
+        self.assertEqual(settings.reranking_model, packaged_env()["RAG_RERANKING_MODEL"])
+        self.assertTrue(settings.reranking_model.startswith("zerank-2-"))
         with self.assertRaises(scenarios.Blocked):
             scenarios.settings_from_environ({"RAG_EMBEDDING_MODEL": "zembed"})
         with self.assertRaises(scenarios.Blocked):
