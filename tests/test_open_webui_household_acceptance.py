@@ -585,7 +585,8 @@ class PreflightTests(unittest.TestCase):
                 kit_module.cmd_up(kit, kit_module.parser().parse_args(["up"]))
             self.assertEqual((kit.raw / "first-start.json").read_text(), first)
             self.assertTrue(json.loads(first)["qdrant_fresh"])
-            qdrant.create_collections.assert_called_once()
+            # Each pre-commission up asks Qdrant for missing collections.
+            self.assertEqual(qdrant.create_collections.call_count, 2)
 
     def test_an_up_after_a_refused_first_up_still_records_fresh_qdrant(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -596,7 +597,7 @@ class PreflightTests(unittest.TestCase):
             storage = kit.path("state", "qdrant", "storage")
             storage.mkdir(parents=True)
             qdrant = mock.Mock()
-            qdrant.create_collections.side_effect = lambda: (storage / "collection").mkdir()
+            qdrant.create_collections.side_effect = lambda: (storage / "collection").mkdir(exist_ok=True)
             starts = iter([sc.Blocked("NEEDS LEAD: a model is not loaded"), 7.5])
 
             def start(*_args, **_kwargs):
@@ -615,7 +616,27 @@ class PreflightTests(unittest.TestCase):
                 self.assertFalse((kit.raw / "first-start.json").exists())
                 kit_module.cmd_up(kit, kit_module.parser().parse_args(["up"]))
             self.assertTrue(json.loads((kit.raw / "first-start.json").read_text())["qdrant_fresh"])
-            qdrant.create_collections.assert_called_once()
+            self.assertEqual(qdrant.create_collections.call_count, 2)
+
+    def test_qdrant_creates_only_the_collections_it_does_not_report(self):
+        qdrant = kit_module.Qdrant(16333, "admin")
+        present = set(kit_module.COLLECTIONS[:2])
+        calls = []
+        with mock.patch.object(qdrant, "status",
+                               side_effect=lambda _method, path, **_kw: 200 if path.split("/")[-1] in present else 404), \
+                mock.patch.object(qdrant, "call", side_effect=lambda method, path, payload=None: calls.append(path)):
+            qdrant.create_collections()
+        created = [path.split("/")[2] for path in calls if path.count("/") == 2]
+        self.assertEqual(created, list(kit_module.COLLECTIONS[2:]))
+        self.assertEqual(len(calls), len(created) * (1 + len(kit_module.PAYLOAD_INDEXES)))
+
+    def test_unit_active_since_reads_the_user_managers_activation_time(self):
+        with mock.patch.object(kit_module, "systemctl", return_value="@1789564995") as systemctl:
+            self.assertEqual(kit_module.unit_active_since("owui-acc-open-webui.service"), 1789564995.0)
+        self.assertIn("--timestamp=unix", systemctl.call_args.args)
+        self.assertIn("--property=ActiveEnterTimestamp", systemctl.call_args.args)
+        with mock.patch.object(kit_module, "systemctl", return_value=""):
+            self.assertIsNone(kit_module.unit_active_since("owui-acc-open-webui.service"))
 
     def test_an_unset_runtime_dir_is_a_precondition(self):
         with mock.patch.dict(os.environ, {}, clear=True), contextlib.redirect_stderr(io.StringIO()) as error:
@@ -885,7 +906,7 @@ class ProductionDocTests(unittest.TestCase):
             self.assertIn(f"Environment={key}={value}", self.doc)
         self.assertNotIn("inputs/whisper/", self.doc)
 
-    def test_the_production_whisper_placement_uses_the_base_pin(self):
+    def test_both_runbooks_carry_the_base_whisper_pin(self):
         pin = sc.whisper_pin_record(sc.DEFAULT_WHISPER_MODEL)
         self.assertIn(f"rev={pin['revision']}", self.doc)
         for name, digest in pin["files"].items():
@@ -896,6 +917,17 @@ class ProductionDocTests(unittest.TestCase):
         for name, digest in pin["files"].items():
             self.assertIn(f"| `{name}` | `{digest}` |", acceptance)
         self.assertIn(f"`{sc.JFK_FLAC_SHA256}`", acceptance)
+
+    def test_the_acceptance_runbook_quotes_the_kit_conditions_and_reads_lemonade_state(self):
+        acceptance = (REPO_ROOT / "docs" / "maintainers" / "open-webui-household-acceptance.md").read_text(encoding="utf-8")
+        flat = " ".join(acceptance.split())
+        for condition in (kit_module.CREDENTIAL_FALLBACK_CONDITION, kit_module.LEMONADE_RESTART_CONDITION):
+            self.assertIn(condition, flat)
+        reads = re.findall(r"^systemctl show (.*)$", acceptance, re.MULTILINE)
+        self.assertEqual(len(reads), 2)
+        for read in reads:
+            for prop in ("-p LoadState", "-p ActiveState", "-p ActiveEnterTimestamp", "--timestamp=unix"):
+                self.assertIn(prop, read)
 
     def test_the_production_qdrant_loops_name_the_kit_collections(self):
         loops = re.findall(r"for s in ([^;]+); do\n\s*c=([\w-]+)_\$s", self.doc)
@@ -1180,6 +1212,10 @@ class EvidenceTests(unittest.TestCase):
             self.assertEqual(evidence["conditions"], [kit_module.LEMONADE_RESTART_CONDITION])
             self.assertEqual(evidence["disposition"], "accepted")
             v1.assert_public_safe(evidence)
+            trial.lemond_pre = trial.lemond_post = {"status": "ok"}
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as errors:
+                trial.finish()
+            self.assertIn("not detectable from /api/v1/health", errors.getvalue())
 
     def test_the_trial_reads_the_journal_from_the_current_open_webui_activation(self):
         with tempfile.TemporaryDirectory() as directory:

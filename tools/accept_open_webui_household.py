@@ -1055,7 +1055,12 @@ class Qdrant:
         return (response.json() or {}).get("version") if response.status == 200 else None
 
     def create_collections(self) -> None:
+        """Create each household collection that Qdrant does not report yet,
+        so an up that stopped part-way can be rerun."""
+
         for name in COLLECTIONS:
+            if self.status("GET", f"/collections/{name}", token=self.admin_key) == 200:
+                continue
             self.call("PUT", f"/collections/{name}", dict(COLLECTION_BODY))
             for index in PAYLOAD_INDEXES:
                 self.call("PUT", f"/collections/{name}/index?wait=true", index)
@@ -1979,7 +1984,8 @@ class Trial:
         rows = a_id2_rows(self.kit)
         shown = unit_show(UNITS["open-webui"], "IPAddressDeny", "IPAddressAllow")
         warning = next(
-            (line for line in self.open_webui_journal().splitlines() if "IPAddress" in line or "BPF" in line),
+            (line for line in self.open_webui_journal().splitlines()
+             if "IP firewall" in line or "IPAddress" in line or "BPF" in line),
             None,
         )
         return {"rows": rows, "effective": shown, "journal_warning": warning}
@@ -2880,7 +2886,10 @@ def cmd_up(kit: Kit, args: argparse.Namespace) -> int:
     qdrant = start_qdrant(kit)
     if revive:
         restore_tuple(kit, qdrant)
-    elif fresh:
+    elif not state.get("commissioned") and state.get("first_up_qdrant_fresh"):
+        # Qdrant writes its storage as soon as it starts, so a rerun after a
+        # first up that stopped part-way decides from the recorded first-up
+        # state and creates whatever collection is still missing.
         qdrant.create_collections()
     for name in ("valkey", "relay", "sampler") + (("stub",) if kit.provider == "stub" else ()):
         systemctl("start", UNITS[name])
@@ -2898,7 +2907,7 @@ def cmd_up(kit: Kit, args: argparse.Namespace) -> int:
         if not first.is_file():
             first.write_text(json.dumps(
                 {"started_at": started_at, "ready_s": round(seconds, 3),
-                 "qdrant_fresh": state.get("first_up_qdrant_fresh", fresh)}, sort_keys=True))
+                 "qdrant_fresh": state["first_up_qdrant_fresh"]}, sort_keys=True))
         timing = "" if kit.rehearsal else f" (first start {seconds:.1f} s)"
         print(f"Open WebUI is up with the route closed{timing}; run trial next")
     else:
