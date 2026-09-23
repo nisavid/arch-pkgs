@@ -6,7 +6,8 @@ Wants=network-online.target
 
 # A second tailscaled instance, separate from any system tailscaled.service.
 # It runs without root or TUN; its node name, login, and serve configuration
-# are runtime state set by the operator (see the package README).
+# are runtime state set by the operator (see the package README). Log uploads
+# to Tailscale are off unless the operator opts in with a drop-in.
 
 [Service]
 Type=notify
@@ -16,6 +17,7 @@ StateDirectory=open-webui-tailnet
 StateDirectoryMode=0700
 RuntimeDirectory=open-webui-tailnet
 RuntimeDirectoryMode=0750
+Environment=TS_NO_LOGS_NO_SUPPORT=true
 ExecStart=/usr/bin/tailscaled --statedir=%S/open-webui-tailnet --socket=%t/open-webui-tailnet/tailscaled.sock --tun=userspace-networking --port=0
 Restart=on-failure
 RestartSec=5s

@@ -219,19 +219,21 @@ Verify with
 then open `https://<name>.<tailnet>.ts.net/` from another tailnet device and
 sign in.
 
-Like upstream `tailscaled`, the sidecar uploads its daemon logs to
-Tailscale's log service by default. To opt out, add a drop-in with
+Log uploads are off by default. Upstream `tailscaled` uploads its daemon logs
+to Tailscale's log service; the unit sets `TS_NO_LOGS_NO_SUPPORT=true`, so the
+sidecar keeps its logs local. Tailscale technical support needs those uploads,
+and a tailnet with network flow logs enabled takes a node without them offline
+("tailnet requires logging to be enabled"). To opt in, add a drop-in with
 `sudo systemctl edit open-webui-tailnet.service`:
 
 ```ini
 [Service]
-Environment=TS_NO_LOGS_NO_SUPPORT=true
+UnsetEnvironment=TS_NO_LOGS_NO_SUPPORT
 ```
 
-then run `sudo systemctl restart open-webui-tailnet.service`. Opting out also
-gives up Tailscale technical support for this node. To reverse it, remove the
-drop-in with `sudo systemctl revert open-webui-tailnet.service` and restart the
-service.
+then run `sudo systemctl restart open-webui-tailnet.service`. To undo the
+opt-in, remove the drop-in with
+`sudo systemctl revert open-webui-tailnet.service` and restart the service.
 
 Roll back in reverse order. Step 4 prints the same `serve --https=443 off`
 command for removing its route:
@@ -264,7 +266,8 @@ sudo systemctl stop open-webui-tailnet.service
     failure boundary, automatic credential delivery, and forward-only session
     epoch as package-owned source and service assets.
   - Ship a disabled, unprivileged userspace `tailscaled` unit for the
-    tailnet route; its login and serve configuration stay runtime state.
+    tailnet route, with log uploads off unless the operator opts in; its
+    login and serve configuration stay runtime state.
 - `update_notes`:
   - Recompute the complete private closure from the immutable release lock and
     selected optional runtime backends; a digest without the full lock is not a
