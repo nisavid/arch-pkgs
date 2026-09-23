@@ -74,11 +74,13 @@ runs with telemetry disabled and loopback-only egress.
 
 Hold `qdrant` at 1.17.1-1 until cutover. Once the `nisavid` repository offers
 1.19.0-1, an ordinary `pacman -Syu` would jump straight from 1.17.1 to 1.19.0
-and skip the accepted 1.18.3 step. Add `IgnorePkg = qdrant` to
-`/etc/pacman.conf`, or refresh with `sudo pacman -Syu --ignore qdrant`, so the
-sync database is current while the package stays put. Cutover installs by
-explicit `nisavid/<name>` targets, so the hold does not block it; remove it
-after verify passes.
+and skip the accepted 1.18.3 step. Until cutover, refresh with
+`sudo pacman -Syu --ignore qdrant`. `pacman(8)` documents `--ignore` as
+ignoring upgrades of the named package, and it applies only to that one
+command. Do not put `IgnorePkg = qdrant` in `/etc/pacman.conf` for this. If
+it is already there, remove it before `cutover --apply` or `rollback --apply`:
+both run `pacman --noconfirm` on `qdrant`, and the route does not rely on how
+`--noconfirm` answers pacman's ignored-package prompt.
 
 Preflight is read-only. Run it as root so it can size the state directory.
 
@@ -105,8 +107,14 @@ It refuses when any of these fails:
   `open-webui.service` and `hayhooks.service` are inactive or failed. Any other
   state, such as activating or reloading, refuses. Keep them stopped until
   verify passes.
-- **Fresh names.** The rollback set and the runtime credential do not exist
-  yet.
+- **HMAC secret.** If `/etc/qdrant/qdrant.env` exists, it already has the form
+  that `qdrant-secret-preflight` requires: a regular file, owned by root, group
+  `qdrant`, mode 0640, holding exactly one `QDRANT__SERVICE__API_KEY=` line of
+  at least 64 lowercase hex characters. Cutover keeps a valid file. It
+  provisions one only when the file is absent.
+- **Fresh names.** The rollback set does not exist yet. The runtime credential
+  does not exist yet either, unless `--reuse-credential` is passed and the
+  credential matches the HMAC secret (see [Re-entry](#re-entry-after-a-failed-cutover)).
 
 ### 2. Cutover
 
@@ -122,7 +130,9 @@ sudo tools/qdrant_production_cutover.zsh cutover --apply
    - a copy of `/var/lib/qdrant`, checked against a SHA-256 listing
    - a copy of `/etc/qdrant`
    - the 1.17.1-1 archive
-   - a `MANIFEST` of the installed packages
+   - a `MANIFEST` of the installed `qdrant`, `qdrant-migration`, and
+     `qdrant-web-ui` versions, and of the `qdrant.service` `EnvironmentFiles`
+     and `DropInPaths` properties
 
    The archive also stays in the pacman cache and the `nisavid` repository.
 3. Installs `nisavid/qdrant-migration`. It runs
@@ -132,6 +142,8 @@ sudo tools/qdrant_production_cutover.zsh cutover --apply
 4. If it is absent, provisions `/etc/qdrant/qdrant.env` in the form that
    `qdrant-secret-preflight` requires: root-owned, group `qdrant`, mode 0640,
    and one `QDRANT__SERVICE__API_KEY=` line of 64 lowercase hex characters.
+   It writes a temporary file in `/etc/qdrant`, checks it, and renames it into
+   place, so a failed write never leaves an empty or partial `qdrant.env`.
 5. Installs `nisavid/qdrant` and `nisavid/qdrant-web-ui`. It requires no
    `config.yaml.pacnew`, and `/etc/qdrant/config.yaml` must match the packaged
    1.19.0 file. It then reloads systemd and starts `qdrant.service`.
@@ -146,8 +158,11 @@ sudo tools/qdrant_production_cutover.zsh cutover --apply
 8. Mints the runtime JWT: HS256 over the HMAC secret, with
    `{"access":[{"collection":"open-webui-rag-v1_<suffix>","access":"prw"}, …]}`
    for the five collections and no expiry. It encrypts the JWT with
-   `systemd-creds encrypt --name=qdrant-runtime-api-key` to
-   `/etc/credstore.encrypted/open-webui.qdrant-runtime-api-key`. That is where
+   `systemd-creds encrypt --name=qdrant-runtime-api-key` to a temporary file
+   and renames it to
+   `/etc/credstore.encrypted/open-webui.qdrant-runtime-api-key`. Under
+   `--reuse-credential`, it keeps the existing file that preflight matched
+   instead. That is where
    the household `open-webui.service` loads it with `LoadCredentialEncrypted=`.
    The admin key and the JWT never appear in argv, in the environment, or in
    the repository. To rotate, re-provision the HMAC secret and re-mint the JWT.
@@ -158,7 +173,34 @@ sudo tools/qdrant_production_cutover.zsh cutover --apply
 10. Runs verify.
 
 The last output line starts with `HAND-BACK:`. It reports completion, or the
-failing stage and the next command to run.
+failing stage and the next commands to run. For a failure after the rollback
+set is saved, it names both the rollback command and the re-entry command.
+
+### Re-entry After a Failed Cutover
+
+A cutover that fails after the rollback set is saved leaves behind the
+provisioned `qdrant.env`. It may also leave the runtime credential, if the
+failure came after delivery. Rollback keeps both. To try again after the cause
+is fixed:
+
+1. Run the rollback command from the `HAND-BACK:` line, and wait for
+   `qdrant rollback COMPLETE`.
+2. Run the re-entry command from either `HAND-BACK:` line. It has this form:
+
+   ```bash
+   sudo tools/qdrant_production_cutover.zsh cutover --apply \
+     --rollback-set qdrant-1.17.1-1-pre-1.19.0-reentry-<UTC time> \
+     [--reuse-credential]
+   ```
+
+The first rollback set stays in place, and the re-entry saves a fresh one from
+the restored state. `--reuse-credential` appears only when the credential
+exists. With it, preflight decrypts the credential and compares its SHA-256
+with a token minted from the current `qdrant.env`. The runtime token has no
+expiry and no issue time, so the same HMAC secret always mints the same bytes.
+Preflight refuses on any mismatch. In that case, move the credential aside and
+re-enter without the flag, so cutover mints a new one. Without the flag, an
+existing credential always refuses, because rotation is a separate act.
 
 ### 3. Verify (post-install smoke)
 
@@ -205,21 +247,42 @@ sudo tools/qdrant_production_cutover.zsh rollback --apply
 
 `rollback --apply`:
 
-1. Verifies the saved 1.17.1-1 archive digest and checks the saved state
-   against its `state.sha256` listing. It refuses before touching anything if
-   either check fails.
+1. Checks the rollback set, and refuses before touching anything if any check
+   fails:
+   - The saved 1.17.1-1 archive has the digest above.
+   - Every regular file in the saved state matches the `state.sha256` listing.
+     The listing covers regular-file contents only. `cp -a` preserved the
+     directories, ownership, modes, and timestamps, but the listing does not
+     prove them.
+   - The saved `config.yaml` matches the retained 1.17.1 configuration digest
+     `23f9b7628f8886edf1d6dbd45216a3755eb28bcf00c1e38d391087de58c81bde`.
+   - The filesystem that holds `/var/lib/qdrant` has more free space than the
+     saved state. Moving the failed state aside frees nothing there.
+   - For `qdrant-web-ui` or `qdrant-migration` that the manifest records as
+     installed at a different version, the pacman cache holds that version's
+     archive.
 2. Stops `qdrant.service`.
 3. Moves `/var/lib/qdrant` aside to `/var/lib/qdrant.failed-<UTC time>`, which
    is kept for inspection.
 4. Copies the saved state back.
 5. Runs `pacman -U` on the saved 1.17.1-1 archive.
-6. Removes `qdrant-web-ui` and `qdrant-migration` unless the manifest shows
-   they were installed before.
-7. Restores the saved `config.yaml`, reloads systemd, starts the service, and
-   waits for 1.17.1.
+6. Returns `qdrant-web-ui` and `qdrant-migration` to their manifest state. It
+   removes a package that was not installed before, and reinstalls the
+   recorded version from the pacman cache for one that was.
+7. Restores `/etc/qdrant/config.yaml` from the set, owned by root:root with
+   mode 0644 like the packaged file. It restores no other configuration file.
+   It then reloads systemd, starts the service, and waits for 1.17.1.
+8. Verifies the result, and fails loudly if any check does not hold:
+   - `pacman -Q qdrant` is 1.17.1-1.
+   - `/etc/qdrant/config.yaml` matches the retained 1.17.1 configuration
+     digest.
+   - The `EnvironmentFiles` and `DropInPaths` of `qdrant.service` equal their
+     pre-cutover values in the manifest. On the host, both are empty.
+   - `qdrant-web-ui` and `qdrant-migration` match the manifest.
 
 `/etc/qdrant/qdrant.env` and the encrypted Open WebUI credential stay in
-place. The 1.17.1 unit does not read them.
+place for re-entry. The 1.17.1 unit does not read them. The final `HAND-BACK:`
+line names the re-entry command.
 
 ### 5. Stability Condition
 
