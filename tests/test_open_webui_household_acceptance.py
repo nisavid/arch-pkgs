@@ -135,6 +135,33 @@ class ArgumentTests(unittest.TestCase):
             self.assertEqual((kit.whisper_model, kit.chat_model), ("base", "chat"))
             self.assertEqual(self.kit("trial", "--root", root).whisper_model, "base")
 
+    def test_the_slice_defaults_to_the_kit_slice(self):
+        self.assertEqual(self.kit("down").slice, "owui-acc.slice")
+
+    def test_the_slice_must_be_a_plain_slice_unit_name(self):
+        self.assertEqual(self.kit("up", "--slice", "builds-owui_acc.slice").slice, "builds-owui_acc.slice")
+        for bad in ("builds", "builds.service", "-.slice", "-builds.slice", "builds-.slice", "a--b.slice",
+                    "a@b.slice", "../x.slice", "a/b.slice", "a b.slice", ".slice"):
+            with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit, msg=bad) as raised:
+                kit_module.parser().parse_args(["up", "--slice", bad])
+            self.assertEqual(raised.exception.code, 2, bad)
+
+    def test_the_staged_slice_is_read_back_and_a_different_one_is_refused(self):
+        with tempfile.TemporaryDirectory() as root:
+            staged = self.kit("stage", "--root", root, "--slice", "builds-owui_acc.slice")
+            (Path(root) / kit_module.KIT_STATE).write_text(json.dumps(kit_module.staged_pins(staged)))
+            for command in ("up", "down", "trial", "resmoke", "teardown"):
+                self.assertEqual(self.kit(command, "--root", root).slice, "builds-owui_acc.slice")
+            self.assertEqual(self.kit("up", "--root", root, "--slice", "builds-owui_acc.slice").slice,
+                             "builds-owui_acc.slice")
+            with self.assertRaisesRegex(ValueError, "--slice differs from the staged builds-owui_acc.slice"):
+                self.kit("up", "--root", root, "--slice", "owui-acc.slice")
+
+    def test_a_root_staged_before_the_slice_option_keeps_the_default(self):
+        with tempfile.TemporaryDirectory() as root:
+            (Path(root) / kit_module.KIT_STATE).write_text(json.dumps({"whisper_model": "base"}))
+            self.assertEqual(self.kit("up", "--root", root).slice, "owui-acc.slice")
+
     def test_the_stub_and_the_rehearsal_go_together(self):
         with self.assertRaises(ValueError):
             self.kit("preflight", "--provider", "stub")
@@ -264,6 +291,28 @@ class UnitDerivationTests(unittest.TestCase):
             self.assertNotIn("LoadCredentialEncrypted", [key for _, key, _ in lines])
             self.assertIn(("LoadCredential", f"webui-secret-key:{kit.root}/credstore/webui-secret-key"),
                           {(key, value) for _, key, value in lines})
+
+    def test_every_unit_and_the_stop_commands_use_the_chosen_slice(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit = make_kit(directory, rehearsal=True)
+            kit.slice = "builds-owui_acc.slice"
+            texts = [
+                kit_module.open_webui_unit(kit, OPEN_WEBUI_UNIT.read_text())[0],
+                kit_module.qdrant_unit(kit, QDRANT_UNIT.read_text())[0],
+                kit_module.kit_unit(kit, "valkey", "valkey", "/usr/bin/valkey-server x"),
+            ]
+            for text in texts:
+                slices = [value for _, key, value in kit_module.parse_unit(text) if key == "Slice"]
+                self.assertEqual(slices, ["builds-owui_acc.slice"])
+            (kit.root / kit_module.MARKER).write_text("marker\n")
+            (kit.root / "kit.json").write_text(json.dumps({"mode": "rehearsal"}))
+            for command in ("down", "teardown"):
+                with mock.patch.object(kit_module, "systemctl") as systemctl, \
+                        mock.patch.object(kit_module, "snapshot_resources"), \
+                        contextlib.redirect_stdout(io.StringIO()):
+                    kit_module.COMMANDS[command](kit, kit_module.parser().parse_args([command]))
+                self.assertIn(mock.call("stop", "builds-owui_acc.slice", check=False), systemctl.call_args_list)
+                self.assertNotIn(mock.call("stop", "owui-acc.slice", check=False), systemctl.call_args_list)
 
     def test_every_unit_keeps_home_caches_and_temp_under_the_root(self):
         contained = ("HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "TORCH_HOME", "HF_HOME", "TMPDIR")
