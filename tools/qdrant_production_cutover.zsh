@@ -7,6 +7,7 @@ emulate -L zsh
 setopt errexit nounset pipefail extendedglob
 
 script_name=${0:t}
+script_path=$0
 
 # Accepted identities. The byte-identical rebuilds are bound by the accepted
 # G0-G3 evidence under docs/maintainers/evidence/qdrant-1.19.0-1/.
@@ -26,6 +27,8 @@ want_sha=(
 baseline_version=1.17.1-1
 baseline_file=qdrant-1.17.1-1-x86_64.pkg.tar.zst
 baseline_sha=d237ac6b804c7b4ec3f73f8ef57340ebaba62abff7853636286f140c8affd5cb
+# /etc/qdrant/config.yaml as shipped in the retained 1.17.1-1 archive.
+baseline_config_sha=23f9b7628f8886edf1d6dbd45216a3755eb28bcf00c1e38d391087de58c81bde
 migration_binary=/usr/lib/qdrant/migration/qdrant-1.18.3
 collection_prefix=open-webui-rag-v1
 collection_suffixes=(memories knowledge files web-search hash-based)
@@ -43,6 +46,7 @@ rollback_set=qdrant-1.17.1-1-pre-1.19.0
 credstore=/etc/credstore.encrypted
 disk_quota_percent=85
 apply=0
+reuse_credential=0
 
 usage() {
   cat <<EOF
@@ -68,6 +72,9 @@ Options (defaults match the packaged layout):
   --rollback-set NAME        rollback set name [${rollback_set}]
   --credstore DIR            encrypted credential store [${credstore}]
   --disk-quota-percent N     packaged Qdrant disk quota [${disk_quota_percent}]
+  --reuse-credential         re-enter after a rollback with the existing runtime
+                             credential; preflight requires it to match the
+                             token the current HMAC secret mints
 EOF
 }
 
@@ -192,8 +199,47 @@ check_baseline_archive() {
     || refuse "identity mismatch: ${archive} is not the retained ${baseline_version} archive"
 }
 
+secret_file_problem() {
+  # Prints why FILE would fail the packaged qdrant-secret-preflight (regular
+  # file, root:qdrant 0640, exactly one QDRANT__SERVICE__API_KEY= line of at
+  # least 64 lowercase hex characters); prints nothing when it would pass.
+  local file=$1 meta qdrant_gid content
+  [[ ! -L "$file" && -f "$file" ]] || { print -r -- "is not a regular file"; return; }
+  [[ -r "$file" ]] || { print -r -- "is not readable (run as root)"; return; }
+  meta=$(stat --format '%u:%g:%a' -- "$file") || { print -r -- "could not be inspected"; return; }
+  qdrant_gid=$(getent group qdrant | cut -d: -f3) || qdrant_gid=
+  [[ -n "$qdrant_gid" && "$meta" == "0:${qdrant_gid}:640" ]] \
+    || { print -r -- "has uid:gid:mode ${meta}, want root:qdrant 0640"; return; }
+  # Keep trailing newlines so a second (even empty) line is detected.
+  content="$(cat -- "$file"; print -rn -- .)"
+  content=${content%.}
+  content=${content%$'\n'}
+  [[ "$content" == QDRANT__SERVICE__API_KEY=[0123456789abcdef](#c64,) ]] \
+    || print -r -- "is not exactly one QDRANT__SERVICE__API_KEY= line of at least 64 lowercase hex characters"
+}
+
+credential_matches_secret() {
+  # The runtime token carries no expiry and no issue time, so the same HMAC
+  # secret always mints the same bytes; compare digests, never the token.
+  local have want
+  [[ -z "$(secret_file_problem "${config_dir}/qdrant.env")" ]] || return 1
+  have=$(systemd-creds decrypt --name="$credential_name" "${credstore}/open-webui.${credential_name}" - 2>/dev/null \
+    | sha256sum | awk '{print $1}') || return 1
+  want=$(mint_jwt prw 0 | sha256sum | awk '{print $1}') || return 1
+  [[ "$have" == "$want" ]]
+}
+
+reentry_command() {
+  # The command that re-enters cutover after a rollback: a fresh rollback set
+  # and, when a runtime credential already exists, --reuse-credential.
+  local cmd="sudo ${script_path} cutover --apply --rollback-set ${rollback_set%%-reentry-*}-reentry-$(date -u +%Y%m%dT%H%M%SZ)"
+  [[ ! -e "${credstore}/open-webui.${credential_name}" ]] || cmd+=" --reuse-credential"
+  print -r -- "$cmd"
+}
+
 do_preflight() {
-  local installed version count established unit state
+  local installed version count established unit state problem
+  local secret="${config_dir}/qdrant.env" cred="${credstore}/open-webui.${credential_name}"
   note "== preflight"
   installed=$(pacman -Q qdrant 2>/dev/null | awk '{print $2}') || true
   [[ "$installed" == "$baseline_version" ]] \
@@ -222,13 +268,29 @@ do_preflight() {
     [[ "$state" == inactive || "$state" == failed ]] \
       || refuse "consumer ${unit} is ${state:-in an unknown state}; stop it and keep it stopped until verify passes"
   done
-  [[ -e "${config_dir}/qdrant.env" ]] \
-    && note "secret: ${config_dir}/qdrant.env exists and will be checked by the packaged preflight" \
-    || note "secret: ${config_dir}/qdrant.env is absent and will be provisioned by cutover"
+  if [[ -e "$secret" || -L "$secret" ]]; then
+    problem=$(secret_file_problem "$secret")
+    if [[ -n "$problem" ]]; then
+      refuse "secret: ${secret} ${problem}; fix it or move it aside so cutover provisions a new one"
+    else
+      note "secret: ${secret} exists and has the form the packaged preflight requires; cutover keeps it"
+    fi
+  else
+    note "secret: ${secret} is absent and will be provisioned by cutover"
+  fi
   [[ ! -e "${rollback_root}/${rollback_set}" ]] \
     || refuse "rollback set ${rollback_root}/${rollback_set} already exists; choose another --rollback-set"
-  [[ ! -e "${credstore}/open-webui.${credential_name}" ]] \
-    || refuse "${credstore}/open-webui.${credential_name} already exists; rotation is a separate act"
+  if [[ -e "$cred" ]]; then
+    if (( ! reuse_credential )); then
+      refuse "${cred} already exists; to re-enter after a rollback pass --reuse-credential, otherwise rotation is a separate act"
+    elif credential_matches_secret; then
+      note "credential: ${cred} matches the token ${secret} mints; cutover reuses it"
+    else
+      refuse "--reuse-credential: ${cred} does not decrypt to the token ${secret} mints (or is unreadable; run as root); move it aside so cutover mints a new one"
+    fi
+  elif (( reuse_credential )); then
+    note "credential: --reuse-credential given but ${cred} is absent; cutover mints it"
+  fi
 }
 
 require_root_for_apply() {
@@ -293,16 +355,53 @@ wait_for_version() {
   return 1
 }
 
+unit_property() {
+  # One qdrant.service property on a single line, as MANIFEST records it.
+  local value
+  value=$(systemctl show -P "$1" qdrant.service 2>/dev/null) || return 1
+  print -r -- "${(j: :)${(f)value}}"
+}
+
 stage=
 fail_stage() {
   if [[ "$stage" == 'stop 1.17.1' ]]; then
     hand_back "qdrant cutover FAILED at '${stage}'; 1.17.1 and its state are untouched: run sudo systemctl start qdrant.service"
   elif [[ "$stage" == 'save rollback set' ]]; then
-    hand_back "qdrant cutover FAILED at '${stage}'; 1.17.1 and its state are untouched: run sudo systemctl start qdrant.service, inspect the partial set ${rollback_root}/${rollback_set}, and retry with a new --rollback-set"
+    hand_back "qdrant cutover FAILED at '${stage}'; 1.17.1 and its state are untouched: run sudo systemctl start qdrant.service, inspect the partial set ${rollback_root}/${rollback_set}, then re-enter with: $(reentry_command)"
   else
-    hand_back "qdrant cutover FAILED at '${stage}'; run: sudo ${script_name} rollback --apply --rollback-set ${rollback_set}"
+    hand_back "qdrant cutover FAILED at '${stage}'; roll back with: sudo ${script_path} rollback --apply --rollback-set ${rollback_set}; once the cause is fixed, re-enter with: $(reentry_command)"
   fi
   exit 1
+}
+
+provision_secret() {
+  # Write the new HMAC secret to a temporary file beside the target and
+  # rename it into place, so a failed write never leaves a partial qdrant.env.
+  local target="${config_dir}/qdrant.env" tmp
+  tmp=$(mktemp -- "${config_dir}/.qdrant.env.XXXXXX") || return 1
+  {
+    chown root:qdrant -- "$tmp" && chmod 0640 -- "$tmp" \
+      && { print -rn -- QDRANT__SERVICE__API_KEY=; openssl rand -hex 32; } >| "$tmp" \
+      && sync -- "$tmp" \
+      && [[ -z "$(secret_file_problem "$tmp")" ]] \
+      && mv -fT -- "$tmp" "$target"
+  } || { rm -f -- "$tmp"; return 1; }
+}
+
+deliver_credential() {
+  # Encrypt to a temporary name in the credstore, then rename, so a failed
+  # encryption never leaves a partial credential behind.
+  local target="${credstore}/open-webui.${credential_name}"
+  local tmp="${credstore}/.open-webui.${credential_name}.new"
+  if [[ -e "$target" ]]; then
+    # Preflight accepted it under --reuse-credential: it matches the secret.
+    note "credential: reusing ${target}"
+    return 0
+  fi
+  install -d -m 0700 -- "$credstore" || return 1
+  rm -f -- "$tmp"
+  { mint_jwt prw 0 | systemd-creds encrypt --name="$credential_name" - "$tmp" && mv -fT -- "$tmp" "$target"; } \
+    || { rm -f -- "$tmp"; return 1; }
 }
 
 create_collections() {
@@ -358,6 +457,9 @@ do_cutover() {
     {
       print -r -- "baseline ${baseline_file} ${baseline_sha}"
       pacman -Q qdrant qdrant-migration qdrant-web-ui 2>/dev/null | sed 's/^/installed /' || true
+      # The pre-cutover unit shape that rollback must return to.
+      print -r -- "unit-environment-files=$(unit_property EnvironmentFiles)"
+      print -r -- "unit-drop-in-paths=$(unit_property DropInPaths)"
     } >| "${set_dir}/MANIFEST"
     (cd "$storage_dir" && find . -type f -print0 | sort -z | xargs -0r sha256sum) >| "${set_dir}/state.sha256"
     (cd "${set_dir}/state" && sha256sum --quiet -c "${set_dir}/state.sha256") || fail_stage
@@ -379,12 +481,13 @@ do_cutover() {
 
   stage='provision HMAC secret'
   if [[ ! -e "${config_dir}/qdrant.env" ]]; then
-    run install -o root -g qdrant -m 0640 /dev/null "${config_dir}/qdrant.env" || fail_stage
     if (( apply )); then
-      { print -rn -- QDRANT__SERVICE__API_KEY=; openssl rand -hex 32; } >| "${config_dir}/qdrant.env" || fail_stage
+      provision_secret || fail_stage
     else
-      note "DRY-RUN: write QDRANT__SERVICE__API_KEY=<openssl rand -hex 32> to ${config_dir}/qdrant.env"
+      note "DRY-RUN: write QDRANT__SERVICE__API_KEY=<openssl rand -hex 32> to a root:qdrant 0640 temporary file in ${config_dir}, then rename it to qdrant.env"
     fi
+  else
+    note "secret: keeping the existing ${config_dir}/qdrant.env (preflight checked its form)"
   fi
 
   stage='install 1.19.0'
@@ -407,13 +510,15 @@ do_cutover() {
     snapshot_restore_drill "$admin" || fail_stage
 
     stage='deliver runtime JWT'
-    install -d -m 0700 -- "$credstore" || fail_stage
-    mint_jwt prw 0 | systemd-creds encrypt --name="$credential_name" - \
-      "${credstore}/open-webui.${credential_name}" || fail_stage
+    deliver_credential || fail_stage
   else
     note "DRY-RUN: create ${collection_prefix}_{${(j:,:)collection_suffixes}} (2560, Cosine, payload indexes tenant_id/metadata.hash/metadata.file_id)"
     note "DRY-RUN: snapshot and restore ${collection_prefix}_memories while empty"
-    note "DRY-RUN: systemd-creds encrypt --name=${credential_name} <prw JWT> ${credstore}/open-webui.${credential_name}"
+    if [[ -e "${credstore}/open-webui.${credential_name}" ]]; then
+      note "DRY-RUN: reuse ${credstore}/open-webui.${credential_name} (preflight matched it to the HMAC secret)"
+    else
+      note "DRY-RUN: systemd-creds encrypt --name=${credential_name} <prw JWT> to a temporary file in ${credstore}, then rename it to open-webui.${credential_name}"
+    fi
     note "DRY-RUN: restart qdrant.service, then verify (the collections must survive the restart)"
     hand_back "qdrant cutover dry run complete; rerun as root with --apply"
     return
@@ -491,8 +596,49 @@ do_verify() {
   note "verify: all checks passed"
 }
 
+manifest_version() {
+  # manifest_version MANIFEST PKGNAME -> recorded pre-cutover version, or nothing
+  awk -v n="$2" '$1 == "installed" && $2 == n { print $3; exit }' "$1"
+}
+
+manifest_unit() {
+  # manifest_unit MANIFEST KEY -> recorded pre-cutover unit property, or nothing
+  sed -n "s/^unit-${2}=//p" "$1"
+}
+
+installed_version() { pacman -Q "$1" 2>/dev/null | awk '{print $2}' || true; }
+
+side_archive() {
+  # side_archive PKGNAME VERSION -> the cached archive for that exact version
+  local -a found=("${pkg_cache}/${1}-${2}-"*.pkg.tar.zst(N))
+  (( $#found == 1 )) && print -r -- "${found[1]}"
+}
+
+verify_rollback() {
+  # Fails unless the host is back in the recorded pre-cutover shape.
+  local manifest=$1 name want got key prop
+  local -a bad
+  got=$(installed_version qdrant)
+  [[ "$got" == "$baseline_version" ]] || bad+=("installed qdrant is '${got:-absent}', want ${baseline_version}")
+  got=$(sha256_of "${config_dir}/config.yaml" 2>/dev/null) || got=
+  [[ "$got" == "$baseline_config_sha" ]] \
+    || bad+=("${config_dir}/config.yaml sha256 is '${got:-unreadable}', want the retained ${baseline_version} config ${baseline_config_sha}")
+  for key prop in environment-files EnvironmentFiles drop-in-paths DropInPaths; do
+    want=$(manifest_unit "$manifest" "$key")
+    got=$(unit_property "$prop") || got='<unreadable>'
+    [[ "$got" == "$want" ]] || bad+=("qdrant.service ${prop} is '${got}', want the pre-cutover '${want}'")
+  done
+  for name in qdrant-web-ui qdrant-migration; do
+    want=$(manifest_version "$manifest" "$name")
+    got=$(installed_version "$name")
+    [[ "$got" == "$want" ]] || bad+=("${name} is '${got:-absent}', want the pre-cutover '${want:-absent}'")
+  done
+  for got in "${bad[@]}"; do print -ru2 -- "ROLLBACK CHECK FAILED: ${got}"; done
+  (( ! $#bad ))
+}
+
 do_rollback() {
-  local set_dir="${rollback_root}/${rollback_set}" failed_dir name
+  local set_dir="${rollback_root}/${rollback_set}" failed_dir name want archive need avail
   note "== rollback"
   [[ -f "${set_dir}/MANIFEST" && -d "${set_dir}/state" && -d "${set_dir}/config" ]] \
     || { refuse "rollback set ${set_dir} is incomplete"; finish_or_refuse rollback; }
@@ -500,6 +646,26 @@ do_rollback() {
   [[ -r "${set_dir}/state.sha256" ]] \
     && (cd "${set_dir}/state" && sha256sum --quiet -c "${set_dir}/state.sha256") \
     || refuse "saved state in ${set_dir} does not match state.sha256 (or is unreadable; run as root)"
+  [[ "$(sha256_of "${set_dir}/config/config.yaml" 2>/dev/null)" == "$baseline_config_sha" ]] \
+    || refuse "saved ${set_dir}/config/config.yaml is not the retained ${baseline_version} config ${baseline_config_sha}"
+  # The failed state is moved aside on the same filesystem, which frees
+  # nothing, so the restored copy needs its full size free there.
+  need=$(du -sb -- "${set_dir}/state" 2>/dev/null | awk '{print $1}') || need=
+  avail=$(df -B1 --output=avail -- "${storage_dir:h}" 2>/dev/null | awk 'NR == 2 { print $1 }') || avail=
+  if [[ -z "$need" || -z "$avail" ]]; then
+    refuse "could not size the saved state or the free space under ${storage_dir:h}; run as root"
+  elif (( avail <= need )); then
+    refuse "${storage_dir:h} has ${avail} bytes free; restoring the saved state needs ${need}"
+  else
+    note "disk: restoring ${need} bytes of saved state; ${avail} bytes free under ${storage_dir:h}"
+  fi
+  for name in qdrant-web-ui qdrant-migration; do
+    want=$(manifest_version "${set_dir}/MANIFEST" "$name")
+    if [[ -n "$want" && "$(installed_version "$name")" != "$want" ]]; then
+      side_archive "$name" "$want" >/dev/null \
+        || refuse "${name} ${want} was installed before cutover, but ${pkg_cache} has no single ${name}-${want} archive to reinstall"
+    fi
+  done
   finish_or_refuse rollback
   (( apply )) || note "(dry run: pass --apply as root to perform these steps)"
   failed_dir="${storage_dir}.failed-$(date -u +%Y%m%dT%H%M%SZ)"
@@ -514,17 +680,26 @@ do_rollback() {
   fi
   run cp -a --reflink=auto -- "${set_dir}/state" "$storage_dir" || rollback_failed 'restore state'
   run pacman -U --noconfirm "${set_dir}/${baseline_file}" || rollback_failed "install ${baseline_version}"
+  # Return the side packages to the manifest: remove what cutover added,
+  # reinstall the recorded version of what was there before.
   for name in qdrant-web-ui qdrant-migration; do
-    if ! grep -q "^installed ${name} " "${set_dir}/MANIFEST" && pacman -Q "$name" >/dev/null 2>&1; then
-      run pacman -R --noconfirm "$name" || rollback_failed "remove ${name}"
+    want=$(manifest_version "${set_dir}/MANIFEST" "$name")
+    if [[ -z "$want" ]]; then
+      [[ -z "$(installed_version "$name")" ]] || run pacman -R --noconfirm "$name" || rollback_failed "remove ${name}"
+    elif [[ "$(installed_version "$name")" != "$want" ]]; then
+      archive=$(side_archive "$name" "$want") || rollback_failed "find ${name} ${want}"
+      run pacman -U --noconfirm "$archive" || rollback_failed "reinstall ${name} ${want}"
     fi
   done
-  run install -m 0644 -- "${set_dir}/config/config.yaml" "${config_dir}/config.yaml" || rollback_failed 'restore config'
+  # Only config.yaml is restored, with the packaged owner and mode;
+  # qdrant.env and the encrypted credential stay for re-entry.
+  run install -o root -g root -m 0644 -- "${set_dir}/config/config.yaml" "${config_dir}/config.yaml" || rollback_failed 'restore config'
   run systemctl daemon-reload || rollback_failed 'daemon-reload'
   run systemctl start qdrant.service || rollback_failed 'start qdrant'
   if (( apply )); then
     wait_for_version "${baseline_version%-*}" || rollback_failed "wait for ${baseline_version%-*}"
-    hand_back "qdrant rollback COMPLETE on ${baseline_version}; failed 1.19 state kept at ${failed_dir}"
+    verify_rollback "${set_dir}/MANIFEST" || rollback_failed 'verify restored state'
+    hand_back "qdrant rollback COMPLETE on ${baseline_version} (package, config, unit, and side packages verified); failed state kept at ${failed_dir}; to re-enter once the cause is fixed: $(reentry_command)"
   else
     hand_back "qdrant rollback dry run complete; rerun as root with --apply"
   fi
@@ -542,6 +717,7 @@ esac
 while (( $# )); do
   case "$1" in
     --apply) apply=1; shift ;;
+    --reuse-credential) reuse_credential=1; shift ;;
     --url|--storage-dir|--config-dir|--repo|--sync-db|--pkg-cache|--rollback-root|--rollback-set|--credstore|--disk-quota-percent)
       (( $# >= 2 )) || die "$1 requires a value"
       case "$1" in
