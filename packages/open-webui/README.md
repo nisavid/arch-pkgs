@@ -173,7 +173,7 @@ for the tailnet's DNS label; neither belongs in this repository. The LocalAPI
 socket's directory admits only root and the daemon's own user, so every
 `tailscale --socket=...` command runs under `sudo`.
 
-1. Before the first Open WebUI start, add the public origin to
+1. Before the first Open WebUI start, set the canonical origin in
    `/etc/open-webui/open-webui.env`:
 
    ```text
@@ -181,9 +181,15 @@ socket's directory admits only root and the daemon's own user, so every
    CORS_ALLOW_ORIGIN=https://<name>.<tailnet>.ts.net
    ```
 
-   `WEBUI_URL` is a persistent setting, so only the first start seeds it;
-   after that, change it in the admin UI. `CORS_ALLOW_ORIGIN` is read at
-   every start.
+   Settle the origin now. `WEBUI_URL` is persistent config: the first start
+   copies it into Open WebUI's database, and the stored value wins after
+   that, so later edits to this file have no effect. Change it later under
+   Admin Panel > Settings > General > WebUI URL. Setting
+   `ENABLE_PERSISTENT_CONFIG=false` also lets the environment win, but for
+   every persistent setting and only while it stays set.
+   `CORS_ALLOW_ORIGIN` is read at every start. A later origin change signs
+   every user out and strands their saved passwords, bookmarks, and
+   installed web apps, which browsers tie to the old origin.
 2. Start the node and log it in once, interactively:
 
    ```sh
@@ -200,6 +206,13 @@ socket's directory admits only root and the daemon's own user, so every
    ```sh
    sudo tailscale --socket=/run/open-webui-tailnet/tailscaled.sock serve --bg --https=443 unix:/run/open-webui/open-webui.sock
    ```
+
+   Run it exactly as written, as root through `sudo`; do not move it to an
+   unprivileged operator account. Since Tailscale 1.98.9
+   ([TS-2026-005](https://tailscale.com/security-bulletins#ts-2026-005)),
+   `tailscaled` accepts a Unix-socket serve target only from a local admin,
+   which on Linux means root or a configured operator who can also run
+   `sudo tailscale`.
 
 Verify with
 `sudo tailscale --socket=/run/open-webui-tailnet/tailscaled.sock serve status`,
@@ -220,7 +233,8 @@ gives up Tailscale technical support for this node. To reverse it, remove the
 drop-in with `sudo systemctl revert open-webui-tailnet.service` and restart the
 service.
 
-Roll back in reverse order:
+Roll back in reverse order. Step 4 prints the same `serve --https=443 off`
+command for removing its route:
 
 ```sh
 sudo tailscale --socket=/run/open-webui-tailnet/tailscaled.sock serve --https=443 off
