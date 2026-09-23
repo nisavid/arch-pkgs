@@ -511,8 +511,8 @@ do_cutover() {
       # The pre-cutover unit shape that rollback must return to.
       print -r -- "unit-environment-files=$(unit_property EnvironmentFiles)"
       print -r -- "unit-drop-in-paths=$(unit_property DropInPaths)"
-    } >| "${set_dir}/MANIFEST"
-    (cd "$storage_dir" && find . -type f -print0 | sort -z | xargs -0r sha256sum) >| "${set_dir}/state.sha256"
+    } >| "${set_dir}/MANIFEST" || fail_stage
+    (cd "$storage_dir" && find . -type f -print0 | sort -z | xargs -0r sha256sum) >| "${set_dir}/state.sha256" || fail_stage
     (cd "${set_dir}/state" && sha256sum --quiet -c "${set_dir}/state.sha256") || fail_stage
   fi
 
@@ -553,8 +553,8 @@ do_cutover() {
   if (( apply )); then
     stage='create collections'
     wait_for_version 1.19.0 || fail_stage
-    make_private_dir
-    admin=$(admin_header)
+    make_private_dir || fail_stage
+    admin=$(admin_header) || fail_stage
     create_collections "$admin" || fail_stage
 
     stage='snapshot restore drill'
