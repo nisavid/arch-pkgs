@@ -711,6 +711,21 @@ class StubProviderTests(unittest.TestCase):
         text, _ = scenarios.parse_chat_response(events, "text/event-stream")
         self.assertEqual(text, scenarios.CANONICAL_FACT)
 
+    def test_stub_parsing_is_linear_on_unclosed_tags(self):
+        self.assertEqual(stub._between("a<context>x</context>", "<context>", "</context>"), "x")
+        self.assertIsNone(stub._between("a<context>x", "<context>", "</context>"))
+        hostile = {"model": stub.CHAT_MODEL, "messages": [{"role": "user", "content": "<context>" + "<" * 200_000}]}
+        self.assertIsInstance(stub.chat_answer(hostile), str)
+
+    def test_https_endpoints_refuse_tls_older_than_1_2(self):
+        import ssl
+
+        self.assertEqual(scenarios.tls_context().minimum_version, ssl.TLSVersion.TLSv1_2)
+        endpoint = scenarios.Endpoint(origin="https://example.invalid")
+        self.assertIsNotNone(endpoint.context)
+        assert endpoint.context is not None
+        self.assertEqual(endpoint.context.minimum_version, ssl.TLSVersion.TLSv1_2)
+
     def test_stub_serves_the_lemonade_routes_without_a_key(self):
         with running_stub() as url:
             lemond = scenarios.Endpoint(origin=url)

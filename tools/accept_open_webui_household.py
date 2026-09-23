@@ -1800,7 +1800,7 @@ def one_admin(webui: sc.Endpoint, token: str) -> dict[str, Any]:
 
 
 def websocket_upgrade_status(port: int, cacert: Path, token: str) -> int:
-    context = ssl.create_default_context(cafile=str(cacert))
+    context = sc.tls_context(cacert)
     with socket.create_connection(("localhost", port), timeout=15) as raw:
         with context.wrap_socket(raw, server_hostname="localhost") as tls:
             key = base64.b64encode(os.urandom(16)).decode()
