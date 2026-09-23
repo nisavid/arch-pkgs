@@ -167,22 +167,15 @@ reaches the Open WebUI socket. The package installs the unit disabled and
 ships no node name. The login, node name, and serve configuration are runtime
 state in that state directory, so a later route to another Unix-socket
 target under `/run` (not `/run/user`) that the `open-webui-proxy` group can
-reach, for example a local TLS terminator, needs no unit change. A loopback
-target would need one, and allowing `127.0.0.1` would undo the loopback deny
-below. The route needs the optional `tailscale` package.
+reach, for example a local TLS terminator, needs no unit change. A target on
+the host's loopback address does not work. The route needs the optional
+`tailscale` package.
 
-In userspace-networking mode, `tailscaled` forwards a tailnet connection on
-any port it does not serve to that port on the host's `127.0.0.1`, which
-would expose services that listen only on localhost to the tailnet. The unit
-therefore denies the daemon `127.0.0.1` and `::1` (`IPAddressDeny=`), so
-tailnet peers reach only what the node itself serves. Do not advertise routes
-or an exit node from this node; those would forward to the host network
-without this check. The deny drops a blocked forward rather than refusing it,
-so the peer's attempt times out and holds one of the daemon's connection slots
-for about two minutes. Peers that scan many ports can therefore exhaust those
-slots and stall the serve route; if it stops answering after such a scan,
-restart `open-webui-tailnet.service`. A tailnet policy that admits peers to
-this node only on `tcp:443` avoids that, once step 2's check has passed.
+The unit denies the daemon the host's loopback address, so tailnet peers reach
+only what the node itself serves; [Loopback deny](#loopback-deny) explains why,
+what it rules out, and the tailnet policy that should accompany it. Do not
+advertise routes or an exit node from this node; those would forward to the
+host network without that check.
 
 These are production cutover steps. Run them only under the accepted
 deployment task, never directly from this package directory (see
@@ -215,7 +208,7 @@ command runs under `sudo`.
    nc -vz -w 5 <name>.<tailnet>.ts.net 6333
    ```
 
-   It must time out, and about two minutes later
+   It must time out, and about two minutes (roughly 130 seconds) later
    `sudo journalctl -u open-webui-tailnet.service` must show the forward to
    `127.0.0.1:6333` failing. A connection or a quick refusal means the deny
    is not in effect; stop and roll back. A timeout with no journal line
@@ -286,6 +279,57 @@ sudo tailscale --socket=/run/open-webui-tailnet/tailscaled.sock logout
 sudo systemctl disable open-webui-tailnet.service
 sudo systemctl stop open-webui-tailnet.service
 ```
+
+### Loopback deny
+
+In userspace-networking mode, `tailscaled` forwards tailnet TCP and UDP
+traffic on any port it does not serve to that port on the host's `127.0.0.1`,
+whether the peer used the node's IPv4 or IPv6 tailnet address. That would open
+every service that listens only on localhost, such as Valkey, Qdrant, and
+Lemonade, to the tailnet. Tailscale has no setting that turns the forward off,
+and `--shields-up` would also block the serve route. The unit therefore sets
+`IPAddressDeny=127.0.0.1 ::1`. The daemon does not forward to `::1`, so that
+entry only guards against a future change. Keep exactly these addresses:
+
+- `localhost` (all of `127.0.0.0/8`) and `RestrictNetworkInterfaces=~lo`
+  would also block the `127.0.0.53` resolver stub, which the daemon needs for
+  DNS.
+- `IPAddressAllow=` cannot make a narrow exception. It has no port scope, and
+  an allow overrides the deny, so allowing `127.0.0.1` would expose every
+  localhost-only service again.
+
+The deny does not filter Unix sockets, so the LocalAPI and the Unix-socket
+serve target keep working. It does break these features if they are enabled
+on this node later: a serve or Funnel target on `127.0.0.1`, `::1`, or
+`localhost`; Taildrive; a `--debug` or metrics listener on loopback; the SOCKS5
+and HTTP proxy listeners (`--socks5-server`, `--outbound-http-proxy-listen`);
+and an `HTTP_PROXY` or `HTTPS_PROXY` on loopback. On a host whose
+`/etc/resolv.conf` points at `127.0.0.1` or `::1` (a local dnsmasq or unbound,
+for example), it also blocks the daemon's own DNS lookups, and the node's
+HTTPS certificate may fail to issue.
+
+For a later custom domain, pass TLS through to a local terminator on a Unix
+socket, not `127.0.0.1`: run `serve --tcp=443 unix:/run/<dir>/<sock>` as root,
+like any `unix:` target. That route cannot carry the PROXY protocol, so the
+terminator does not see the client's address.
+
+The deny drops a blocked TCP forward rather than refusing it. The daemon waits
+out the host's TCP SYN timeout, about two minutes, holding one of its
+forwarding slots, and then logs the failure. One source address can hold at
+most two thirds of the slots, so a port scan from one address mostly stalls
+that peer itself. Stalling the serve route for every peer takes scans from two
+or more addresses, and a peer with both an IPv4 and an IPv6 tailnet address
+already has two. Restarting `open-webui-tailnet.service` clears the slots.
+
+A tailnet policy that admits peers to this node only on `tcp:443` is the
+stronger control. The policy drops all other traffic before `tailscaled`
+forwards it, so that traffic neither reaches the deny nor holds a slot. Apply
+it after step 2's check has passed. Tailscale policy rules only grant access,
+so a new `tcp:443` rule changes nothing by itself: the default allow-all rule,
+and every other rule that covers this node, must stop covering the node. The
+forwarding code ships in the `tailscale` package, so repeat step 2's check
+after each `tailscale` upgrade, from a device that the policy still admits on
+the Qdrant port.
 
 ## Maintenance Baseline
 
