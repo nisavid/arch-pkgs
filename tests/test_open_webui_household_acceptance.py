@@ -146,6 +146,17 @@ class ArgumentTests(unittest.TestCase):
                 kit_module.parser().parse_args(["up", "--slice", bad])
             self.assertEqual(raised.exception.code, 2, bad)
 
+    def test_a_shared_parent_slice_is_refused(self):
+        for shared in ("builds.slice", "app.slice", "user.slice", "owui_acc.slice", "-.slice"):
+            with self.subTest(shared=shared), self.assertRaises(SystemExit), \
+                    contextlib.redirect_stderr(io.StringIO()) as error:
+                kit_module.parser().parse_args(["up", f"--slice={shared}"])
+            self.assertIn(shared, error.getvalue())
+        with tempfile.TemporaryDirectory() as root:
+            (Path(root) / kit_module.KIT_STATE).write_text(json.dumps({"slice": "builds.slice"}))
+            with self.assertRaisesRegex(ValueError, "builds.slice"):
+                self.kit("down", "--root", root)
+
     def test_the_staged_slice_is_read_back_and_a_different_one_is_refused(self):
         with tempfile.TemporaryDirectory() as root:
             staged = self.kit("stage", "--root", root, "--slice", "builds-owui_acc.slice")
@@ -313,6 +324,21 @@ class UnitDerivationTests(unittest.TestCase):
                     kit_module.COMMANDS[command](kit, kit_module.parser().parse_args([command]))
                 self.assertIn(mock.call("stop", "builds-owui_acc.slice", check=False), systemctl.call_args_list)
                 self.assertNotIn(mock.call("stop", "owui-acc.slice", check=False), systemctl.call_args_list)
+                stopped = [call.args[1] for call in systemctl.call_args_list if call.args[0] == "stop"]
+                self.assertLessEqual(set(stopped), {"builds-owui_acc.slice", kit_module.UNITS["caddy"]})
+
+    def test_no_kit_unit_sets_an_oom_score(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit = make_kit(directory, rehearsal=True)
+            texts = [
+                kit_module.open_webui_unit(kit, OPEN_WEBUI_UNIT.read_text())[0],
+                kit_module.qdrant_unit(kit, QDRANT_UNIT.read_text())[0],
+                kit_module.kit_unit(kit, "valkey", "valkey", "/usr/bin/valkey-server x"),
+            ]
+            for text in texts:
+                self.assertNotIn("OOMScoreAdjust", text)
+            with self.assertRaisesRegex(ValueError, "OOMScoreAdjust"):
+                kit_module.classify_property("Service", "OOMScoreAdjust")
 
     def test_every_unit_keeps_home_caches_and_temp_under_the_root(self):
         contained = ("HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "TORCH_HOME", "HF_HOME", "TMPDIR")
@@ -583,6 +609,64 @@ class PreflightTests(unittest.TestCase):
             self.assertIn(sc.valkey_password_hash("valkey-password"), acl)
             self.assertNotIn("valkey-password", acl)
             self.assertEqual((root / "etc" / "valkey-open-webui.acl").stat().st_mode & 0o777, 0o600)
+
+    def plaintext_root(self, directory, mode="record"):
+        kit = make_kit(directory, rehearsal=mode == "rehearsal")
+        root = kit.root
+        (root / kit_module.MARKER).write_text("marker\n")
+        (root / "kit.json").write_text(json.dumps({"mode": mode, "credential_route": "plaintext-0400"}))
+        for name in ("etc", "tree", "state", "ledger", "inputs", "backups/anchor"):
+            (root / name).mkdir(parents=True, exist_ok=True)
+        (root / "backups" / "anchor" / "anchor.json").write_text(json.dumps({"archives": []}))
+        (root / "credstore").mkdir(mode=0o700)
+        kit.store_credential("webui-secret-key", "test-only")
+        kit_module.shutil.copytree(root / "credstore", root / "backups" / "anchor" / "credstore")
+        return kit
+
+    def teardown(self, kit, *flags):
+        args = kit_module.parser().parse_args(["teardown", *flags, "--evidence-out", f"{kit.root}/out"])
+        with mock.patch.object(kit_module, "systemctl"), contextlib.redirect_stdout(io.StringIO()):
+            return kit_module.cmd_teardown(kit, args)
+
+    def test_keep_anchor_refuses_plaintext_credentials_without_the_opt_in(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit = self.plaintext_root(directory)
+            with self.assertRaisesRegex(sc.Blocked, "--keep-plaintext-credentials"):
+                self.teardown(kit, "--keep-anchor")
+            self.assertTrue((kit.root / "state").is_dir())
+
+    def test_the_opt_in_keeps_test_only_0400_credentials_and_up_restores_them_in_the_same_mode(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit = self.plaintext_root(directory)
+            os.chmod(kit.anchor / "credstore", 0o755)
+            self.assertEqual(self.teardown(kit, "--keep-anchor", "--keep-plaintext-credentials"), sc.EXIT_PASS)
+            kept = kit.anchor / "credstore"
+            self.assertFalse(kit.credstore.exists())
+            self.assertEqual(kept.stat().st_mode & 0o777, 0o700)
+            self.assertEqual(kept.stat().st_uid, os.getuid())
+            self.assertEqual((kept / "webui-secret-key").stat().st_mode & 0o777, 0o400)
+            with mock.patch.object(kit_module, "restage_trees"), mock.patch.object(kit_module, "place_whisper"), \
+                    mock.patch.object(kit_module, "render_etc"), mock.patch.object(kit_module, "create_state_directories"):
+                kit_module.revive_from_anchor(kit)
+            self.assertEqual(kit.credential_route(), "plaintext-0400")
+            self.assertEqual(kit.credential_directive("webui-secret-key"),
+                             ("LoadCredential", f"webui-secret-key:{kit.credstore}/webui-secret-key"))
+            self.assertEqual(kit.read_credential("webui-secret-key"), "test-only")
+            self.assertEqual(kit.credstore.stat().st_mode & 0o777, 0o700)
+            self.assertEqual((kit.credstore / "webui-secret-key").stat().st_mode & 0o777, 0o400)
+
+    def test_the_opt_in_without_keep_anchor_is_a_usage_error(self):
+        with tempfile.TemporaryDirectory() as runtime, mock.patch.dict(os.environ, {"XDG_RUNTIME_DIR": runtime}), \
+                contextlib.redirect_stderr(io.StringIO()) as error, self.assertRaises(SystemExit) as raised:
+            kit_module.main(["teardown", "--root", runtime, "--keep-plaintext-credentials"])
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn("--keep-anchor", error.getvalue())
+
+    def test_a_rehearsal_ignores_the_opt_in(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit = self.plaintext_root(directory, mode="rehearsal")
+            self.assertEqual(self.teardown(kit, "--keep-anchor", "--keep-plaintext-credentials"), sc.EXIT_PASS)
+            self.assertFalse(kit.root.exists())
 
     def test_a_rehearsal_root_refuses_resmoke(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -947,6 +1031,17 @@ class EvidenceTests(unittest.TestCase):
             self.assertNotIn("generation", json.dumps(evidence).lower())
             void = kit_module.build_evidence(kit, trial, 0, True)
             self.assertTrue(void["disposition"].startswith("void"))
+
+    def test_the_0400_fallback_is_a_trial_condition_not_a_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit, trial = self.trial(directory, rehearsal=False)
+            self.assertEqual(kit_module.build_evidence(kit, trial, 0, False)["conditions"], [])
+            kit.save_state(credential_route="plaintext-0400")
+            evidence = kit_module.build_evidence(kit, trial, 0, False)
+            self.assertEqual(evidence["conditions"],
+                             ["credentials: 0400-file fallback; systemd-creds --user unavailable"])
+            self.assertEqual(evidence["disposition"], "accepted")
+            v1.assert_public_safe(evidence)
 
     def test_record_mode_writes_evidence_and_rehearsal_writes_none(self):
         with tempfile.TemporaryDirectory() as directory:

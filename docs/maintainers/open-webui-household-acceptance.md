@@ -137,7 +137,7 @@ committed; the evidence records each value used.
 | `--whisper-model NAME` | `base` | Pinned Whisper size, `base` or `tiny`; the revision and every file SHA-256 are recorded. |
 | `--provider stub\|lemond` | `lemond` | `stub` serves the rehearsal from `stub_provider.py`; `lemond` is the trial. |
 | `--rehearsal` | off | Required with `--provider stub`; marks every output `mode=rehearsal`. |
-| `--slice NAME` | `owui-acc.slice` | The user slice every kit unit runs under: a plain systemd slice unit name ending in `.slice`. `stage` records it in `kit.json`, and every later subcommand reads it from there; a later `--slice` that differs from the staged one is refused. systemd nests slices by dashes, so `builds-owui_acc.slice` is a child of `builds.slice`. |
+| `--slice NAME` | `owui-acc.slice` | The user slice every kit unit runs under: a plain systemd slice unit name ending in `.slice`. `stage` records it in `kit.json`, and every later subcommand reads it from there; a later `--slice` that differs from the staged one is refused. systemd nests slices by dashes, so `builds-owui_acc.slice` is a child of `builds.slice`. The slice must be a dedicated child the kit owns alone: `down` and `teardown` stop the whole slice, so a top-level slice with no dash-separated leaf of its own, such as `builds.slice` itself, is refused as a usage error. |
 
 A served model id that differs from the expected one exits 75 and escalates.
 The one equivalence is a leading `user.`: a canonical `user.` id and its bare
@@ -160,13 +160,24 @@ python3 "$kit" stage     "${args[@]}"   # extract, render, mint, initialize
 python3 "$kit" up        "${args[@]}"   # start the kit slice, route closed
 python3 "$kit" trial     "${args[@]}"   # the one trial set, then evidence
 python3 "$kit" down      "${args[@]}"   # stop the slice
-python3 "$kit" teardown  "${args[@]}" --keep-anchor
+python3 "$kit" teardown  "${args[@]}" --keep-anchor   # plus --keep-plaintext-credentials after a 0400 fallback
 ```
 
 The trial and the rehearsal both pass `--slice builds-owui_acc.slice`, so the
 kit units inherit the host's build memory cap from a capped user
 `builds.slice`. The kit units are long-running user services, so a
 `systemd-run --scope` wrapper around the kit command would not cap them.
+Never pass `builds.slice` itself: stopping the kit slice would then stop every
+other build in it.
+
+The kit sets no `OOMScoreAdjust=` on its units, and they keep the default
+`oom_score_adj`. Do not wrap kit commands in `choom`: a host whose build
+tooling raises compilers' `oom_score_adj` relies on the default for
+long-running services, so a full cap kills a compiler before a trial service.
+
+If `stage` printed that `systemd-creds --user` is unavailable, the root uses
+the 0400-file credential fallback, and the record-mode teardown adds
+`--keep-plaintext-credentials` to `--keep-anchor` (see `teardown` below).
 
 - `preflight` checks the manifest pins against the input archives, disk
   headroom, free ports, the served and loaded model ids, and the host tools.
@@ -188,7 +199,15 @@ kit units inherit the host's build memory cap from a capped user
   revive the environment before the production install. `up` on a kept root
   re-extracts the trees, restores the credential store, re-renders `etc/`,
   and restores the state tuple. After a rehearsal, teardown ignores
-  `--keep-anchor`.
+  `--keep-anchor` and `--keep-plaintext-credentials`.
+- On a root that uses the 0400-file fallback, `--keep-anchor` refuses unless
+  `--keep-plaintext-credentials` is also given; that flag without
+  `--keep-anchor` is a usage error. With both, teardown keeps the anchor's
+  credential files as 0400 files in a 0700 directory owned by the operator,
+  and `up` restores them in the same fallback mode. They are test-only
+  secrets for the disposable acceptance services, and
+  [Release retained rollback anchors and clean target-local state](https://github.com/nisavid/arch-pkgs/issues/62)
+  deletes them with the rest of the kept root.
 
 Exit codes for every subcommand: `0` pass, `1` failure, `2` usage error (an
 unknown flag or an invalid flag combination), `3` escalate (zembed canary),
@@ -305,7 +324,10 @@ its packaged value, its acceptance value, and the reason. The table covers:
 - the session-epoch ledger run under `unshare -r`, the socket path under
   `$XDG_RUNTIME_DIR/owui-acc/`, and Caddy with `tls internal`;
 - the credential route: `systemd-creds --user` when it works, otherwise
-  0400 files through `LoadCredential=`, recorded as a weaker restore proof;
+  0400 files through `LoadCredential=`, recorded as a weaker restore proof.
+  The evidence also lists the fallback under `conditions` as
+  `credentials: 0400-file fallback; systemd-creds --user unavailable`: a
+  trial condition, not a failure;
 - the Open WebUI launch mode: the packaged wrapper inside `bwrap` with only
   `/opt/open-webui` shadowed, or, if the rehearsal shows the sampler cannot
   read the namespaced process, the candidate site-packages on `PYTHONPATH`
@@ -356,7 +378,8 @@ real model's verbatim answer, or provider timings. Only the trial does.
   identity or verified archive), the host provider identities, the
   knowingly-foreign providers of record, the Whisper model and audio pins, the Lemonade version, the
   pre- and post-trial model snapshots, the M4 receipt ids, the canary texts,
-  every trial value, the A-ID2 table, and the disposition.
+  every trial value, the A-ID2 table, the trial `conditions` (such as the
+  0400-file credential fallback), and the disposition.
 - The kit's public-safety check runs on it before it is written. Ports appear
   only as `loopback:<port>` tokens, loopback ranges as `loopback/<prefix>`, and
   a non-default Lemonade origin as `<lemond>`; the root path, hostnames, and
@@ -420,7 +443,24 @@ The scenario module uses only the Python standard library, so it runs with
 
 After the production install, S6 runs unprivileged through the household HTTPS
 origin with a dedicated non-admin smoke account, if the lead and owner approve
-one. Store its credentials once, typed without echo:
+one. Its credentials take one of two paths, picked by a probe that encrypts a
+value with `systemd-creds --user` and loads it the way the re-smoke does:
+
+```bash
+p=$(mktemp -d)
+printf probe | systemd-creds --user encrypt --name=probe - "$p/probe.cred" 2>/dev/null
+if systemd-run --user --pipe --wait --collect --quiet \
+     -p LoadCredentialEncrypted=probe:"$p/probe.cred" \
+     sh -c 'cat "$CREDENTIALS_DIRECTORY/probe"' 2>/dev/null | grep -qx probe; then
+  echo encrypted
+else
+  echo 0400-files
+fi
+rm -r "$p"
+```
+
+On a host where user decryption works (`encrypted`), store the credentials
+once, typed without echo:
 
 ```bash
 install -d -m 0700 "$HOME/.config/credstore.encrypted"
@@ -430,15 +470,34 @@ systemd-ask-password -n "resmoke email" \
 systemd-ask-password -n "resmoke password" \
   | systemd-creds --user encrypt --name=resmoke-password - \
       "$HOME/.config/credstore.encrypted/open-webui-resmoke.password"
+cred=(
+  -p LoadCredentialEncrypted=resmoke-email:"$HOME/.config/credstore.encrypted/open-webui-resmoke.email"
+  -p LoadCredentialEncrypted=resmoke-password:"$HOME/.config/credstore.encrypted/open-webui-resmoke.password"
+)
+```
+
+On a host where `systemd-creds --user` cannot decrypt (`0400-files`), for
+example where TPM2 unsealing fails, store them as 0400 files in a 0700
+directory the operator owns, and load them with `LoadCredential=`:
+
+```bash
+install -d -m 0700 "$HOME/.config/credstore"
+systemd-ask-password -n "resmoke email" \
+  | install -m 0400 /dev/stdin "$HOME/.config/credstore/open-webui-resmoke.email"
+systemd-ask-password -n "resmoke password" \
+  | install -m 0400 /dev/stdin "$HOME/.config/credstore/open-webui-resmoke.password"
+cred=(
+  -p LoadCredential=resmoke-email:"$HOME/.config/credstore/open-webui-resmoke.email"
+  -p LoadCredential=resmoke-password:"$HOME/.config/credstore/open-webui-resmoke.password"
+)
 ```
 
 Then run, from a checkout at the evidence commit (the commit that adds the
-trial evidence and its `PRODUCTION_EXPECTATIONS` entry):
+trial evidence and its `PRODUCTION_EXPECTATIONS` entry), in the shell that set
+`cred`:
 
 ```bash
-systemd-run --user --pipe --wait --collect \
-  -p LoadCredentialEncrypted=resmoke-email:"$HOME/.config/credstore.encrypted/open-webui-resmoke.email" \
-  -p LoadCredentialEncrypted=resmoke-password:"$HOME/.config/credstore.encrypted/open-webui-resmoke.password" \
+systemd-run --user --pipe --wait --collect "${cred[@]}" \
   /usr/bin/python3 <kit-checkout>/tools/open_webui_household_scenarios.py resmoke \
     --target production --origin https://<household-origin> \
     --lemond-url <lemond-url> \
@@ -517,5 +576,7 @@ merged values once those pull requests merge.
 runtime units under `$XDG_RUNTIME_DIR/systemd/user`. It never touches the
 host's system services, the host's current Open WebUI, Qdrant, Valkey, or
 Lemonade. With `--keep-anchor`, only the marker, `kit.json`, `inputs/`,
-`backups/`, and `ledger/` remain; if credentials used the 0400-file fallback,
-`--keep-anchor` refuses rather than leave plaintext secrets behind.
+`backups/`, and `ledger/` remain. If credentials used the 0400-file fallback,
+`--keep-anchor` refuses rather than leave plaintext secrets behind, unless
+`--keep-plaintext-credentials` keeps the test-only 0400 files in the anchor
+for the retention cleanup to delete.
