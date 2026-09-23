@@ -307,11 +307,15 @@ Notes on specific checks:
   stops the clock when the service is ready and returns the cited fact. A
   restore that misses its ceiling is recorded as the drill's failure; the
   rollback drill still runs.
-- **Before either drill restores the anchor, and before `up` revives a kept
-  root,** the kit checks every anchor member against `anchor.json` (the data and credential tree
-  digests, the RDB SHA-256, and each Qdrant snapshot's size and SHA-256). A
-  mismatch fails the drill with the live state untouched; the check runs
-  before the drill's clock starts.
+- **The anchor check.** The restore drill checks every anchor member
+  against `anchor.json` right after it writes the anchor, before its marker
+  change; the rollback drill checks it before it stops or removes anything;
+  and `up` checks it before it revives a kept root. The check covers the data
+  and credential tree digests (and refuses any symlink in either tree), the
+  RDB SHA-256, and each Qdrant snapshot's size and SHA-256. A mismatch fails
+  the drill with the live state as the backup left it, and the restore drill
+  restarts the services it stopped. The check runs outside the drill
+  clocks.
 - **The rollback drill (A-D2)** stops the slice, removes `tree/` and all state,
   re-extracts from `inputs/` after a digest check against the anchor manifest,
   reserves the epoch, and restores the tuple into fresh Qdrant 1.19.

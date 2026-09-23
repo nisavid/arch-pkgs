@@ -712,12 +712,47 @@ class PreflightTests(unittest.TestCase):
             (anchor / "dump.rdb").write_bytes(b"other")
             with self.assertRaisesRegex(sc.ScenarioFailure, "dump.rdb"):
                 kit_module.verify_anchor(kit)
-        # Both drills and a revive verify before they restore or remove anything.
+            (anchor / "dump.rdb").write_bytes(b"rdb")
+            damaged.write_bytes(damaged.read_bytes()[::-1])
+            kit_module.verify_anchor(kit)
+            # restore_tuple's copytree would follow a symlink that tree_digest skips.
+            (anchor / "credstore" / "extra").symlink_to(anchor / "dump.rdb")
+            with self.assertRaisesRegex(sc.ScenarioFailure, "credstore \\(symlink\\)"):
+                kit_module.verify_anchor(kit)
+            (anchor / "credstore" / "extra").unlink()
+            # An anchor without snapshot digests cannot prove its snapshots.
+            del record["snapshot_sha256"]
+            (anchor / "anchor.json").write_text(json.dumps(record))
+            with self.assertRaisesRegex(sc.ScenarioFailure, "snapshot"):
+                kit_module.verify_anchor(kit)
+        # Both drills and a revive verify before they change or remove anything.
         source = KIT.read_text(encoding="utf-8")
         restore = source[source.index("    def restore_drill"):source.index("    def rollback_drill")]
-        self.assertLess(restore.index("verify_anchor(kit)"), restore.index('ledger(kit, "reserve")'))
+        self.assertLess(restore.index("backup_anchor(kit, qdrant)"), restore.index("verify_anchor(kit)"))
+        self.assertLess(restore.index("verify_anchor(kit)"), restore.index('"DELETE"'))
         rollback = source[source.index("    def rollback_drill"):]
         self.assertLess(rollback.index("verify_anchor(kit)"), rollback.index("remove_tree(kit.tree)"))
+
+    def test_a_failed_anchor_check_restarts_what_the_restore_drill_stopped(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit = make_kit(directory)
+            trial = kit_module.Trial(kit, {})
+            with mock.patch.object(kit_module, "systemctl") as systemctl, \
+                    mock.patch.object(kit_module, "admin_token", return_value="t"), \
+                    mock.patch.object(kit_module, "valkey_command"), \
+                    mock.patch.object(kit_module, "valkey_password", return_value="p"), \
+                    mock.patch.object(kit_module.Kit, "qdrant"), \
+                    mock.patch.object(kit_module, "backup_anchor", return_value={}), \
+                    mock.patch.object(kit_module, "verify_anchor", side_effect=sc.ScenarioFailure("damaged")), \
+                    mock.patch.object(kit_module, "start_open_webui") as start_webui, \
+                    mock.patch.object(kit_module, "start_caddy") as start_caddy, \
+                    mock.patch.object(kit_module.Kit, "uds") as uds:
+                with self.assertRaisesRegex(sc.ScenarioFailure, "damaged"):
+                    trial.restore_drill()
+            start_webui.assert_called_once()
+            start_caddy.assert_called_once()
+            self.assertIn(mock.call("start", kit_module.UNITS["valkey"]), systemctl.call_args_list)
+            uds.return_value.request.assert_not_called()
 
     def test_keep_anchor_teardown_then_up_rerenders_every_etc_file(self):
         with tempfile.TemporaryDirectory() as directory:

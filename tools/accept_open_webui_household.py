@@ -1649,6 +1649,11 @@ def verify_anchor(kit: Kit) -> None:
 
     anchor = json.loads((kit.anchor / "anchor.json").read_text())
     problems = []
+    for tree in ("data", "credstore"):
+        # tree_digest skips symlinks, but the restore's copytree would follow
+        # them, so a symlink anywhere in either tree is a damaged anchor.
+        if (kit.anchor / tree).is_dir() and any(item.is_symlink() for item in (kit.anchor / tree).rglob("*")):
+            problems.append(f"{tree} (symlink)")
     if not (kit.anchor / "data").is_dir() or tree_digest(kit.anchor / "data") != anchor.get("data_digest"):
         problems.append("data")
     rdb = kit.anchor / "dump.rdb"
@@ -1659,8 +1664,9 @@ def verify_anchor(kit: Kit) -> None:
     for name in COLLECTIONS:
         snapshot = kit.anchor / "qdrant" / f"{name}.snapshot"
         expected = (anchor.get("snapshot_sha256") or {}).get(name)
-        if (not snapshot.is_file() or snapshot.stat().st_size != (anchor.get("snapshot_bytes") or {}).get(name)
-                or (expected is not None and sha256_file(snapshot) != expected)):
+        if (expected is None or not snapshot.is_file()
+                or snapshot.stat().st_size != (anchor.get("snapshot_bytes") or {}).get(name)
+                or sha256_file(snapshot) != expected):
             problems.append(f"qdrant/{name}.snapshot")
     if problems:
         raise sc.ScenarioFailure(f"the anchor does not match anchor.json ({', '.join(problems)}); live state is unchanged")
@@ -2245,6 +2251,15 @@ class Trial:
         valkey_command(PORTS["valkey"], VALKEY_USER, valkey_password(kit), "SET", "owui-acc:sentinel", sentinel)
         qdrant = kit.qdrant()
         self.anchor = backup_anchor(kit, qdrant)
+        try:
+            # Before the marker change, so a damaged anchor stops the drill
+            # with the live state as the backup left it.
+            verify_anchor(kit)
+        except sc.ScenarioFailure:
+            systemctl("start", UNITS["valkey"])
+            start_open_webui(kit)
+            start_caddy(kit)
+            raise
         systemctl("start", UNITS["valkey"])
         start_open_webui(kit)
         token = admin_token(kit)
@@ -2259,7 +2274,6 @@ class Trial:
                        secrets.token_hex(16))
         kit.store_credential(MARKER_CREDENTIAL, secrets.token_hex(16))
         pre_restore = marker_divergence(kit)
-        verify_anchor(kit)
         snapshot_resources(kit, "before restore")
         epoch = ledger(kit, "reserve")
         started = time.monotonic()
