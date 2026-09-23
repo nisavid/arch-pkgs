@@ -385,14 +385,36 @@ def require_models_ready(models: Any, health: Any, model_ids: Sequence[str]) -> 
     served but not resident is a precondition failure, not something to fix.
     """
 
-    served = {bare_model_id(item) for item in served_model_ids(models)}
-    missing = [item for item in model_ids if bare_model_id(item) not in served]
+    served = served_model_ids(models)
+    loaded = loaded_model_names(health)
+    missing: list[str] = []
+    unloaded: list[str] = []
+    for wanted in model_ids:
+        if unambiguous_form(served, wanted, "served") is None:
+            missing.append(wanted)
+        elif unambiguous_form(loaded, wanted, "loaded") is None:
+            unloaded.append(wanted)
     if missing:
         raise Blocked(f"NEEDS LEAD: Lemonade does not serve {', '.join(missing)}")
-    loaded = {bare_model_id(item) for item in loaded_model_names(health)}
-    unloaded = [item for item in model_ids if bare_model_id(item) not in loaded]
     if unloaded:
         raise Blocked(f"NEEDS LEAD: Lemonade has not loaded {', '.join(unloaded)}")
+
+
+def unambiguous_form(ids: set[str], wanted: str, what: str) -> str | None:
+    """The one id in ``ids`` that names ``wanted``, exact or ``user.``-equivalent.
+
+    The prefix equivalence holds only while one form is present: when both
+    ``user.X`` and a bare ``X`` appear they are distinct entries, and the pin
+    cannot say which one it means.
+    """
+
+    forms = {item for item in ids if bare_model_id(item) == bare_model_id(wanted)}
+    if len(forms) > 1:
+        bare = bare_model_id(wanted)
+        raise Blocked(
+            f"NEEDS LEAD: both user.{bare} and {bare} are {what}; the pinned id is ambiguous"
+        )
+    return next(iter(forms), None)
 
 
 def validate_rerank_results(results: Any, document_count: int) -> list[float]:

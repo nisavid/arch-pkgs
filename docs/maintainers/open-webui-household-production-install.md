@@ -404,8 +404,8 @@ before P3, because P3.4 writes `<household-origin>` before the first start:
   Tailscale Service name. Variant B adds a path to the host's existing HTTPS
   handler.
 - **OWNER DECISION PENDING: whether the package's Caddy stays in the path.**
-  If it stays, install a site block that listens on loopback only and proxies
-  to the socket, enable `caddy.service`, and use Caddy's listener as the Serve
+  If it stays, run [P5.1 If Caddy stays](#p51-if-caddy-stays-a-loopback-site-block)
+  before the variant, and use `http://127.0.0.1:<caddy-port>` as the Serve
   target in place of `unix:/run/open-webui/open-webui.sock`. If it does not,
   `caddy.service` stays disabled.
 
@@ -416,6 +416,32 @@ The variant sets `<household-origin>`, which P3.4 writes as `WEBUI_URL`:
 | A | `https://<name>.<tailnet-domain>` | the same |
 | B | `https://<host-name>.<tailnet-domain>/<path>` | `https://<host-name>.<tailnet-domain>` |
 
+### P5.1 If Caddy stays: a loopback site block
+
+Only when the owner kept Caddy in the path in P5.0. `<caddy-port>` is a free
+loopback port the owner picks. The `caddy` package is installed explicitly and
+stays installed either way.
+
+```bash
+sudo install -D -m 0644 /dev/stdin /etc/caddy/conf.d/open-webui.caddy <<'EOF'
+http://127.0.0.1:<caddy-port> {
+	bind 127.0.0.1
+	reverse_proxy unix//run/open-webui/open-webui.sock
+}
+EOF
+grep -n 'import /etc/caddy/conf.d' /etc/caddy/Caddyfile
+sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+sudo systemctl enable --now caddy.service
+```
+
+The `grep` must print the `import` line, and `caddy validate` must succeed,
+before `caddy.service` is enabled. Then run the chosen variant with
+`http://127.0.0.1:<caddy-port>` as the target.
+
+- Rollback:
+  `sudo rm /etc/caddy/conf.d/open-webui.caddy && sudo systemctl disable --now caddy.service`.
+  Never remove the `caddy` package.
+
 ### P5.1 Variant A: a dedicated Tailscale Service
 
 Owner prerequisites, in the Tailscale admin console: define the service
@@ -423,17 +449,20 @@ Owner prerequisites, in the Tailscale admin console: define the service
 host as a proxy for the service after the command below advertises it.
 
 ```bash
+sudo tailscale serve status --json   # record the current handlers first
 sudo tailscale serve --bg --service=svc:<name> --https=443 unix:/run/open-webui/open-webui.sock
-sudo tailscale serve status
+sudo tailscale serve status --json
 ```
 
-`tailscale serve status` must list `svc:<name>` with HTTPS on 443 proxying to
-`unix:/run/open-webui/open-webui.sock`, and nothing else must change.
+The second `status --json` must equal the recorded one plus a `svc:<name>`
+handler with HTTPS on 443 proxying to `unix:/run/open-webui/open-webui.sock`.
 
-- Rollback:
-  `sudo tailscale serve --service=svc:<name> --https=443 unix:/run/open-webui/open-webui.sock off`,
-  then `sudo tailscale serve status` shows no `svc:<name>` handler. Remove the
-  service definition in the admin console if it is no longer wanted.
+- Rollback: `sudo tailscale serve clear svc:<name>`, which removes all config
+  for the service, so the host no longer advertises itself as its proxy. The
+  form `sudo tailscale serve --service=svc:<name> --https=443 unix:/run/open-webui/open-webui.sock off`
+  is equivalent. Then `sudo tailscale serve status --json` must match the
+  recorded baseline. Remove the service definition in the admin console if it
+  is no longer wanted.
 
 ### P5.1 Variant B: a path on the host's existing HTTPS handler
 
@@ -468,7 +497,9 @@ post-verification therefore also loads the UI assets and the WebSocket under
     succeeds;
   - an authenticated WebSocket upgrade returns 101;
   - `ss -ltnH 'sport = :8080'` prints nothing, and no Open WebUI TCP listener
-    exists.
+    exists;
+  - if Caddy stays, `ss -ltnH 'sport = :<caddy-port>'` shows only
+    `127.0.0.1:<caddy-port>` as the local address.
 
 ### P5.3 The smoke account
 
@@ -573,7 +604,10 @@ The acceptance trial values are the baseline.
 - **After P5, to the anchor:**
 
   ```bash
-  # first close the route with the chosen P5 variant's rollback
+  # first close the route with the chosen P5 variant's rollback, and if
+  # Caddy stays, with the P5.1 Caddy rollback:
+  #   sudo rm /etc/caddy/conf.d/open-webui.caddy && sudo systemctl disable --now caddy.service
+  # (never remove the caddy package)
   sudo systemctl stop open-webui.service
   sudo /usr/lib/open-webui/open-webui-session-epoch-ledger reserve
   sudo sh -c 'cd "$1" && sha256sum -c SHA256SUMS' sh <anchor>
@@ -585,7 +619,8 @@ The acceptance trial values are the baseline.
   five Qdrant snapshots as the Qdrant runbook describes. Start Valkey and Open
   WebUI, check SQLite `quick_check`, the digests, the collection shapes, that
   a pre-anchor session is rejected, and that a fresh login works; then
-  reopen the route with the chosen P5 variant.
+  reopen the route with the chosen P5 variant (and the P5.1 Caddy site block,
+  if Caddy stays).
 
   - HAND-BACK: `HAND-BACK: open-webui rollback PASSED to anchor <anchor-id>`
 

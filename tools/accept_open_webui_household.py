@@ -2984,6 +2984,10 @@ def kit_from_args(args: argparse.Namespace) -> Kit:
     lemond_url = args.lemond_url or staged.get("lemond_url") or (STUB_URL if args.provider == "stub" else sc.DEFAULT_LEMOND_URL)
     if args.provider == "stub" and lemond_url != STUB_URL:
         raise ValueError(f"the rehearsal provider is the stub at {STUB_URL}")
+    for flag, field in (("--chat-model", "chat_model"), ("--whisper-model", "whisper_model")):
+        given, pinned = getattr(args, field), staged.get(field)
+        if given and pinned and given != pinned:
+            raise ValueError(f"{flag} differs from the staged {pinned}; tear down and restage")
     chat_model = args.chat_model or staged.get("chat_model") or (
         "household-chat-stub-v1" if args.provider == "stub" else sc.DEFAULT_CHAT_MODEL
     )
