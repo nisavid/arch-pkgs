@@ -331,18 +331,23 @@ def root_refusals(root: Path, use_percent: int, free_bytes: int, used_bytes: int
     return refusals
 
 
-def lemond_restarted(pre: Any, post: Any) -> bool:
-    """True when Lemonade's health shows it restarted between two snapshots."""
+def lemond_restarted(pre: Any, post: Any) -> bool | None:
+    """Whether Lemonade's health shows a restart between two snapshots.
+
+    None means the health documents carry no start time or uptime, so a
+    restart cannot be detected from them; the evidence records that as a
+    condition instead of claiming no restart.
+    """
 
     if not isinstance(pre, dict) or not isinstance(post, dict):
-        return False
+        return None
     for key in ("start_time", "started_at"):
         if key in pre and key in post:
             return pre[key] != post[key]
     before, after = pre.get("uptime"), post.get("uptime")
     if isinstance(before, (int, float)) and isinstance(after, (int, float)):
         return after < before
-    return False
+    return None
 
 
 def lemond_summary(health: Any) -> dict[str, Any]:
@@ -860,6 +865,8 @@ class Kit:
     candidate_store: Path
     runtime_dir: Path
     slice: str = SLICE
+    # Wall-clock time of this process's latest Open WebUI (re)start.
+    open_webui_started_at: float | None = None
 
     # Layout -----------------------------------------------------------
     def path(self, *parts: str) -> Path:
@@ -1325,8 +1332,9 @@ def a_id2_rows(kit: Kit) -> list[dict[str, Any]]:
         ("session-epoch ledger", "/var/lib/open-webui-session-epoch/current (root)",
          f"{kit.ledger} through unshare -r", "the root ledger is exercised only in the production install"),
         ("socket", "/run/open-webui/open-webui.sock", str(kit.socket_path), "user runtime directory"),
-        ("route", "production Caddy site block", f"Caddy on loopback:{PORTS['caddy']}, tls internal",
-         "acceptance route; no trust-store install"),
+        ("route", "open-webui-tailnet.service: Tailscale Serve to the socket (0.11.0-6; owner-run in production)",
+         f"Caddy on loopback:{PORTS['caddy']}, tls internal",
+         "acceptance route; no trust-store install; the tailnet sidecar is not deployed here"),
         ("credentials", "systemd-creds (system)", route,
          "user credentials" if route == "systemd-creds" else "0400 files: a weaker restore proof"),
         ("launch", "/usr/bin/open-webui", "packaged wrapper inside bwrap; only /opt/open-webui shadowed",
@@ -1492,6 +1500,7 @@ def start_open_webui(kit: Kit, *, restart: bool = False, timeout: float = 180.0)
     if not unit_active(UNITS["open-webui"]) and kit.socket_path.exists():
         kit.socket_path.unlink()
     started = time.monotonic()
+    kit.open_webui_started_at = time.time()
     systemctl("restart" if restart else "start", UNITS["open-webui"])
     wait_open_webui(kit, timeout)
     return time.monotonic() - started
@@ -2289,6 +2298,15 @@ class Trial:
         return values
 
     # The run -------------------------------------------------------------------
+    def open_webui_since(self) -> float:
+        """Start of the running Open WebUI's journal: the latest start in this
+        trial, or the first start that up recorded."""
+
+        kit = self.kit
+        if kit.open_webui_started_at is not None:
+            return kit.open_webui_started_at
+        return float(json.loads((kit.raw / "first-start.json").read_text())["started_at"])
+
     def prepare_scenarios(self) -> sc.Context:
         """Index the handbook the drills keep as their marker, and bind the scenario context."""
 
@@ -2305,7 +2323,7 @@ class Trial:
             settings=self.settings, chat_model=self.chat_id(),
             audio=kit.path("inputs", "jfk.flac"), whisper_model=kit.whisper_model,
             stored_chunk=lambda: qdrant.stored_chunk(self.seed_file),
-            journal=lambda: journal(UNITS["open-webui"]),
+            journal=lambda: journal(UNITS["open-webui"], since=self.open_webui_since()),
         )
 
     def run(self) -> int:
@@ -2465,6 +2483,11 @@ def cache_inventory(kit: Kit) -> list[str]:
 CREDENTIAL_FALLBACK_CONDITION = "credentials: 0400-file fallback; systemd-creds --user unavailable"
 
 
+LEMONADE_RESTART_CONDITION = (
+    "lemonade restart: not detectable from /api/v1/health; the operator's service start times are the record"
+)
+
+
 def trial_conditions(kit: Kit) -> list[str]:
     """Host conditions the trial ran under; recorded, never a failure."""
 
@@ -2480,7 +2503,7 @@ def private_credstore(path: Path) -> None:
             os.chmod(item, 0o400)
 
 
-def build_evidence(kit: Kit, trial: Trial, exit_code: int, lemond_restarted_: bool) -> dict[str, Any]:
+def build_evidence(kit: Kit, trial: Trial, exit_code: int, lemond_restarted_: bool | None) -> dict[str, Any]:
     disposition = (
         "void: Lemonade restarted during the trial"
         if lemond_restarted_
@@ -2510,7 +2533,7 @@ def build_evidence(kit: Kit, trial: Trial, exit_code: int, lemond_restarted_: bo
         "canonical_citation": sc.CANONICAL_CITATION,
         "limits": dict(LIMITS),
         "credential_route": kit.credential_route(),
-        "conditions": trial_conditions(kit),
+        "conditions": trial_conditions(kit) + ([] if lemond_restarted_ is not None else [LEMONADE_RESTART_CONDITION]),
         "production_expectation": production_expectation_for(kit),
         "steps": [dataclasses.asdict(step) for step in trial.steps],
     }
@@ -2852,10 +2875,14 @@ def cmd_up(kit: Kit, args: argparse.Namespace) -> int:
         kit.bootstrap_dropin.parent.mkdir(parents=True, exist_ok=True)
         kit.bootstrap_dropin.write_text(bootstrap_dropin(kit))
         systemctl("daemon-reload")
+        first = kit.raw / "first-start.json"
         started_at = time.time()
         seconds = start_open_webui(kit, timeout=900.0)
-        (kit.raw / "first-start.json").write_text(json.dumps(
-            {"started_at": started_at, "ready_s": round(seconds, 3), "qdrant_fresh": fresh}, sort_keys=True))
+        # Only the first start is the A-R2 record; a repeated up before the
+        # trial (after a down or a refusal) keeps it, with its Qdrant state.
+        if not first.is_file():
+            first.write_text(json.dumps(
+                {"started_at": started_at, "ready_s": round(seconds, 3), "qdrant_fresh": fresh}, sort_keys=True))
         timing = "" if kit.rehearsal else f" (first start {seconds:.1f} s)"
         print(f"Open WebUI is up with the route closed{timing}; run trial next")
     else:
@@ -2898,6 +2925,14 @@ def cmd_trial(kit: Kit, args: argparse.Namespace) -> int:
         raise sc.Blocked("run up on a freshly staged root first")
     if not kit.rehearsal and not args.lemonade_receipt:
         raise sc.Blocked("NEEDS LEAD: pass the Lemonade M4 receipt ids with --lemonade-receipt")
+    if kit.manifest_path is None:
+        raise sc.Blocked("--manifest is required: pass the manifest this root was staged with")
+    try:
+        manifest = load_manifest(kit.manifest_path)
+    except (OSError, ValueError) as error:
+        raise sc.Blocked(f"manifest: {error}") from error
+    if manifest["sha256"] != state.get("manifest", {}).get("sha256"):
+        raise sc.Blocked("the manifest differs from the one staged")
     if not unit_active(UNITS["open-webui"]):
         raise sc.Blocked("the acceptance environment is not up")
     lemond_pre = require_lemond_ready(kit)
@@ -2945,6 +2980,11 @@ def cmd_teardown(kit: Kit, args: argparse.Namespace) -> int:
                          "pass --keep-plaintext-credentials to keep the test-only 0400 files")
     if keep and not kit.anchor.is_dir():
         raise sc.Blocked("there is no anchor to keep")
+    private = kit.raw / "trial-evidence.json"
+    public = sorted(kit.path("evidence", "public").glob("*.json")) if kit.path("evidence", "public").is_dir() else []
+    if state.get("mode") == "record" and private.is_file() and not public:
+        raise sc.Blocked(f"the trial's evidence was not public-safe and {private} is its only copy; "
+                         "move it out of the root before teardown")
     systemctl("stop", kit.slice, check=False)
     if kit.unit_dir.is_dir():
         for item in kit.unit_dir.glob("owui-acc-*"):
@@ -2953,7 +2993,6 @@ def cmd_teardown(kit: Kit, args: argparse.Namespace) -> int:
     systemctl("reset-failed", "owui-acc-*", check=False)
     if kit.socket_path.parent.is_dir():
         remove_tree(kit.socket_path.parent)
-    public = sorted(kit.path("evidence", "public").glob("*.json")) if kit.path("evidence", "public").is_dir() else []
     if public and state.get("mode") == "record":
         args.evidence_out.mkdir(parents=True, exist_ok=True)
         for item in public:
@@ -3131,6 +3170,9 @@ def main(argv: list[str] | None = None) -> int:
         kit = kit_from_args(args)
     except ValueError as error:
         top.error(str(error))
+    except sc.Blocked as error:
+        print(f"accept-open-webui-household: BLOCKED {error}", file=sys.stderr)
+        return sc.EXIT_PRECONDITION
     try:
         return COMMANDS[args.command](kit, args)
     except sc.Blocked as error:

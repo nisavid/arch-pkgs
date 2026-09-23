@@ -542,6 +542,57 @@ class PreflightTests(unittest.TestCase):
             self.assertEqual(code, sc.EXIT_PRECONDITION)
         self.assertEqual(args.lemond_url, "http://127.0.0.1:13400")
 
+    def test_the_trial_checks_the_manifest_before_it_spends_the_one_trial(self):
+        with tempfile.TemporaryDirectory() as directory:
+            staged = write_manifest(directory, six_archives(f"{directory}/inputs"))
+            kit = make_kit(directory)
+            (kit.root / kit_module.MARKER).write_text("marker\n")
+            kit.raw.mkdir(parents=True)
+            (kit.raw / "first-start.json").write_text(json.dumps({"started_at": 1.0}))
+            kit.save_state(mode="record", manifest={"sha256": kit_module.load_manifest(staged)["sha256"]})
+            other = Path(directory) / "other"
+            other.mkdir()
+            different = write_manifest(other, six_archives(f"{directory}/other-inputs"), note="other")
+            args = kit_module.parser().parse_args(["trial", "--lemonade-receipt", "r"])
+            for manifest, pattern in ((None, "--manifest is required"), (different, "differs from the one staged")):
+                kit.manifest_path = manifest
+                with mock.patch.object(kit_module, "unit_active", return_value=True), \
+                        mock.patch.object(kit_module, "require_lemond_ready") as ready, \
+                        self.assertRaisesRegex(sc.Blocked, pattern):
+                    kit_module.cmd_trial(kit, args)
+                ready.assert_not_called()
+                self.assertNotIn("trial_started", kit.state())
+
+    def test_a_repeated_up_keeps_the_first_start_record(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit = make_kit(directory)
+            (kit.root / kit_module.MARKER).write_text("marker\n")
+            kit.save_state(mode="record")
+            kit.raw.mkdir(parents=True)
+            storage = kit.path("state", "qdrant", "storage")
+            storage.mkdir(parents=True)
+            qdrant = mock.Mock()
+            times = iter([1.0, 2.0, 3.0, 4.0])
+            with mock.patch.object(kit_module, "install_units"), mock.patch.object(kit_module, "systemctl"), \
+                    mock.patch.object(kit_module, "start_qdrant", return_value=qdrant), \
+                    mock.patch.object(kit_module, "start_open_webui", return_value=7.5), \
+                    mock.patch.object(kit_module, "snapshot_resources"), \
+                    mock.patch.object(kit_module.time, "time", side_effect=lambda: next(times)), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                kit_module.cmd_up(kit, kit_module.parser().parse_args(["up"]))
+                first = (kit.raw / "first-start.json").read_text()
+                (storage / "collection").mkdir()
+                kit_module.cmd_up(kit, kit_module.parser().parse_args(["up"]))
+            self.assertEqual((kit.raw / "first-start.json").read_text(), first)
+            self.assertTrue(json.loads(first)["qdrant_fresh"])
+            qdrant.create_collections.assert_called_once()
+
+    def test_an_unset_runtime_dir_is_a_precondition(self):
+        with mock.patch.dict(os.environ, {}, clear=True), contextlib.redirect_stderr(io.StringIO()) as error:
+            code = kit_module.main(["preflight", "--root", "/nonexistent-owui-acc-root"])
+        self.assertEqual(code, sc.EXIT_PRECONDITION)
+        self.assertIn("XDG_RUNTIME_DIR", error.getvalue())
+
     def test_cli_preflight_exits_75_on_a_refusal(self):
         with tempfile.TemporaryDirectory() as directory:
             kit = make_kit(directory)
@@ -834,7 +885,10 @@ class LemonadeSafetyTests(unittest.TestCase):
         self.assertFalse(restarted({"start_time": "a"}, {"start_time": "a"}))
         self.assertTrue(restarted({"uptime": 900}, {"uptime": 3}))
         self.assertFalse(restarted({"uptime": 900}, {"uptime": 1200}))
-        self.assertFalse(restarted(None, {"uptime": 1}))
+        self.assertIsNone(restarted(None, {"uptime": 1}))
+        # A health document with no start time or uptime cannot show a
+        # restart, so the result is unknown rather than "no restart".
+        self.assertIsNone(restarted({"status": "ok"}, {"status": "ok"}))
 
 
 class PeerTests(unittest.TestCase):
@@ -871,6 +925,40 @@ class PeerTests(unittest.TestCase):
 
 
 class CredentialTests(unittest.TestCase):
+    def test_ported_qdrant_constants_match_the_merged_cutover_route(self):
+        script = (REPO_ROOT / "tools" / "qdrant_production_cutover.zsh").read_text(encoding="utf-8")
+
+        def compact(value):
+            return json.dumps(value, separators=(",", ":"))
+
+        def found(pattern, flags=re.MULTILINE):
+            match = re.search(pattern, script, flags)
+            self.assertIsNotNone(match, pattern)
+            assert match is not None
+            return match.group(1)
+
+        self.assertIn(f"local body='{compact(dict(kit_module.COLLECTION_BODY))}'", script)
+        self.assertIn(f"'{compact(kit_module.PAYLOAD_INDEXES[0])}'", script)
+        keyword = compact(kit_module.PAYLOAD_INDEXES[1]["field_schema"]).replace('"', '\\"')
+        self.assertIn(f'\\"field_schema\\":{keyword}', script)
+        fields = [index["field_name"] for index in kit_module.PAYLOAD_INDEXES[1:]]
+        self.assertIn(f"for field in {' '.join(fields)}; do", script)
+        self.assertEqual(kit_module.PAYLOAD_INDEXES[1]["field_schema"], kit_module.PAYLOAD_INDEXES[2]["field_schema"])
+        prefix = found(r"^collection_prefix=(\S+)$")
+        suffixes = found(r"^collection_suffixes=\((.*)\)$").split()
+        self.assertEqual(kit_module.COLLECTIONS, tuple(f"{prefix}_{suffix}" for suffix in suffixes))
+        # The route's own mint, run on a synthetic key, yields the kit's token byte for byte.
+        mint = found(r"^mint_jwt\(\) \{.*?<<'PY'\n(.*?)^PY$", re.MULTILINE | re.DOTALL)
+        key = "0123456789abcdef" * 4
+        with tempfile.TemporaryDirectory() as directory:
+            env = Path(directory) / "qdrant.env"
+            env.write_text(f"QDRANT__SERVICE__API_KEY={key}\n")
+            token = subprocess.run(
+                [sys.executable, "-", str(env), "prw", "0", prefix, *suffixes],
+                input=mint, capture_output=True, text=True, check=True,
+            ).stdout
+        self.assertEqual(token, kit_module.mint_jwt(key, "prw"))
+
     def test_runtime_jwt_is_prw_on_every_collection(self):
         token = kit_module.mint_jwt("a" * 64, "prw")
         claims = kit_module.jwt_claims(token)
@@ -1043,6 +1131,28 @@ class EvidenceTests(unittest.TestCase):
             self.assertEqual(evidence["disposition"], "accepted")
             v1.assert_public_safe(evidence)
 
+    def test_an_undetectable_lemonade_restart_is_a_condition_not_a_pass(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit, trial = self.trial(directory, rehearsal=False)
+            evidence = kit_module.build_evidence(kit, trial, 0, None)
+            self.assertIsNone(evidence["lemonade"]["restarted"])
+            self.assertEqual(evidence["conditions"], [kit_module.LEMONADE_RESTART_CONDITION])
+            self.assertEqual(evidence["disposition"], "accepted")
+            v1.assert_public_safe(evidence)
+
+    def test_the_stt_journal_starts_at_the_latest_open_webui_start(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit, trial = self.trial(directory, rehearsal=False)
+            kit.raw.mkdir(parents=True, exist_ok=True)
+            (kit.raw / "first-start.json").write_text(json.dumps({"started_at": 100.0}))
+            self.assertEqual(trial.open_webui_since(), 100.0)
+            with mock.patch.object(kit_module, "require_lemond_ready"), \
+                    mock.patch.object(kit_module, "systemctl"), mock.patch.object(kit_module, "wait_open_webui"), \
+                    mock.patch.object(kit_module, "unit_active", return_value=True), \
+                    mock.patch.object(kit_module.time, "time", return_value=250.0):
+                kit_module.start_open_webui(kit, restart=True)
+            self.assertEqual(trial.open_webui_since(), 250.0)
+
     def test_record_mode_writes_evidence_and_rehearsal_writes_none(self):
         with tempfile.TemporaryDirectory() as directory:
             kit, trial = self.trial(directory, rehearsal=False)
@@ -1085,6 +1195,16 @@ class EvidenceTests(unittest.TestCase):
             self.assertEqual(private.stat().st_mode & 0o777, 0o600)
             self.assertEqual(len(json.loads(private.read_text())["steps"]), len(kit_module.TRIAL_STEPS))
             self.assertIn(str(private), errors.getvalue())
+            # Teardown never deletes the only copy of the one trial's values.
+            (kit.root / kit_module.MARKER).write_text("marker\n")
+            (kit.root / "backups" / "anchor").mkdir(parents=True)
+            for flags in ([], ["--keep-anchor"]):
+                args = kit_module.parser().parse_args(["teardown", *flags, "--evidence-out", f"{directory}/out"])
+                with mock.patch.object(kit_module, "systemctl") as systemctl, \
+                        self.assertRaisesRegex(sc.Blocked, "only copy"):
+                    kit_module.cmd_teardown(kit, args)
+                systemctl.assert_not_called()
+                self.assertTrue(private.is_file())
 
     def test_a_restore_that_misses_its_ceiling_still_runs_the_rollback(self):
         with tempfile.TemporaryDirectory() as directory:
