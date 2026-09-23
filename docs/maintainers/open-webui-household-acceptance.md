@@ -56,18 +56,21 @@ rehearsal may run earlier.
    its tree-id equality check or by rebuilding. The kit reads that manifest
    (`--manifest`); it never reads a directory listing. Because only one trial
    set is allowed, running it on non-record bytes would waste it.
-   The current pre-merge candidate is `open-webui-0.11.0-5-x86_64.pkg.tar.zst`
-   (240005632 bytes, SHA-256
-   `258fbec247ce17c670256efd8f9cadeda542142233105b04261879fe0dc477fa`), built
-   from `dd9a307` and kept in the candidate store's `open-webui/dd9a307/`
-   directory. Its `python-rapidocr` archive stays the `f25fd53` build, because
-   that package tree is unchanged. The store also keeps superseded archives
-   under the same names, so the kit picks the store file whose size and
-   SHA-256 match the manifest record, never the first name match.
+   The candidate of record for the Open WebUI pair, which the manifest must
+   carry, is:
+
+   | Archive | Size (bytes) | SHA-256 |
+   | --- | --- | --- |
+   | `open-webui-0.11.0-5-x86_64.pkg.tar.zst` | 240005573 | `bd273be8c33287f7ac3c44592c91005034da8ada886fbd8a480f3dbf7a7e2fc8` |
+   | `python-rapidocr-3.9.2-1-any.pkg.tar.zst` | 27198440 | `0e70fb599a535f9bb1c0c0b3a2f88abe9993f7632eba8e2c618826c7f01bf99b` |
+
+   The candidate store also keeps superseded archives under the same names
+   (an earlier `open-webui-0.11.0-5` build differs in size and digest), so
+   the kit picks the store file whose size and SHA-256 match the manifest
+   record, never the first name match.
 3. **The build root.** A user-owned directory on a filesystem below 80% use.
-   The preferred root is `/srv/build/arch-pkgs-owui-acceptance`, once the
-   owner has created `/srv/build`. Any other filesystem needs lead or owner
-   approval. Preflight refuses `/home`, the shared `/tmp` volume, any root at
+   The preferred root is `/srv/build/arch-pkgs-owui-acceptance`. Any other
+   filesystem needs lead or owner approval. Preflight refuses `/home`, the shared `/tmp` volume, any root at
    80% use or more, and any root whose projected footprint (about 6 GB
    apparent at peak) does not fit. Qdrant's packaged 85% disk quota is never
    lowered; a quota trip stops the trial with no override.
