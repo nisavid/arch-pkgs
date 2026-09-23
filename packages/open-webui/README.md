@@ -174,11 +174,11 @@ package.
 The unit denies the daemon the host addresses `127.0.0.1` and `::1`, so
 tailnet peers reach only what the node itself serves.
 [Denying `127.0.0.1` and `::1`](#denying-127001-and-1) explains why and what
-it rules out, a DNS caveat, how to clear the stall a port scan can cause, a
-tailnet policy that complements the deny, the check to repeat after each
-`tailscale` upgrade, and the options for a later custom domain. Do not
-advertise routes or an exit node from this node; those would forward traffic
-to the host's network, which the deny does not cover.
+it rules out, a DNS caveat, how to clear the stall a port scan can cause, the
+tailnet policy the route keeps and a stronger one it does not apply now, the
+check to repeat after each `tailscale` upgrade, and the options for a later
+custom domain. Do not advertise routes or an exit node from this node; those
+would forward traffic to the host's network, which the deny does not cover.
 
 These are production cutover steps. Run them only under the accepted
 deployment task, never directly from this package directory (see
@@ -338,14 +338,17 @@ or more addresses, and a peer with both an IPv4 and an IPv6 tailnet address
 already has two. If the serve route stops answering after such a scan,
 restart `open-webui-tailnet.service`; that clears the slots.
 
-A tailnet policy that admits peers to this node only on `tcp:443` is the
-stronger control. The policy drops all other traffic before `tailscaled`
-forwards it, so that traffic neither reaches the deny nor holds a slot. If you
-narrow the policy, do it only after step 2's check has passed. Tailscale
-policy rules only grant access, so a new `tcp:443` rule changes nothing by
-itself: the default allow-all rule, and every other rule that covers this
-node, must stop covering it. Because a rule cannot exclude one node, narrowing
-the allow-all rule changes access across the tailnet; grant other devices the
+The tailnet keeps its default allow-all policy; the owner chose not to narrow
+it for this node. The deny is therefore the control, and the stall above is an
+accepted risk that a restart clears. A tailnet policy that admits peers to
+this node only on `tcp:443` would be the stronger control, and it remains an
+option for later. It drops all other traffic before `tailscaled` forwards it,
+so that traffic neither reaches the deny nor holds a slot. If the policy is
+ever narrowed, do it only after step 2's check has passed. Tailscale policy
+rules only grant access, so a new `tcp:443` rule changes nothing by itself:
+the default allow-all rule, and every other rule that covers this node, must
+stop covering it. Because a rule cannot exclude one node, narrowing the
+allow-all rule changes access across the tailnet; grant other devices the
 access they had through it again.
 
 The forwarding code ships in the `tailscale` package, and an upgrade does not
