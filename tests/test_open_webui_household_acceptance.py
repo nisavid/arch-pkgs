@@ -683,6 +683,42 @@ class PreflightTests(unittest.TestCase):
                 with self.assertRaises(sc.Blocked):
                     kit_module.require_lemond_ready(kit)
 
+    def test_a_damaged_anchor_stops_the_restore_before_live_state_changes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit = make_kit(directory)
+            anchor = kit.anchor
+            (anchor / "data").mkdir(parents=True)
+            (anchor / "data" / "webui.db").write_bytes(b"db")
+            (anchor / "credstore").mkdir()
+            (anchor / "credstore" / "webui-secret-key").write_bytes(b"k")
+            (anchor / "dump.rdb").write_bytes(b"rdb")
+            (anchor / "qdrant").mkdir()
+            for name in kit_module.COLLECTIONS:
+                (anchor / "qdrant" / f"{name}.snapshot").write_bytes(name.encode())
+            record = {
+                "data_digest": kit_module.tree_digest(anchor / "data"),
+                "rdb_sha256": kit_module.sha256_file(anchor / "dump.rdb"),
+                "credstore_digest": kit_module.tree_digest(anchor / "credstore"),
+                "snapshot_bytes": {name: len(name.encode()) for name in kit_module.COLLECTIONS},
+                "snapshot_sha256": {name: kit_module.sha256_file(anchor / "qdrant" / f"{name}.snapshot")
+                                    for name in kit_module.COLLECTIONS},
+            }
+            (anchor / "anchor.json").write_text(json.dumps(record))
+            kit_module.verify_anchor(kit)
+            damaged = anchor / "qdrant" / f"{kit_module.COLLECTIONS[2]}.snapshot"
+            damaged.write_bytes(damaged.read_bytes()[::-1])
+            with self.assertRaisesRegex(sc.ScenarioFailure, "live state is unchanged"):
+                kit_module.verify_anchor(kit)
+            (anchor / "dump.rdb").write_bytes(b"other")
+            with self.assertRaisesRegex(sc.ScenarioFailure, "dump.rdb"):
+                kit_module.verify_anchor(kit)
+        # Both drills and a revive verify before they restore or remove anything.
+        source = KIT.read_text(encoding="utf-8")
+        restore = source[source.index("    def restore_drill"):source.index("    def rollback_drill")]
+        self.assertLess(restore.index("verify_anchor(kit)"), restore.index('ledger(kit, "reserve")'))
+        rollback = source[source.index("    def rollback_drill"):]
+        self.assertLess(rollback.index("verify_anchor(kit)"), rollback.index("remove_tree(kit.tree)"))
+
     def test_keep_anchor_teardown_then_up_rerenders_every_etc_file(self):
         with tempfile.TemporaryDirectory() as directory:
             kit = make_kit(directory)
@@ -949,8 +985,8 @@ class ProductionDocTests(unittest.TestCase):
                 self.assertIn(prop, read)
 
     def test_the_production_qdrant_loops_name_the_kit_collections(self):
-        loops = re.findall(r"for s in ([^;]+); do\n\s*c=([\w-]+)_\$s", self.doc)
-        self.assertEqual(len(loops), 2)
+        loops = re.findall(r"for s in ([^;]+); do\n\s*(?:c=|test -s \"\$1/qdrant/)([\w-]+)_\$s", self.doc)
+        self.assertEqual(len(loops), 3)
         for suffixes, prefix in loops:
             self.assertEqual(tuple(f"{prefix}_{suffix}" for suffix in suffixes.split()), kit_module.COLLECTIONS)
 
@@ -1137,6 +1173,27 @@ class ResourceTests(unittest.TestCase):
         self.assertFalse(gates["passes"])
         self.assertEqual(gates["unplanned_restarts"][unit], 1)
 
+    def test_the_oom_gate_needs_an_observation_for_every_running_member(self):
+        unit, relay, kit_slice = "owui-acc-open-webui.service", "owui-acc-relay.service", "builds-owui_acc.slice"
+
+        def record(entry, relay_entry, slice_oom=0):
+            return {"units": {unit: entry, relay: relay_entry},
+                    "slice": {"unit": kit_slice, "state": "active", "oom_kill": slice_oom}}
+
+        running = {"state": "active", "oom_kill": 0, "NRestarts": 0}
+        # A stopped unit has no cgroup to read; the slice's hierarchical count covers it.
+        stopped = {"state": "inactive", "NRestarts": 0}
+        self.assertTrue(kit_module.resource_gates([record(running, stopped)])["passes"])
+        unreadable = {"state": "active", "oom_kill": None, "NRestarts": 0}
+        gates = kit_module.resource_gates([record(running, unreadable)])
+        self.assertFalse(gates["passes"])
+        self.assertEqual(gates["oom_unobserved"], [relay])
+        gates = kit_module.resource_gates([record(running, stopped, slice_oom=1)])
+        self.assertFalse(gates["passes"])
+        self.assertEqual(gates["oom_kills"][kit_slice], 1)
+        no_slice = [{"units": {unit: running}, "slice": {"unit": kit_slice, "state": "active", "oom_kill": None}}]
+        self.assertEqual(kit_module.resource_gates(no_slice)["oom_unobserved"], [kit_slice])
+
 
 class EvidenceTests(unittest.TestCase):
     def test_trial_map_is_one_pass_with_the_frozen_resmoke_ids_in_order(self):
@@ -1222,6 +1279,22 @@ class EvidenceTests(unittest.TestCase):
                              ["credentials: 0400-file fallback; systemd-creds --user unavailable"])
             self.assertEqual(evidence["disposition"], "accepted")
             v1.assert_public_safe(evidence)
+
+    def test_evidence_counts_only_the_drills_that_ran(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit, trial = self.trial(directory, rehearsal=False)
+            self.assertEqual(trial.drill_counts(), {"restore_drills": 1, "rollback_drills": 1})
+            # A critical failure before the drills: neither drill step exists.
+            trial.steps = [step for step in trial.steps
+                           if step.id not in (kit_module.TRIAL_STEPS[15], kit_module.TRIAL_STEPS[16])]
+            evidence = kit_module.build_evidence(kit, trial, 1, False)
+            self.assertEqual((evidence["restore_drills"], evidence["rollback_drills"]), (0, 0))
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                code = trial.finish()
+            self.assertEqual(code, sc.EXIT_FAIL)
+            recorded = trial.steps[-1]
+            self.assertEqual((recorded.id, recorded.result), (kit_module.TRIAL_STEPS[18], sc.FAIL))
+            self.assertEqual(recorded.values["restore_drills"], 0)
 
     def test_an_undetectable_lemonade_restart_is_a_condition_not_a_pass(self):
         with tempfile.TemporaryDirectory() as directory:

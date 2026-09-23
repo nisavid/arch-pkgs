@@ -144,6 +144,17 @@ class ExitCodeTests(unittest.TestCase):
         self.assertEqual(receipt["exit_code"], 1)
         self.assertEqual(receipt["scenarios"][0]["id"], "open-webui.resmoke.run")
 
+    def test_a_plain_http_origin_never_receives_the_smoke_password(self):
+        with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(io.StringIO()), \
+                mock.patch.object(scenarios, "signin") as signin:
+            code = scenarios.main(["resmoke", "--target", "production", "--origin", "http://household.invalid",
+                                   "--chat-model", "m", "--receipt", f"{tmp}/r.json"])
+            receipt = json.loads(Path(f"{tmp}/r.json").read_text())
+        self.assertEqual(code, 75)
+        self.assertIn("https", receipt["precondition"])
+        signin.assert_not_called()
+
     def test_an_unreachable_lemonade_is_a_precondition_with_a_receipt(self):
         with tempfile.TemporaryDirectory() as tmp, self.acceptance_process(), \
                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
@@ -585,6 +596,46 @@ class CitedAnswerTests(unittest.TestCase):
         ).encode()
         text, sources = scenarios.parse_chat_response(plain, "application/json")
         self.assertEqual(scenarios.summarize_sources(sources)["count"], 1)
+
+    def cited_context(self, delete_status, chat_status=200):
+        events = [
+            {"sources": [{"source": {"id": "f1", "name": scenarios.HANDBOOK_NAME}, "distances": [0.9]}]},
+            {"choices": [{"delta": {"content": scenarios.CANONICAL_FACT}}]},
+        ]
+        stream = "".join(f"data: {json.dumps(event)}\n\n" for event in events).encode() + b"data: [DONE]\n\n"
+        responses = {
+            ("POST", scenarios.API["files"]): mock.Mock(status=200, json=lambda: {"id": "f1"}),
+            ("POST", scenarios.API["chat"]): mock.Mock(status=chat_status, body=stream, content_type="text/event-stream"),
+        }
+        deletes = []
+
+        def request(method, path, **_kw):
+            if method == "DELETE":
+                deletes.append(path)
+                if isinstance(delete_status, Exception):
+                    raise delete_status
+                return mock.Mock(status=delete_status)
+            return responses[(method, path)]
+
+        webui = mock.Mock(request=mock.Mock(side_effect=request))
+        ctx = scenarios.Context(target="production", webui=webui, lemond=mock.Mock(), token="t",
+                                settings=scenarios.settings_from_environ(packaged_env()), chat_model="m")
+        return ctx, deletes
+
+    def test_cited_answer_deletes_its_upload_and_fails_when_the_delete_fails(self):
+        with mock.patch.object(scenarios, "_wait_for_file"):
+            ctx, deletes = self.cited_context(200)
+            values = scenarios.cited_answer(ctx)
+            self.assertEqual(values["expected_source_name"], scenarios.HANDBOOK_NAME)
+            self.assertEqual(len(deletes), 1)
+            ctx, deletes = self.cited_context(500)
+            with self.assertRaisesRegex(scenarios.ScenarioFailure, "delete returned 500"):
+                scenarios.cited_answer(ctx)
+            # A failing chat keeps its own error even when the cleanup also fails.
+            ctx, deletes = self.cited_context(OSError("gone"), chat_status=502)
+            with self.assertRaisesRegex(scenarios.ScenarioFailure, "HTTP 502"):
+                scenarios.cited_answer(ctx)
+            self.assertEqual(len(deletes), 1)
 
     def test_cited_answer_rejects_extra_sources_and_non_finite_scores(self):
         fact = scenarios.CANONICAL_FACT
