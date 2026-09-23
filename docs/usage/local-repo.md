@@ -182,11 +182,30 @@ publish, a `.gitignore` in the old live repository moves to the previous copy
 with the rest of its contents.
 
 `receipt` verifies the published directory again and requires its
-repository-manifest SHA-256 to equal the publisher-verified value. It writes a
-JSON receipt with the accepted manifest's SHA-256, the database and files index
-SHA-256s, the published records, the previous copy's directory name, manifest
-SHA-256, and records, and the manifest's identity dispositions. It records no
-filesystem paths.
+repository-manifest SHA-256 to equal `SHA`, the value the publisher printed as
+`Verified repository-manifest SHA-256`. Pass the path the publisher printed as
+`Retained previous pacman repo` as `PREVIOUS`. When the publisher printed no
+such line, because the published directory did not exist yet, omit
+`--previous-dir`. The receipt then records `previous_copy` as `null`. A
+retained copy without a database, such as an empty directory created before the
+first publication, records an empty `records` list.
+
+The JSON receipt records:
+
+- `repository` and, when the manifest has one, `catalog_commit`.
+- `accepted_manifest_sha256`: the SHA-256 of the accepted manifest bytes.
+- `database`: the SHA-256 of the live database and files indexes.
+- `published_records`: the published (package, version, arch, filename, size,
+  SHA-256) records.
+- `publisher_verified_manifest_sha256` and `live_repository_manifest_sha256`:
+  the publisher-verified and freshly computed repository-manifest SHA-256s,
+  which must be equal.
+- `previous_copy`: the retained copy's directory name, repository-manifest
+  SHA-256, and records, or `null`.
+- `identity_dispositions`: the manifest's identity dispositions.
+
+The receipt adds no filesystem paths of its own. It copies disposition notes
+verbatim, so keep private paths out of them.
 
 The manifest is JSON:
 
