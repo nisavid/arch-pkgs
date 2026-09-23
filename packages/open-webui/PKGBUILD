@@ -2,7 +2,7 @@
 
 pkgname=open-webui
 pkgver=0.11.0
-pkgrel=5
+pkgrel=6
 pkgdesc="Self-hosted AI web interface for Ollama and OpenAI-compatible APIs"
 arch=('x86_64')
 url="https://github.com/open-webui/open-webui"
@@ -47,7 +47,10 @@ makedepends=(
   'python-packaging'
   'uv'
 )
-optdepends=('tika-server: Apache Tika content extraction backend')
+optdepends=(
+  'tika-server: Apache Tika content extraction backend'
+  'tailscale: tailnet route via open-webui-tailnet.service'
+)
 conflicts=('open-webui-git' 'open-webui-no-venv')
 options=(!strip !debug)
 _pyver=3.14
@@ -79,6 +82,7 @@ source=(
   'python-offline-closure.py'
   'open-webui.env'
   'open-webui.service'
+  'open-webui-tailnet.service'
   'open-webui.sysusers'
   'open-webui.tmpfiles'
   'open-webui-wrapper'
@@ -113,6 +117,7 @@ sha256sums=('e28c4fa997bf0a678caa7a0db6441da2e0c33b9a4120677f959ec3e45fccf9e9'
             'c21fd557c23ed844fc673920add5d17116bce6a9d5f91f8e0461fd2de53bda09'
             '8360369d561a3237ee5fb654b48ed28a9f02bdabfacca9394d650aca130b008a'
             '7670c25ee9a046fc862ee5464b704dc2c40c4ba89764067e632d715c29177b86'
+            '219e62a33deca8b28ca8f9b902bf746c1751f1b061da60ae45b96a56b774c3dd'
             '8e110af7e0d813a9d72639cf64dfd0e8892f8917d632524ad17a593d73a46c1c'
             '3f458a27a1adb60214a0ea86254099c70a49f8873aed2254aef2ce7978133b9b'
             '1eacfbcf77759b828a8a747405da7cdc1227502719d0e92b02a67fb743215367'
@@ -212,6 +217,8 @@ package() {
   install -Dm600 "${srcdir}/open-webui.env" "${pkgdir}/etc/open-webui/open-webui.env"
   install -Dm644 "${srcdir}/open-webui.service" \
     "${pkgdir}/usr/lib/systemd/system/open-webui.service"
+  install -Dm644 "${srcdir}/open-webui-tailnet.service" \
+    "${pkgdir}/usr/lib/systemd/system/open-webui-tailnet.service"
   install -Dm644 "${srcdir}/open-webui.sysusers" \
     "${pkgdir}/usr/lib/sysusers.d/open-webui.conf"
   install -Dm644 "${srcdir}/open-webui.tmpfiles" \

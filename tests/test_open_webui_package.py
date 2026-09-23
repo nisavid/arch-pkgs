@@ -123,7 +123,7 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
             text=True,
         ).stdout
 
-        self.assertIn("pkgrel=5", recipe)
+        self.assertIn("pkgrel=6", recipe)
         for asset, digest in (
             (
                 "open-webui-npm-offline-closure-0.11.0.tar.zst",
@@ -470,6 +470,43 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
         self.assertNotIn("0.9.5", notes)
         self.assertNotIn("127.0.0.1:8080", notes)
         self.assertNotIn("enable --now", notes)
+
+    def test_tailnet_sidecar_is_installed_unprivileged_and_nameless(self):
+        recipe = read(OPEN_WEBUI / "PKGBUILD")
+        unit = read(OPEN_WEBUI / "open-webui-tailnet.service")
+
+        self.assertIn("'open-webui-tailnet.service'", recipe)
+        self.assertIn(
+            '"${pkgdir}/usr/lib/systemd/system/open-webui-tailnet.service"',
+            recipe,
+        )
+        self.assertRegex(recipe, r"'tailscale: [^']+'")
+        self.assertNotIn("'tailscale'", recipe.split("optdepends=")[0])
+        for directive in (
+            "DynamicUser=yes",
+            "SupplementaryGroups=open-webui-proxy",
+            "StateDirectory=open-webui-tailnet",
+            "RuntimeDirectory=open-webui-tailnet",
+            "ProtectSystem=strict",
+            "ProtectHome=yes",
+            "NoNewPrivileges=yes",
+            "CapabilityBoundingSet=\n",
+            "Restart=on-failure",
+            "After=network-online.target",
+            "Wants=network-online.target",
+        ):
+            self.assertIn(directive, unit + "\n")
+        self.assertIn(
+            "ExecStart=/usr/bin/tailscaled"
+            " --statedir=%S/open-webui-tailnet"
+            " --socket=%t/open-webui-tailnet/tailscaled.sock"
+            " --tun=userspace-networking --port=0",
+            unit,
+        )
+        self.assertNotIn("User=", unit.replace("DynamicUser=", ""))
+        self.assertNotIn("--hostname", unit)
+        self.assertNotIn("serve", unit.split("[Service]")[1])
+        self.assertNotIn(".ts.net", unit)
 
     def test_commissioning_helper_uses_uds_and_never_accepts_secret_arguments(self):
         helper = read(OPEN_WEBUI / "open-webui-commission-admin")

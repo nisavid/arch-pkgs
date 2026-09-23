@@ -152,6 +152,65 @@ and temporary drop-in, restart `open-webui.service` normally, repeat the
 postconditions, and only then make Caddy routing eligible for a later accepted
 deployment task.
 
+## Tailnet Route
+
+The production route is tailnet-only. `open-webui-tailnet.service` runs a
+second `tailscaled`, separate from any system `tailscaled.service`: an
+untagged node owned by the owner's tailnet account, in userspace-networking
+mode (no TUN, no root), with its own state under `/var/lib/open-webui-tailnet`
+and its own LocalAPI socket at `/run/open-webui-tailnet/tailscaled.sock`. It
+runs as a dynamic user in the `open-webui-proxy` group, which is how it
+reaches the Open WebUI socket. The package installs the unit disabled and
+ships no node name. The login, node name, and serve configuration are runtime
+state in that state directory, so a later route (for example TCP passthrough
+to a local TLS terminator) needs no unit change. The route needs the optional
+`tailscale` package.
+
+The commands use the placeholders `<name>` for the node name and `<tailnet>`
+for the tailnet's DNS label; neither belongs in this repository. The LocalAPI
+socket's directory admits only root and the daemon's own user, so every
+`tailscale --socket=...` command runs under `sudo`.
+
+1. Before the first Open WebUI start, add the public origin to
+   `/etc/open-webui/open-webui.env`:
+
+   ```text
+   WEBUI_URL=https://<name>.<tailnet>.ts.net
+   CORS_ALLOW_ORIGIN=https://<name>.<tailnet>.ts.net
+   ```
+
+   `WEBUI_URL` is a persistent setting, so only the first start seeds it;
+   after that, change it in the admin UI. `CORS_ALLOW_ORIGIN` is read at
+   every start.
+2. Start the node and log it in once, interactively:
+
+   ```sh
+   sudo systemctl enable open-webui-tailnet.service
+   sudo systemctl start open-webui-tailnet.service
+   sudo tailscale --socket=/run/open-webui-tailnet/tailscaled.sock up --hostname=<name>
+   ```
+
+3. In the Tailscale admin console, disable key expiry for the new node.
+4. Only after closed-route commissioning succeeds, publish the route:
+
+   ```sh
+   sudo tailscale --socket=/run/open-webui-tailnet/tailscaled.sock serve --bg --https=443 unix:/run/open-webui/open-webui.sock
+   ```
+
+Verify with
+`sudo tailscale --socket=/run/open-webui-tailnet/tailscaled.sock serve status`,
+then open `https://<name>.<tailnet>.ts.net/` from another tailnet device and
+sign in.
+
+Roll back in reverse order:
+
+```sh
+sudo tailscale --socket=/run/open-webui-tailnet/tailscaled.sock serve --https=443 off
+sudo tailscale --socket=/run/open-webui-tailnet/tailscaled.sock logout
+sudo systemctl disable open-webui-tailnet.service
+sudo systemctl stop open-webui-tailnet.service
+```
+
 ## Maintenance Baseline
 
 - `authoritative_reference`: exact-version AUR `open-webui` recipe at commit
@@ -172,6 +231,8 @@ deployment task.
   - Freeze the frontend build, Unix-socket-only service, external-reranker
     failure boundary, automatic credential delivery, and forward-only session
     epoch as package-owned source and service assets.
+  - Ship a disabled, unprivileged userspace `tailscaled` unit for the
+    tailnet route; its login and serve configuration stay runtime state.
 - `update_notes`:
   - Recompute the complete private closure from the immutable release lock and
     selected optional runtime backends; a digest without the full lock is not a
