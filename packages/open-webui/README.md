@@ -166,9 +166,10 @@ runs as a dynamic user in the `open-webui-proxy` group, which is how it
 reaches the Open WebUI socket. The package installs the unit disabled and
 ships no node name. The login, node name, and serve configuration are runtime
 state in that state directory, so a later route to another Unix-socket
-target under `/run` (for example a local TLS terminator listening on one)
-needs no unit change. A loopback target would need one, and allowing
-`127.0.0.1` would undo the loopback deny below. The route needs the optional `tailscale` package.
+target under `/run` (not `/run/user`) that the `open-webui-proxy` group can
+reach, for example a local TLS terminator, needs no unit change. A loopback
+target would need one, and allowing `127.0.0.1` would undo the loopback deny
+below. The route needs the optional `tailscale` package.
 
 In userspace-networking mode, `tailscaled` forwards a tailnet connection on
 any port it does not serve to that port on the host's `127.0.0.1`, which
@@ -217,7 +218,8 @@ command runs under `sudo`.
    It must time out, and about two minutes later
    `sudo journalctl -u open-webui-tailnet.service` must show the forward to
    `127.0.0.1:6333` failing. A connection or a quick refusal means the deny
-   is not in effect; stop and roll back.
+   is not in effect; stop and roll back. A timeout with no journal line
+   means the tailnet policy blocked the probe; retry from a device it admits.
 3. Before the first Open WebUI start, set the canonical origin in
    `/etc/open-webui/open-webui.env`:
 
