@@ -1419,18 +1419,17 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _resmoke(args: argparse.Namespace) -> int:
-    if args.target == "acceptance" and args.root is None:
-        raise Blocked("--root is required for the acceptance target")
-    lemond = Endpoint(origin=args.lemond_url)
-    if args.socket is None and args.target == "production" and not args.origin:
-        raise Blocked("--origin is required for the production target")
-
     settings: Settings | None = None
     health: Any = None
     results: list[ScenarioResult] = []
     precondition: str | None = None
     try:
         try:
+            if args.target == "acceptance" and args.root is None:
+                raise Blocked("--root is required for the acceptance target")
+            if args.socket is None and args.target == "production" and not args.origin:
+                raise Blocked("--origin is required for the production target")
+            lemond = Endpoint(origin=args.lemond_url)
             try:
                 if args.socket is not None:
                     webui = Endpoint(socket_path=args.socket)

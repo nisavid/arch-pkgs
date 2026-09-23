@@ -166,11 +166,17 @@ class ExitCodeTests(unittest.TestCase):
         self.assertEqual(code, 75)
 
     def test_cli_returns_75_when_a_precondition_is_missing(self):
-        with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stderr(io.StringIO()):
-            code = scenarios.main(
-                ["resmoke", "--target", "acceptance", "--chat-model", "m", "--receipt", f"{tmp}/r.json"]
-            )
-        self.assertEqual(code, 75)
+        for argv in (
+            ["resmoke", "--target", "acceptance", "--chat-model", "m"],
+            ["resmoke", "--target", "production", "--chat-model", "m"],
+        ):
+            with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stdout(io.StringIO()), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                code = scenarios.main([*argv, "--receipt", f"{tmp}/r.json"])
+                # A precondition failure still leaves its receipt.
+                receipt = json.loads(Path(f"{tmp}/r.json").read_text())
+            self.assertEqual(code, 75)
+            self.assertEqual(receipt["exit_code"], 75)
 
 
 class EnvironTests(unittest.TestCase):
@@ -219,15 +225,22 @@ class EnvironTests(unittest.TestCase):
     def test_frozen_production_settings_come_only_from_committed_acceptance_evidence(self):
         evidence = REPO_ROOT / "docs" / "maintainers" / "evidence"
         of_record = set()
+        accepted_entries = {}
         for path in sorted(evidence.glob("open-webui-household-acceptance-*.json")):
             document = json.loads(path.read_text(encoding="utf-8"))
             for step in document.get("steps", []):
                 if step.get("id") == "open-webui.acceptance.identity.archives":
                     for item in (step.get("values") or {}).get("archives", []):
                         of_record.add((item["name"], item["sha256"]))
+            expectation = document.get("production_expectation")
+            if document.get("disposition") == "accepted" and expectation:
+                accepted_entries[expectation["version"]] = expectation["entry"]
         for version, expected in scenarios.PRODUCTION_EXPECTATIONS.items():
             self.assertIn((expected["archive"], expected["archive_sha256"]), of_record, version)
             self.assertEqual(set(expected), {"archive", "archive_sha256", *scenarios.PRODUCTION_EXPECTATION_KEYS})
+            # Every value, including the multi-line prefixes, is the entry that
+            # accepted evidence printed, so a paste error cannot pass.
+            self.assertEqual(dict(expected), accepted_entries.get(version), version)
         with self.assertRaises(scenarios.Blocked):
             scenarios.settings_for_production("0.11.0-3")
 
