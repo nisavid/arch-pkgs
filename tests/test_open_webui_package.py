@@ -474,12 +474,16 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
     def test_tailnet_sidecar_is_unprivileged_nameless_and_private(self):
         recipe = read(OPEN_WEBUI / "PKGBUILD")
         values = {}
+        section = None
         for line in read(OPEN_WEBUI / "open-webui-tailnet.service").splitlines():
             line = line.strip()
-            if not line or line.startswith(("#", ";", "[")):
+            if not line or line.startswith(("#", ";")):
+                continue
+            if line.startswith("["):
+                section = line.strip("[]")
                 continue
             key, _, value = line.partition("=")
-            values.setdefault(key, []).append(value)
+            values.setdefault((section, key.strip()), []).append(value.strip())
 
         self.assertIn("'open-webui-tailnet.service'", recipe)
         self.assertIn(
@@ -488,22 +492,23 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
         )
         self.assertRegex(recipe, r"'tailscale: [^']+'")
         self.assertNotIn("'tailscale'", recipe.split("optdepends=")[0])
-        for key, value in (
-            ("DynamicUser", "yes"),
-            ("SupplementaryGroups", "open-webui-proxy"),
-            ("StateDirectory", "open-webui-tailnet"),
-            ("RuntimeDirectory", "open-webui-tailnet"),
-            ("Environment", "TS_NO_LOGS_NO_SUPPORT=true"),
-            ("ProtectSystem", "strict"),
-            ("ProtectHome", "yes"),
-            ("NoNewPrivileges", "yes"),
-            ("CapabilityBoundingSet", ""),
-            ("AmbientCapabilities", ""),
-            ("IPAddressDeny", "127.0.0.1 ::1"),
-            ("Restart", "on-failure"),
-            ("After", "network-online.target"),
-            ("Wants", "network-online.target"),
+        for section, key, value in (
+            ("Unit", "After", "network-online.target"),
+            ("Unit", "Wants", "network-online.target"),
+            ("Service", "DynamicUser", "yes"),
+            ("Service", "SupplementaryGroups", "open-webui-proxy"),
+            ("Service", "StateDirectory", "open-webui-tailnet"),
+            ("Service", "RuntimeDirectory", "open-webui-tailnet"),
+            ("Service", "Environment", "TS_NO_LOGS_NO_SUPPORT=true"),
+            ("Service", "ProtectSystem", "strict"),
+            ("Service", "ProtectHome", "yes"),
+            ("Service", "NoNewPrivileges", "yes"),
+            ("Service", "CapabilityBoundingSet", ""),
+            ("Service", "AmbientCapabilities", ""),
+            ("Service", "IPAddressDeny", "127.0.0.1 ::1"),
+            ("Service", "Restart", "on-failure"),
             (
+                "Service",
                 "ExecStart",
                 "/usr/bin/tailscaled"
                 " --statedir=%S/open-webui-tailnet"
@@ -511,12 +516,23 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
                 " --tun=userspace-networking --port=0",
             ),
         ):
-            self.assertEqual(values.get(key), [value], key)
-        self.assertEqual([key for key in values if key.startswith("Exec")], ["ExecStart"])
+            self.assertEqual(values.get((section, key)), [value], key)
+        pinned_service_keys = {
+            "DynamicUser",
+            "Environment",
+            "CapabilityBoundingSet",
+            "AmbientCapabilities",
+            "IPAddressDeny",
+        }
+        keys = [key for _, key in values]
+        for key in pinned_service_keys:
+            self.assertEqual(keys.count(key), 1, key)
+        self.assertEqual([key for key in keys if key.startswith("Exec")], ["ExecStart"])
         self.assertFalse(
-            values.keys() & {"User", "Group", "UnsetEnvironment", "IPAddressAllow"}
+            set(keys)
+            & {"User", "Group", "UnsetEnvironment", "EnvironmentFile", "IPAddressAllow"}
         )
-        for key, entries in values.items():
+        for (_, key), entries in values.items():
             for entry in entries:
                 for forbidden in ("--hostname", "tag:", ".ts.net"):
                     self.assertNotIn(forbidden, entry, key)
