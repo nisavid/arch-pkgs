@@ -47,7 +47,9 @@ rehearsal may run earlier.
    installed and live-validated on the host"
    (https://github.com/nisavid/lemonade/issues/156) is closed, and the lead has
    recorded its receipt ids in the arch-strix-halo-pkgs `current-state.md`.
-   The trial evidence cites those ids. This repository writes nothing to the
+   The trial takes them as `--lemonade-receipt <id>` (repeat the flag for each
+   id), and the evidence cites them; record-mode `trial` exits 75 without
+   them, before the trial starts. This repository writes nothing to the
    lemonade repository.
 2. **The candidate of record.** The pull request that stages the candidate has
    merged, and
@@ -108,13 +110,21 @@ rehearsal may run earlier.
    restarts, or reconfigures Lemonade. If a model is not loaded, preflight
    and every re-entry after a restart, restore, or rollback exit 75 with
    `NEEDS LEAD` instead of triggering a load.
-6. **Host tools.** `bwrap`, `socat`, `bsdtar`, `sqlite3`, `unshare`,
-   `systemd-creds`, the host `valkey-server`, and the host
-   `python-ctranslate2-gfx1151` 4.7.2 speech provider. A user manager with
+6. **Host tools.** `bwrap`, `socat`, `bsdtar`, `unshare`, `systemd-creds`,
+   `systemd-run`, `systemctl`, `journalctl`, `ss`, the host `valkey-server`,
+   and the host `python-ctranslate2-gfx1151` speech provider (4.7.2 on the
+   host today). Preflight refuses when any is missing. A user manager with
    lingering enabled.
 7. **A household window.** The trial runs in an announced window that does not
    overlap a Lemonade redeploy. A Lemonade restart during the trial voids the
-   run; the lead decides whether one rerun is allowed.
+   run; the lead decides whether one rerun is allowed. The kit detects a
+   restart only when Lemonade's `/api/v1/health` reports a start time or
+   uptime. When it reports neither, the evidence records `restarted: null`
+   and the condition `lemonade restart: not detectable from /api/v1/health`,
+   and the operator records the Lemonade service's start time just before
+   `trial` and just after it with a read-only
+   `systemctl show -p ActiveEnterTimestamp <lemonade-unit>`; the two must be
+   equal.
 8. **No concurrent builds.** The trial runs its units under a capped user
    `builds.slice` (see `--slice`), which package builds share. Hold every
    build on the host for the whole trial: a build that fills the shared cap
@@ -123,13 +133,16 @@ rehearsal may run earlier.
 
 ## Parameters
 
-Every subcommand takes the same parameter set. Nothing host-specific is
-committed; the evidence records each value used.
+Every subcommand takes this parameter set; `trial` also takes
+`--lemonade-receipt`. Nothing host-specific is committed; the evidence records
+each value used.
 
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `--root DIR` | `/srv/build/arch-pkgs-owui-acceptance` | Disposable acceptance root. It holds a `.owui-acceptance` marker, and teardown deletes only a marked root. |
-| `--manifest FILE` | none; required | The candidate manifest of record from the build ticket (name, size, SHA-256, source commit). |
+| `--manifest FILE` | none; required | The candidate manifest of record from the build ticket (name, size, SHA-256, source commit). `trial` refuses with exit 75, before the trial starts, when it is missing or differs from the manifest `stage` used. |
+| `--candidate-store DIR` | the operator's arch-pkgs candidate store under the XDG state directory | Where `preflight` and `stage` look for a manifest archive that is not yet under `<root>/inputs/`; the file whose size and SHA-256 match the record is used. |
+| `--lemonade-receipt ID` | none; required for a record-mode `trial` | One Lemonade M4 receipt id; repeat it for each id. |
 | `--lemond-url URL` | `http://127.0.0.1:13305` | Lemonade base URL. Only `GET /api/v1/health`, `GET /api/v1/models`, and inference requests are sent. In record mode it must be the provider origin of the packaged `open-webui.env` (`RAG_OPENAI_API_BASE_URL` and `RAG_EXTERNAL_RERANKER_URL`); otherwise preflight and every re-entry exit 75. |
 | `--chat-model ID` | `user.Qwen3.6-35B-A3B-MTP-GGUF-UD-Q4_K_XL` (owner-pinned) | The resident chat model used for ordinary chat and the cited answer. Readiness accepts this canonical id or its bare form without the leading `user.`. |
 | `--embedding-model ID` | the packaged env's `RAG_EMBEDDING_MODEL` | zembed id that must be served and loaded. |
@@ -149,19 +162,27 @@ lead-approved override.
 
 Run from a checkout of this repository at the kit commit. Each step is
 idempotent up to its own outputs, and each refuses when its precondition does
-not hold.
+not hold. `up` may run again before `trial` (after a `down` or a refusal); it
+keeps the first start's record.
 
 ```bash
 kit=tools/accept_open_webui_household.py
 args=(--root <root> --manifest <manifest> --slice builds-owui_acc.slice)
 
-python3 "$kit" preflight "${args[@]}"   # read-only
-python3 "$kit" stage     "${args[@]}"   # extract, render, mint, initialize
-python3 "$kit" up        "${args[@]}"   # start the kit slice, route closed
-python3 "$kit" trial     "${args[@]}"   # the one trial set, then evidence
-python3 "$kit" down      "${args[@]}"   # stop the slice
-python3 "$kit" teardown  "${args[@]}" --keep-anchor   # plus --keep-plaintext-credentials after a 0400 fallback
+python3 "$kit" preflight "${args[@]}"
+python3 "$kit" stage     "${args[@]}"
+python3 "$kit" up        "${args[@]}"
+python3 "$kit" trial     "${args[@]}" --lemonade-receipt <receipt-id>
+python3 "$kit" down      "${args[@]}"
+python3 "$kit" teardown  "${args[@]}" --keep-anchor
 ```
+
+`preflight` is read-only; `stage` extracts, renders, mints, and initializes;
+`up` starts the kit slice with the route closed; `trial` runs the one trial
+set and writes the evidence; `down` stops the slice. After a 0400-file
+credential fallback, `teardown` also needs `--keep-plaintext-credentials`.
+The command blocks carry no trailing comments, because zsh without
+`interactivecomments` would pass them to the kit as arguments.
 
 The trial and the rehearsal both pass `--slice builds-owui_acc.slice`, so the
 kit units inherit the host's build memory cap from a capped user
@@ -193,7 +214,11 @@ the 0400-file credential fallback, and the record-mode teardown adds
 - `trial` runs the scenarios below once, in order, and writes the evidence
   JSON.
 - `teardown` stops the slice, removes the runtime units, copies the public
-  evidence out, and removes the marked root. `--keep-anchor` keeps the
+  evidence out, and removes the marked root. In record mode it refuses with
+  exit 75, before stopping anything, while
+  `<root>/evidence/raw/trial-evidence.json` exists without a public copy:
+  move that file out of the root first, because it is then the only copy of
+  the trial's values. `--keep-anchor` keeps the
   marker, `kit.json`, `inputs/`, `backups/` (with `backups/anchor/`), and the
   session-epoch `ledger/` (a few hundred MB), so the acceptance re-smoke can
   revive the environment before the production install. `up` on a kept root
@@ -204,8 +229,10 @@ the 0400-file credential fallback, and the record-mode teardown adds
   `--keep-plaintext-credentials` is also given; that flag without
   `--keep-anchor` is a usage error. With both, teardown keeps the anchor's
   credential files as 0400 files in a 0700 directory owned by the operator,
-  and `up` restores them in the same fallback mode. They are test-only
-  secrets for the disposable acceptance services, and
+  and `up` restores them in the same fallback mode. The lead ruled that on a
+  host where `systemd-creds --user` cannot decrypt, the fallback is a trial
+  condition, not a failure. They are test-only secrets for the disposable
+  acceptance services, and
   [Release retained rollback anchors and clean target-local state](https://github.com/nisavid/arch-pkgs/issues/62)
   deletes them with the rest of the kept root.
 
@@ -239,6 +266,11 @@ only.
 | `open-webui.acceptance.drill.rollback` (A-D2, A-D3) | Archives match the anchor manifest; state restore timed; total window recorded; never `:8080`: the host's own `open-webui.service` state is unchanged across the drill and no acceptance process listens on `:8080`. | ceiling 40 s state; window recorded |
 | `open-webui.acceptance.resources` (A-RES1..3) | `memory.events` `oom_kill` 0, and `NRestarts` 0 in every snapshot for every unit (systemd resets it on each planned start, and a snapshot precedes each one); peak memory, CPU, Qdrant sizes, snapshot and backup sizes, and the cache inventory recorded. | gates: no OOM, no unplanned restart |
 | `open-webui.acceptance.evidence` (A-E1, A-E3) | Public-safe evidence with `trial_set_count=1`, one restore, one rollback, and no generation fields. | pass/fail |
+
+Between the no-credential check and the zembed canary, the trial also
+records one setup step, `open-webui.acceptance.handbook-indexed`: the fixture handbook
+upload that the cited answer and both drills reuse. It is not a separate
+requirement.
 
 Notes on specific checks:
 
@@ -338,15 +370,28 @@ endpoint, uses `tls internal` without installing trust, and keeps all its
 storage under `<root>/state/caddy`. Acceptance Valkey runs RDB only
 (`appendonly no`), and the drills back up and restore the RDB.
 
-The installed check in the production handoff covers every A-ID2 row.
+The production handoff does not repeat these rows one by one. Its P7 check
+proves that the packaged unit is unmodified and that only the two documented
+drop-ins apply, so every packaged property that A-ID2 records as dropped or
+not enforced here is in force in production.
+
+The 0.11.0-6 `open-webui-tailnet.service` sidecar is not part of the
+acceptance environment: the acceptance route is loopback Caddy, and the
+sidecar's loopback deny is proven on the host by the owner-run P5.2 check in
+the production handoff.
 
 ## Rehearsal (kit debugging only)
 
 The stub rehearsal exists only to catch kit bugs before the one real trial. It
 is not a trial and never counts toward the trial set.
 
+The rehearsal uses its own root, such as
+`/srv/build/arch-pkgs-owui-acceptance-rehearsal`, never the trial's: `stage`
+pins the mode, and a rehearsal teardown removes the whole root, including
+`inputs/`. Copy the approved inputs into it; do not move them.
+
 ```bash
-args=(--root <root> --manifest <manifest> --provider stub --rehearsal --slice builds-owui_acc.slice)
+args=(--root <rehearsal-root> --manifest <manifest> --provider stub --rehearsal --slice builds-owui_acc.slice)
 python3 "$kit" preflight "${args[@]}"
 python3 "$kit" stage     "${args[@]}"
 python3 "$kit" up        "${args[@]}"
@@ -387,7 +432,8 @@ real model's verbatim answer, or provider timings. Only the trial does.
 - The full document is always written first to
   `<root>/evidence/raw/trial-evidence.json` (mode 0600). If the public-safety
   check fails, only the public copy is withheld, and the kit prints the
-  private path with the reason, so the one trial's values survive.
+  private path with the reason, so the one trial's values survive. Teardown
+  refuses until that file is moved out of the root.
 - It records `production_expectation`, the frozen production-settings entry
   for the deployed `open-webui` archive, and the trial prints it. The
   evidence commit adds that entry to `PRODUCTION_EXPECTATIONS` in
@@ -499,7 +545,7 @@ trial evidence and its `PRODUCTION_EXPECTATIONS` entry), in the shell that set
 ```bash
 systemd-run --user --pipe --wait --collect "${cred[@]}" \
   /usr/bin/python3 <kit-checkout>/tools/open_webui_household_scenarios.py resmoke \
-    --target production --origin https://<household-origin> \
+    --target production --origin <household-origin> \
     --lemond-url <lemond-url> \
     --audio <retained>/jfk.flac --scenario all --receipt <out>.json
 ```
@@ -555,8 +601,10 @@ no receipt in rehearsal mode.
   `open-webui` archive SHA-256 (only when verified) and its binding, the
   model ids, the chat model id, timings, and the exit code. It never contains
   a secret. Every run past argument parsing writes one, including a
-  precondition failure (an unreachable Lemonade or Open WebUI exits 75 with a
-  receipt) and a malformed response (a FAIL row).
+  precondition failure (a missing `--root` or `--origin`, or an unreachable
+  Lemonade or Open WebUI, exits 75 with a receipt) and a malformed response (a
+  FAIL row). A rehearsal writes none, and a receipt that fails the
+  public-safety check is not written: the run exits 1 instead.
 
 ## Ported constants
 
