@@ -109,6 +109,11 @@ rehearsal may run earlier.
 7. **A household window.** The trial runs in an announced window that does not
    overlap a Lemonade redeploy. A Lemonade restart during the trial voids the
    run; the lead decides whether one rerun is allowed.
+8. **No concurrent builds.** The trial runs its units under a capped user
+   `builds.slice` (see `--slice`), which package builds share. Hold every
+   build on the host for the whole trial: a build that fills the shared cap
+   could OOM-kill a trial service and fail the no-OOM resources gate
+   spuriously.
 
 ## Parameters
 
@@ -126,6 +131,7 @@ committed; the evidence records each value used.
 | `--whisper-model NAME` | `base` | Pinned Whisper size, `base` or `tiny`; the revision and every file SHA-256 are recorded. |
 | `--provider stub\|lemond` | `lemond` | `stub` serves the rehearsal from `stub_provider.py`; `lemond` is the trial. |
 | `--rehearsal` | off | Required with `--provider stub`; marks every output `mode=rehearsal`. |
+| `--slice NAME` | `owui-acc.slice` | The user slice every kit unit runs under: a plain systemd slice unit name ending in `.slice`. `stage` records it in `kit.json`, and every later subcommand reads it from there; a later `--slice` that differs from the staged one is refused. systemd nests slices by dashes, so `builds-owui_acc.slice` is a child of `builds.slice`. |
 
 A served model id that differs from the expected one exits 75 and escalates.
 The one equivalence is a leading `user.`: a canonical `user.` id and its bare
@@ -141,15 +147,20 @@ not hold.
 
 ```bash
 kit=tools/accept_open_webui_household.py
-args=(--root <root> --manifest <manifest>)
+args=(--root <root> --manifest <manifest> --slice builds-owui_acc.slice)
 
 python3 "$kit" preflight "${args[@]}"   # read-only
 python3 "$kit" stage     "${args[@]}"   # extract, render, mint, initialize
-python3 "$kit" up        "${args[@]}"   # start owui-acc.slice, route closed
+python3 "$kit" up        "${args[@]}"   # start the kit slice, route closed
 python3 "$kit" trial     "${args[@]}"   # the one trial set, then evidence
 python3 "$kit" down      "${args[@]}"   # stop the slice
 python3 "$kit" teardown  "${args[@]}" --keep-anchor
 ```
+
+The trial and the rehearsal both pass `--slice builds-owui_acc.slice`, so the
+kit units inherit the host's build memory cap from a capped user
+`builds.slice`. The kit units are long-running user services, so a
+`systemd-run --scope` wrapper around the kit command would not cap them.
 
 - `preflight` checks the manifest pins against the input archives, disk
   headroom, free ports, the served and loaded model ids, and the host tools.
@@ -160,7 +171,7 @@ python3 "$kit" teardown  "${args[@]}" --keep-anchor
   credentials, initializes the session-epoch ledger, and places the whisper
   model in Hugging Face cache layout.
 - `up` starts Qdrant, Valkey, the reranker relay, Open WebUI, and the peer
-  sampler under `owui-acc.slice`. Caddy stays stopped until commissioning, so
+  sampler under the kit slice. Caddy stays stopped until commissioning, so
   the route is closed.
 - `trial` runs the scenarios below once, in order, and writes the evidence
   JSON.
@@ -207,7 +218,7 @@ only.
 Notes on specific checks:
 
 - **Haystack (A-E2)** is scoped to the acceptance environment: no hayhooks or
-  Haystack unit in `owui-acc.slice`, no Haystack module loaded by the Open
+  Haystack unit among the `owui-acc-*` units, no Haystack module loaded by the Open
   WebUI process, and `hayhooks.service` neither active nor enabled on the
   host. A host package that is installed but disabled is not a failure; its
   removal is optional and belongs to
@@ -307,7 +318,7 @@ The stub rehearsal exists only to catch kit bugs before the one real trial. It
 is not a trial and never counts toward the trial set.
 
 ```bash
-args=(--root <root> --manifest <manifest> --provider stub --rehearsal)
+args=(--root <root> --manifest <manifest> --provider stub --rehearsal --slice builds-owui_acc.slice)
 python3 "$kit" preflight "${args[@]}"
 python3 "$kit" stage     "${args[@]}"
 python3 "$kit" up        "${args[@]}"

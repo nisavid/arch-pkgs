@@ -63,6 +63,9 @@ DEFAULT_ROOT = Path("/srv/build/arch-pkgs-owui-acceptance")
 STUB_SCRIPT = TOOLS / "fixtures" / "open-webui-household-acceptance" / "stub_provider.py"
 
 SLICE = "owui-acc.slice"
+# A plain slice unit name: no template, escape, or path, and no empty
+# dash-separated component (systemd nests ``a-b.slice`` under ``a.slice``).
+_SLICE_NAME = re.compile(r"[A-Za-z0-9_.:]+(?:-[A-Za-z0-9_.:]+)*\.slice")
 UNITS = MappingProxyType(
     {
         "qdrant": "owui-acc-qdrant.service",
@@ -533,15 +536,17 @@ def derive_unit(
     packaged: str,
     rewrite: Rewrite,
     extra: Sequence[tuple[str, str]],
+    slice_unit: str = SLICE,
 ) -> tuple[str, list[dict[str, Any]]]:
     """Render a user unit from a packaged unit and return the A-ID2 rows.
 
     ``rewrite(key, value)`` returns the acceptance lines for a rewritten
-    property; ``extra`` adds kit lines (slice, containment environment).
+    property; ``extra`` adds kit lines (containment environment);
+    ``slice_unit`` is the kit slice the unit runs under.
     """
 
     unit_lines: list[tuple[str, str]] = []
-    service_lines: list[tuple[str, str]] = [("Slice", SLICE)]
+    service_lines: list[tuple[str, str]] = [("Slice", slice_unit)]
     rows: list[dict[str, Any]] = []
     for section, key, value in parse_unit(packaged):
         status, reason = classify_property(section, key)
@@ -854,6 +859,7 @@ class Kit:
     whisper_model: str
     candidate_store: Path
     runtime_dir: Path
+    slice: str = SLICE
 
     # Layout -----------------------------------------------------------
     def path(self, *parts: str) -> Path:
@@ -1202,7 +1208,7 @@ def open_webui_unit(kit: Kit, packaged: str) -> tuple[str, list[dict[str, Any]]]
     extra = [line for line in containment_environment(kit, "open-webui", state) if not line[1].startswith("HOME=")]
     extra.append(("Environment", f"PYTHONPATH={kit.pythonpath()}"))
     extra += [("Environment", f"{key}={value}") for key, value in sc.speech_environment(kit.whisper_model).items()]
-    return derive_unit("open-webui.service", packaged, rewrite, extra)
+    return derive_unit("open-webui.service", packaged, rewrite, extra, kit.slice)
 
 
 def qdrant_unit(kit: Kit, packaged: str) -> tuple[str, list[dict[str, Any]]]:
@@ -1230,13 +1236,13 @@ def qdrant_unit(kit: Kit, packaged: str) -> tuple[str, list[dict[str, Any]]]:
         ("Environment", f"QDRANT__SERVICE__GRPC_PORT={PORTS['qdrant-grpc']}"),
         ("Environment", f"QDRANT__SERVICE__STATIC_CONTENT_DIR={kit.path('tree', 'qdrant-web-ui', 'usr', 'share', 'qdrant', 'web-ui')}"),
     ]
-    return derive_unit("qdrant.service", packaged, rewrite, extra)
+    return derive_unit("qdrant.service", packaged, rewrite, extra, kit.slice)
 
 
 def kit_unit(kit: Kit, name: str, description: str, exec_start: str) -> str:
     service = [
         ("Type", "simple"),
-        ("Slice", SLICE),
+        ("Slice", kit.slice),
         ("WorkingDirectory", str(kit.path("state", name))),
         *containment_environment(kit, name),
         ("ExecStart", exec_start),
@@ -2769,8 +2775,7 @@ def cmd_stage(kit: Kit, args: argparse.Namespace) -> int:
     supporting = verify_supporting(kit)
     route = "systemd-creds" if probe_systemd_creds() else "plaintext-0400"
     kit.save_state(
-        mode=kit.mode, provider=kit.provider, lemond_url=kit.lemond_url, chat_model=kit.chat_model,
-        whisper_model=kit.whisper_model, credential_route=route, commissioned=False, trial_started=False,
+        **staged_pins(kit), credential_route=route, commissioned=False, trial_started=False,
         manifest={"sha256": manifest["sha256"], "source_commit": manifest["source_commit"]},
         archives=archives + [record for record in supporting if record["source"] == "sync-db"],
         supporting=supporting, kit_commit=kit_commit(),
@@ -2788,6 +2793,15 @@ def cmd_stage(kit: Kit, args: argparse.Namespace) -> int:
     (kit.raw / "cache-inventory.json").write_text(json.dumps(cache_inventory(kit)))
     print(f"staged {kit.mode} root; credentials: {route}")
     return sc.EXIT_PASS
+
+
+def staged_pins(kit: Kit) -> dict[str, Any]:
+    """The choices stage records and every later subcommand reads back."""
+
+    return {
+        "mode": kit.mode, "provider": kit.provider, "lemond_url": kit.lemond_url,
+        "chat_model": kit.chat_model, "whisper_model": kit.whisper_model, "slice": kit.slice,
+    }
 
 
 def kit_commit() -> str | None:
@@ -2849,8 +2863,8 @@ def cmd_down(kit: Kit, args: argparse.Namespace) -> int:
     require_marked(kit)
     snapshot_resources(kit, "before down")
     systemctl("stop", UNITS["caddy"], check=False)
-    systemctl("stop", SLICE, check=False)
-    print("owui-acc.slice stopped")
+    systemctl("stop", kit.slice, check=False)
+    print(f"{kit.slice} stopped")
     return sc.EXIT_PASS
 
 
@@ -2908,7 +2922,7 @@ def cmd_teardown(kit: Kit, args: argparse.Namespace) -> int:
         raise sc.Blocked("--keep-anchor refuses to keep plaintext credential files")
     if keep and not kit.anchor.is_dir():
         raise sc.Blocked("there is no anchor to keep")
-    systemctl("stop", SLICE, check=False)
+    systemctl("stop", kit.slice, check=False)
     if kit.unit_dir.is_dir():
         for item in kit.unit_dir.glob("owui-acc-*"):
             remove_tree(item) if item.is_dir() else item.unlink()
@@ -2967,6 +2981,12 @@ def _default_candidate_store() -> Path:
     return Path(base) / "arch-pkgs" / "candidates"
 
 
+def slice_name(value: str) -> str:
+    if len(value) > 255 or not _SLICE_NAME.fullmatch(value):
+        raise argparse.ArgumentTypeError(f"{value!r} is not a plain systemd slice unit name ending in .slice")
+    return value
+
+
 def parser() -> argparse.ArgumentParser:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--root", type=Path, default=DEFAULT_ROOT, help=f"disposable acceptance root (default {DEFAULT_ROOT})")
@@ -2981,14 +3001,17 @@ def parser() -> argparse.ArgumentParser:
     common.add_argument("--rehearsal", action="store_true", help="required with --provider stub; writes no evidence")
     common.add_argument("--candidate-store", type=Path, default=_default_candidate_store(),
                         help="where preflight and stage look for the pinned archives (default: the arch-pkgs candidate store)")
+    common.add_argument("--slice", type=slice_name,
+                        help=f"user slice the kit units run under; stage records it (default {SLICE}; "
+                             "builds-owui_acc.slice nests under builds.slice)")
 
     top = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = top.add_subparsers(dest="command", required=True)
     preflight = commands.add_parser("preflight", parents=[common], help="read-only checks")
     preflight.add_argument("--probe-only", action="store_true", help="check only what needs no approved download")
     commands.add_parser("stage", parents=[common], help="extract, render, mint, initialize")
-    commands.add_parser("up", parents=[common], help="start owui-acc.slice")
-    commands.add_parser("down", parents=[common], help="stop owui-acc.slice")
+    commands.add_parser("up", parents=[common], help="start the kit slice")
+    commands.add_parser("down", parents=[common], help="stop the kit slice")
     trial = commands.add_parser("trial", parents=[common], help="the one trial set, then evidence")
     trial.add_argument("--lemonade-receipt", action="append", default=[], metavar="ID",
                        help="an arch-strix-halo-pkgs M4 receipt id bound into the evidence (repeatable)")
@@ -3016,7 +3039,7 @@ def kit_from_args(args: argparse.Namespace) -> Kit:
     lemond_url = args.lemond_url or staged.get("lemond_url") or (STUB_URL if args.provider == "stub" else sc.DEFAULT_LEMOND_URL)
     if args.provider == "stub" and lemond_url != STUB_URL:
         raise ValueError(f"the rehearsal provider is the stub at {STUB_URL}")
-    for flag, field in (("--chat-model", "chat_model"), ("--whisper-model", "whisper_model")):
+    for flag, field in (("--chat-model", "chat_model"), ("--whisper-model", "whisper_model"), ("--slice", "slice")):
         given, pinned = getattr(args, field), staged.get(field)
         if given and pinned and given != pinned:
             raise ValueError(f"{flag} differs from the staged {pinned}; tear down and restage")
@@ -3024,6 +3047,7 @@ def kit_from_args(args: argparse.Namespace) -> Kit:
         "household-chat-stub-v1" if args.provider == "stub" else sc.DEFAULT_CHAT_MODEL
     )
     whisper_model = args.whisper_model or staged.get("whisper_model") or sc.DEFAULT_WHISPER_MODEL
+    slice_unit = args.slice or staged.get("slice") or SLICE
     return Kit(
         root=root,
         manifest_path=args.manifest,
@@ -3036,6 +3060,7 @@ def kit_from_args(args: argparse.Namespace) -> Kit:
         whisper_model=whisper_model,
         candidate_store=args.candidate_store,
         runtime_dir=Path(runtime),
+        slice=slice_unit,
     )
 
 
