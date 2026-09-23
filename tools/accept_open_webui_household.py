@@ -26,6 +26,7 @@ import argparse
 import ast
 import base64
 import dataclasses
+import fnmatch
 import hashlib
 import hmac
 import http.client
@@ -95,6 +96,23 @@ BOUND_NOT_DEPLOYED_STATUS = (
 )
 SUPPORTING_PACKAGES = ("caddy", "python-omegaconf", "python-antlr4")
 HOST_PROVIDERS = ("valkey", "python-ctranslate2-gfx1151", "python", "bubblewrap", "socat")
+# The owner approved running the trial on the host's real ML provider set
+# (option B), with no overlay: python-sentence-transformers is the AUR 5.7.0
+# build, knowingly foreign, not the 5.5.1 the lock resolves.  The evidence
+# records the pacman identity of every installed match.
+PROVIDERS_OF_RECORD = (
+    "python-sentence-transformers",
+    "python-accelerate-gfx1151",
+    "python-transformers-gfx1151",
+    "python-pytorch*-gfx1151",
+    "python-onnxruntime*",
+    "python-ctranslate2-gfx1151",
+    "python-faster-whisper",
+)
+PROVIDERS_OF_RECORD_NOTE = (
+    "knowingly-foreign providers of record: the trial exercises the host provider set "
+    "(owner decision, option B); no provider is overlaid"
+)
 HOST_TOOLS = (
     "bwrap", "socat", "bsdtar", "unshare", "systemd-creds", "systemd-run",
     "systemctl", "journalctl", "valkey-server", "ss",
@@ -111,7 +129,6 @@ QDRANT_VERSION = v1.CONTRACT["qdrant"]["version"]
 QDRANT_DIMENSIONS = v1.CONTRACT["qdrant"]["dimensions"]
 COLLECTIONS: tuple[str, ...] = tuple(v1.COLLECTIONS)
 LIMITS = MappingProxyType({"restart_s": 25.0, "restore_s": 40.0, "rollback_state_s": 40.0})
-WHISPER_PINS = MappingProxyType({"tiny": sc.WHISPER_TINY})
 
 
 def whisper_snapshot_input(model: str) -> str:
@@ -156,7 +173,7 @@ TRIAL_STEPS: tuple[str, ...] = (
     "open-webui.acceptance.auth.one-admin",
     "open-webui.acceptance.ready.restart",
     "open-webui.acceptance.qdrant.g4",
-    "open-webui.acceptance.lemonade.keyless",
+    "open-webui.acceptance.lemonade.no-credential",
     sc.SCENARIO_IDS[0],
     sc.SCENARIO_IDS[1],
     "open-webui.acceptance.route.caddy-uds",
@@ -709,6 +726,43 @@ def host_package_version(package: str) -> str | None:
     return result.stdout.decode().split()[1] if result.returncode == 0 else None
 
 
+HOST_IDENTITY_FIELDS = MappingProxyType(
+    {"Version": "version", "Architecture": "architecture", "Build Date": "build_date", "Install Reason": "install_reason"}
+)
+
+
+def host_package_identity(package: str) -> dict[str, str] | None:
+    """The pacman identity of a host-installed package, or None when it is absent."""
+
+    result = run(["pacman", "-Qi", package], check=False, env={"LC_ALL": "C"})
+    if result.returncode != 0:
+        return None
+    identity = {"package": package, "source": "host"}
+    for line in result.stdout.decode("utf-8", "replace").splitlines():
+        key, _, value = line.partition(":")
+        field = HOST_IDENTITY_FIELDS.get(key.strip())
+        if field is not None:
+            identity[field] = value.strip()
+    return identity
+
+
+def providers_of_record() -> dict[str, Any]:
+    """The pacman identity of each installed provider of record, with a foreign flag."""
+
+    installed = run(["pacman", "-Qq"], check=False).stdout.decode().split()
+    foreign = set(run(["pacman", "-Qqm"], check=False).stdout.decode().split())
+    packages: list[dict[str, Any]] = []
+    absent: list[str] = []
+    for pattern in PROVIDERS_OF_RECORD:
+        matches = sorted(name for name in installed if fnmatch.fnmatchcase(name, pattern))
+        if not matches:
+            absent.append(pattern)
+        for name in matches:
+            identity = host_package_identity(name) or {"package": name, "source": "host"}
+            packages.append({**identity, "foreign": name in foreign})
+    return {"note": PROVIDERS_OF_RECORD_NOTE, "packages": packages, "absent": absent}
+
+
 def port_in_use(port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
         try:
@@ -865,8 +919,8 @@ class Kit:
             (str(REPO_ROOT), "<repo>"),
             (str(Path.home()), "~"),
         ]
-        if not is_loopback(self.lemond_host) and self.lemond_host != "localhost":
-            # A non-loopback provider origin never reaches public evidence.
+        if self.lemond_origin != sc.DEFAULT_LEMOND_URL:
+            # A non-default provider origin never reaches public evidence.
             replacements.insert(0, (self.lemond_origin, "<lemond>"))
         return replacements
 
@@ -951,6 +1005,8 @@ class Kit:
         return ":".join(str(path) for path in paths if path is not None)
 
     def caddy_binary(self) -> Path:
+        """The host Caddy, unless stage had to extract the verified archive instead."""
+
         extracted = self.path("tree", "caddy", "usr", "bin", "caddy")
         return extracted if extracted.is_file() else Path("/usr/bin/caddy")
 
@@ -1224,7 +1280,7 @@ def render_units(kit: Kit) -> dict[str, str]:
     if kit.provider == "stub":
         packaged = kit.packaged_env()
         units[UNITS["stub"]] = kit_unit(
-            kit, "stub", "keyless rehearsal provider",
+            kit, "stub", "credential-free rehearsal provider",
             f"/usr/bin/python3 {STUB_SCRIPT} --host 127.0.0.1 --port {PORTS['stub']} "
             f"--embedding-model {packaged['RAG_EMBEDDING_MODEL']} --reranking-model {packaged['RAG_RERANKING_MODEL']}",
         )
@@ -1476,19 +1532,24 @@ def whisper_dir(kit: Kit) -> Path:
 
 
 def place_whisper(kit: Kit) -> None:
-    """Pre-place the pinned Whisper snapshot in Hugging Face cache layout (offline)."""
+    """Pre-place the pinned Whisper snapshot in Hugging Face cache layout (offline).
 
-    pin = WHISPER_PINS[kit.whisper_model]
+    Every pinned file must match its SHA-256 before anything is written, and
+    only the pinned files are placed.
+    """
+
+    pin = sc.WHISPER_PINS[kit.whisper_model]
     source = kit.path("inputs", whisper_snapshot_input(kit.whisper_model))
-    if sha256_file(source / "model.bin") != pin["model.bin_sha256"]:
-        raise sc.Blocked("the Whisper model.bin does not match its pinned SHA-256")
+    for name, digest in sorted(pin["files"].items()):
+        file = source / name
+        if not file.is_file() or file.is_symlink() or sha256_file(file) != digest:
+            raise sc.Blocked(f"the Whisper {name} is absent or does not match its pinned SHA-256")
     repository = "models--" + pin["repository"].replace("/", "--")
     base = whisper_dir(kit) / repository
     snapshot = base / "snapshots" / pin["revision"]
     snapshot.mkdir(parents=True, exist_ok=True)
-    for file in sorted(source.iterdir()):
-        if file.is_file() and not file.is_symlink():
-            shutil.copy2(file, snapshot / file.name)
+    for name in sorted(pin["files"]):
+        shutil.copy2(source / name, snapshot / name)
     (base / "refs").mkdir(exist_ok=True)
     (base / "refs" / "main").write_text(pin["revision"])
 
@@ -1688,8 +1749,8 @@ def file_chat(webui: sc.Endpoint, token: str, chat_model: str, file_id: str | No
     return response.status, text, sc.summarize_sources(sources), None
 
 
-def cited_fact(kit: Kit, webui: sc.Endpoint, token: str, file_id: str) -> bool:
-    status, text, summary, _ = file_chat(webui, token, kit.chat_model or "", file_id)
+def cited_fact(webui: sc.Endpoint, token: str, chat_model: str, file_id: str) -> bool:
+    status, text, summary, _ = file_chat(webui, token, chat_model, file_id)
     return status == 200 and sc.cited_answer_passes(text, summary, sc.HANDBOOK_NAME)
 
 
@@ -1803,6 +1864,7 @@ class Trial:
         self.kit = kit
         self.steps: list[Step] = []
         self.token = ""
+        self.listed_chat_model = ""
         self.seed_file = ""
         self.pre_backup_session = ""
         self.seed_window = (0.0, 0.0)
@@ -1838,6 +1900,13 @@ class Trial:
         if outcome.result in {sc.ESCALATE, sc.BLOCKED}:
             raise Stop()
 
+    def chat_id(self) -> str:
+        """The id Open WebUI lists for the designated chat model (maybe its bare name)."""
+
+        if not self.listed_chat_model:
+            self.listed_chat_model = sc.webui_chat_model(self.kit.uds(), self.token, self.kit.chat_model or "")
+        return self.listed_chat_model
+
     # Steps ------------------------------------------------------------------
     def identity(self) -> dict[str, Any]:
         kit = self.kit
@@ -1853,8 +1922,9 @@ class Trial:
             "bound_not_deployed": [{**record, "status": BOUND_NOT_DEPLOYED_STATUS} for record in manifest["bound_not_deployed"]],
             "supporting": state.get("supporting", []),
             "host_providers": {package: host_package_version(package) for package in HOST_PROVIDERS},
+            "providers_of_record": providers_of_record(),
             "module_origins": origins,
-            "whisper": {"model": kit.whisper_model, **dict(WHISPER_PINS[kit.whisper_model])},
+            "whisper": {"model": kit.whisper_model, **sc.whisper_pin_record(kit.whisper_model)},
             "jfk_flac_sha256": sc.JFK_FLAC_SHA256,
             "speech": {
                 "provider": f"{sc.SPEECH_PROVIDER_PACKAGE} {host_package_version(sc.SPEECH_PROVIDER_PACKAGE)}",
@@ -1903,8 +1973,9 @@ class Trial:
         start_open_webui(kit, restart=True)
         kit.save_state(commissioned=True)
         self.token = admin_token(kit)
-        sc.configure(kit.uds(), self.token, chat_model=kit.chat_model or "", lemond_url=kit.lemond_url,
-                     whisper_model=kit.whisper_model)
+        configured = sc.configure(kit.uds(), self.token, chat_model=kit.chat_model or "", lemond_url=kit.lemond_url,
+                                  whisper_model=kit.whisper_model)
+        self.listed_chat_model = configured["chat_model"]
         start_caddy(kit)
         return one_admin(kit.uds(), self.token)
 
@@ -1967,7 +2038,7 @@ class Trial:
             raise sc.ScenarioFailure(json.dumps(values, sort_keys=True))
         return values
 
-    def keyless(self) -> dict[str, Any]:
+    def no_credential(self) -> dict[str, Any]:
         kit = self.kit
         owui_lines = parse_unit((kit.unit_dir / UNITS["open-webui"]).read_text())
         credentials = sorted(
@@ -2000,9 +2071,9 @@ class Trial:
         systemctl("stop", UNITS["relay"])
         query = {"collection_name": f"file-{self.seed_file}", "query": sc.CANONICAL_QUERY}
         latch = uds.request("POST", "/api/v1/retrieval/query/doc", payload=query, token=self.token).status
-        chat_status, _, _, _ = file_chat(uds, self.token, kit.chat_model or "", None)
+        chat_status, _, _, _ = file_chat(uds, self.token, self.chat_id(), None)
         retrieval = uds.request("POST", "/api/v1/retrieval/query/doc", payload=query, token=self.token)
-        file_status, _, sources, detail = file_chat(uds, self.token, kit.chat_model or "", self.seed_file)
+        file_status, _, sources, detail = file_chat(uds, self.token, self.chat_id(), self.seed_file)
         health = uds.request("GET", sc.API["rag_health"], token=self.token).status
         retrieval_detail = (retrieval.json() or {}).get("detail") if retrieval.status != 200 else None
         from_gate = _rag_unavailable_detail()
@@ -2026,7 +2097,7 @@ class Trial:
         wait_until(lambda: port_in_use(PORTS["relay"]), 30, "the reranker relay")
         latched = kit.uds().request("GET", sc.API["rag_health"], token=self.token).status
         health = sc.resave_rag_config(kit.uds(), self.token)
-        cited = cited_fact(kit, kit.caddy(), self.token, self.seed_file)
+        cited = cited_fact(kit.caddy(), self.token, self.chat_id(), self.seed_file)
         values = {"latched_status": latched, "health_after_resave": health, "cited_fact": cited}
         if latched != 503 or health != 200 or not cited:
             raise sc.ScenarioFailure(json.dumps(values, sort_keys=True))
@@ -2101,7 +2172,7 @@ class Trial:
         systemctl("start", UNITS["valkey"])
         start_open_webui(kit)
         self.token = admin_token(kit)
-        cited = cited_fact(kit, kit.uds(), self.token, self.seed_file)
+        cited = cited_fact(kit.uds(), self.token, self.chat_id(), self.seed_file)
         elapsed = round(time.monotonic() - started, 3)
         checks = a_d3_checks(kit, self.anchor, restored, qdrant, self.pre_backup_session)
         start_caddy(kit)
@@ -2147,7 +2218,7 @@ class Trial:
             systemctl("start", UNITS[name])
         start_open_webui(kit)
         self.token = admin_token(kit)
-        cited = cited_fact(kit, kit.uds(), self.token, self.seed_file)
+        cited = cited_fact(kit.uds(), self.token, self.chat_id(), self.seed_file)
         state_elapsed = round(time.monotonic() - started, 3)
         checks = a_d3_checks(kit, self.anchor, restored, qdrant, pre_backup_session)
         start_caddy(kit)
@@ -2206,8 +2277,8 @@ class Trial:
         qdrant = kit.qdrant()
         return sc.Context(
             target="acceptance", webui=kit.caddy(), lemond=kit.lemond(), token=self.token,
-            settings=self.settings, chat_model=kit.chat_model or "",
-            audio=kit.path("inputs", "jfk.flac"),
+            settings=self.settings, chat_model=self.chat_id(),
+            audio=kit.path("inputs", "jfk.flac"), whisper_model=kit.whisper_model,
             stored_chunk=lambda: qdrant.stored_chunk(self.seed_file),
             journal=lambda: journal(UNITS["open-webui"]),
         )
@@ -2221,7 +2292,7 @@ class Trial:
             self.step(TRIAL_STEPS[3], self.commission, critical=True)
             self.step(TRIAL_STEPS[4], self.restart)
             self.step(TRIAL_STEPS[5], self.g4)
-            self.step(TRIAL_STEPS[6], self.keyless)
+            self.step(TRIAL_STEPS[6], self.no_credential)
             contexts: list[sc.Context] = []
             self.step("open-webui.acceptance.handbook-indexed",
                       lambda: contexts.append(self.prepare_scenarios()) or {}, critical=True)
@@ -2438,7 +2509,7 @@ def preflight_facts(kit: Kit, *, probe_only: bool) -> tuple[dict[str, Any], list
     busy = [port for name, port in PORTS.items() if (name != "stub" or kit.provider == "stub") and port_in_use(port)]
     if busy and not kit.path(KIT_STATE).exists():
         refusals.append(f"ports in use: {', '.join(map(str, busy))}")
-    if kit.whisper_model not in WHISPER_PINS:
+    if kit.whisper_model not in sc.WHISPER_PINS:
         refusals.append(f"NEEDS LEAD: no pinned revision for Whisper model {kit.whisper_model}")
     packaged: dict[str, str] | None = None
     if kit.manifest_path is None:
@@ -2468,8 +2539,11 @@ def preflight_facts(kit: Kit, *, probe_only: bool) -> tuple[dict[str, Any], list
         for package in SUPPORTING_PACKAGES:
             if host_package_version(package) is None and not list(kit.path("inputs").glob(f"{package}-*.pkg.tar.zst")):
                 refusals.append(f"approved input {package} is absent (or install it system-wide)")
-        if not kit.path("inputs", whisper_snapshot_input(kit.whisper_model), "model.bin").is_file():
-            refusals.append("the pinned Whisper snapshot is absent from inputs/")
+        if kit.whisper_model in sc.WHISPER_PINS:
+            snapshot = kit.path("inputs", whisper_snapshot_input(kit.whisper_model))
+            absent = [name for name in sorted(sc.WHISPER_PINS[kit.whisper_model]["files"]) if not (snapshot / name).is_file()]
+            if absent:
+                refusals.append(f"the pinned Whisper snapshot is incomplete in inputs/ (missing {', '.join(absent)})")
         if not kit.path("inputs", "jfk.flac").is_file():
             refusals.append("jfk.flac is absent from inputs/")
     if kit.provider == "lemond":
@@ -2541,14 +2615,18 @@ def require_marked(kit: Kit) -> None:
 
 
 def verify_supporting(kit: Kit) -> list[dict[str, Any]]:
-    """Extract supporting archives verified against the sync database, or record the host package."""
+    """Prefer the host-installed package and record its pacman identity.
+
+    Only a package the host lacks is extracted from its approved archive, after
+    the archive matches the sync database SHA-256.
+    """
 
     records = []
     desc = None
     for package in SUPPORTING_PACKAGES:
-        version = host_package_version(package)
-        if version is not None:
-            records.append({"package": package, "source": "host", "version": version})
+        identity = host_package_identity(package)
+        if identity is not None:
+            records.append(identity)
             continue
         archives = sorted(kit.path("inputs").glob(f"{package}-*.pkg.tar.zst"))
         archives = [path for path in archives if archive_package(path.name) == package]
@@ -2862,10 +2940,11 @@ def parser() -> argparse.ArgumentParser:
     common.add_argument("--root", type=Path, default=DEFAULT_ROOT, help=f"disposable acceptance root (default {DEFAULT_ROOT})")
     common.add_argument("--manifest", type=Path, help="the candidate manifest of record (name, size, SHA-256, source commit)")
     common.add_argument("--lemond-url", help=f"Lemonade origin (default {sc.DEFAULT_LEMOND_URL}; the stub origin with --provider stub)")
-    common.add_argument("--chat-model", help="the designated resident chat model; required with the Lemonade provider")
+    common.add_argument("--chat-model", help=f"the designated resident chat model; its bare name also matches (default {sc.DEFAULT_CHAT_MODEL})")
     common.add_argument("--embedding-model", help="zembed id to confirm (default: the packaged env)")
     common.add_argument("--reranking-model", help="zerank id to confirm (default: the packaged env)")
-    common.add_argument("--whisper-model", default=sc.DEFAULT_WHISPER_MODEL, help="Whisper size (default tiny)")
+    common.add_argument("--whisper-model", choices=tuple(sc.WHISPER_PINS),
+                        help=f"pinned Whisper size (default {sc.DEFAULT_WHISPER_MODEL}; tiny only when named)")
     common.add_argument("--provider", choices=("lemond", "stub"), default="lemond")
     common.add_argument("--rehearsal", action="store_true", help="required with --provider stub; writes no evidence")
     common.add_argument("--candidate-store", type=Path, default=_default_candidate_store(),
@@ -2905,11 +2984,10 @@ def kit_from_args(args: argparse.Namespace) -> Kit:
     lemond_url = args.lemond_url or staged.get("lemond_url") or (STUB_URL if args.provider == "stub" else sc.DEFAULT_LEMOND_URL)
     if args.provider == "stub" and lemond_url != STUB_URL:
         raise ValueError(f"the rehearsal provider is the stub at {STUB_URL}")
-    chat_model = args.chat_model or staged.get("chat_model")
-    if args.provider == "stub" and chat_model is None:
-        chat_model = "household-chat-stub-v1"
-    if args.command in {"trial", "resmoke", "up"} and args.provider == "lemond" and not chat_model:
-        raise ValueError("--chat-model is required with the Lemonade provider")
+    chat_model = args.chat_model or staged.get("chat_model") or (
+        "household-chat-stub-v1" if args.provider == "stub" else sc.DEFAULT_CHAT_MODEL
+    )
+    whisper_model = args.whisper_model or staged.get("whisper_model") or sc.DEFAULT_WHISPER_MODEL
     return Kit(
         root=root,
         manifest_path=args.manifest,
@@ -2919,7 +2997,7 @@ def kit_from_args(args: argparse.Namespace) -> Kit:
         chat_model=chat_model,
         embedding_model=args.embedding_model,
         reranking_model=args.reranking_model,
-        whisper_model=args.whisper_model,
+        whisper_model=whisper_model,
         candidate_store=args.candidate_store,
         runtime_dir=Path(runtime),
     )

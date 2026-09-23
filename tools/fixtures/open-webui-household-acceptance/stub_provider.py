@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Keyless, loopback-only, deterministic Lemonade stand-in for the kit rehearsal.
+"""Credential-free, loopback-only, deterministic Lemonade stand-in for the kit rehearsal.
 
 The rehearsal is kit debugging only: it is never trial evidence.  This stub
 serves the Lemonade routes Open WebUI and the scenario module use, with the

@@ -364,14 +364,15 @@ class TemplateTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             scenarios.render_valkey_acl("correct horse")
 
-    def test_connection_seed_is_exactly_the_three_keyless_keys(self):
+    def test_connection_seed_is_exactly_the_three_credential_free_keys(self):
         seed = scenarios.connection_seed()
         self.assertEqual(set(seed), {"ENABLE_OLLAMA_API", "OPENAI_API_BASE_URLS", "OPENAI_API_KEYS"})
         self.assertEqual(set(seed), scenarios.CONNECTION_SEED_KEYS)
         self.assertEqual(seed["ENABLE_OLLAMA_API"], "false")
         self.assertEqual(seed["OPENAI_API_BASE_URLS"], "http://127.0.0.1:13305/api/v1")
         self.assertEqual(seed["OPENAI_API_KEYS"], "")
-        self.assertEqual(scenarios.speech_environment(), {"WHISPER_MODEL": "tiny", "HF_HUB_OFFLINE": "1"})
+        self.assertEqual(scenarios.speech_environment(), {"WHISPER_MODEL": "base", "HF_HUB_OFFLINE": "1"})
+        self.assertEqual(scenarios.speech_environment("tiny")["WHISPER_MODEL"], "tiny")
         env = packaged_env()
         self.assertEqual({key: env[key] for key in scenarios.CONNECTION_SEED_KEYS}, seed)
 
@@ -450,6 +451,56 @@ class LemonadeSafetyTests(unittest.TestCase):
         with self.assertRaisesRegex(scenarios.Blocked, "has not loaded chat"):
             scenarios.require_models_ready(models, health, ("a", "b", "chat"))
         scenarios.require_models_ready(models, health, ("a", "b"))
+
+    def test_a_user_prefixed_id_and_its_bare_name_are_the_same_model(self):
+        canonical = "user.Qwen3.6-35B-A3B-MTP-GGUF-UD-Q4_K_XL"
+        bare = "Qwen3.6-35B-A3B-MTP-GGUF-UD-Q4_K_XL"
+        self.assertEqual(scenarios.bare_model_id(canonical), bare)
+        self.assertEqual(scenarios.bare_model_id(bare), bare)
+        self.assertEqual(scenarios.bare_model_id("user.user.x"), "user.x")
+        for listed, wanted in ((bare, canonical), (canonical, bare), (canonical, canonical), (bare, bare)):
+            models = {"data": [{"id": "e"}, {"id": listed}]}
+            health = {"all_models_loaded": [{"model_name": "e"}, {"model_name": listed}]}
+            scenarios.require_models_ready(models, health, ("e", wanted))
+        loaded_bare = {"all_models_loaded": [{"model_name": "e"}], "model_loaded": bare}
+        scenarios.require_models_ready({"data": [{"id": canonical}]}, loaded_bare, (canonical,))
+        with self.assertRaisesRegex(scenarios.Blocked, "has not loaded"):
+            scenarios.require_models_ready(
+                {"data": [{"id": bare}]}, {"all_models_loaded": [{"model_name": "e"}]}, (canonical,)
+            )
+        with self.assertRaisesRegex(scenarios.Blocked, "does not serve"):
+            scenarios.require_models_ready({"data": [{"id": "user.other"}]}, {}, (canonical,))
+
+    def test_the_open_webui_chat_id_is_the_listed_form_of_the_designated_model(self):
+        canonical = scenarios.DEFAULT_CHAT_MODEL
+        bare = scenarios.bare_model_id(canonical)
+        self.assertEqual(canonical, "user.Qwen3.6-35B-A3B-MTP-GGUF-UD-Q4_K_XL")
+        self.assertEqual(scenarios.listed_model_id({bare, "x"}, canonical), bare)
+        self.assertEqual(scenarios.listed_model_id({canonical, bare}, canonical), canonical)
+        self.assertEqual(scenarios.listed_model_id({canonical}, bare), canonical)
+        self.assertIsNone(scenarios.listed_model_id({"x"}, canonical))
+
+    def test_configure_sets_the_listed_chat_id_as_the_default(self):
+        bare = scenarios.bare_model_id(scenarios.DEFAULT_CHAT_MODEL)
+        posted = {}
+
+        class FakeWebui:
+            def json(self, method, path, payload=None, token=None):
+                if method == "POST":
+                    posted[path] = payload
+                    return {}
+                return {"data": [{"id": bare}]} if path == scenarios.API["models"] else {}
+
+        summary = scenarios.configure(FakeWebui(), "t", chat_model=scenarios.DEFAULT_CHAT_MODEL)
+        self.assertEqual(posted[scenarios.API["models_config"]]["DEFAULT_MODELS"], bare)
+        self.assertEqual(summary["chat_model"], bare)
+        self.assertEqual(summary["designated_chat_model"], scenarios.DEFAULT_CHAT_MODEL)
+        self.assertEqual(summary["whisper_model"], "base")
+
+    def test_the_resmoke_chat_model_defaults_to_the_owner_pin(self):
+        args = scenarios._parser().parse_args(["resmoke", "--target", "production", "--receipt", "r.json"])
+        self.assertEqual(args.chat_model, scenarios.DEFAULT_CHAT_MODEL)
+        self.assertEqual(args.whisper_model, "base")
 
     def test_rerank_results_are_validated(self):
         self.assertEqual(
@@ -533,6 +584,25 @@ class SpeechTests(unittest.TestCase):
         self.assertIn("e12fdd98251a01cdc99f22a5a113741b2473b107", source)
         self.assertEqual(scenarios.WHISPER_TINY["revision"], "d90ca5fe260221311c53c58e660288d3deb8d356")
         self.assertRegex(scenarios.JFK_FLAC_SHA256, r"^[0-9a-f]{64}$")
+
+    def test_whisper_base_is_the_default_and_pinned_by_revision_and_file_digests(self):
+        self.assertEqual(scenarios.DEFAULT_WHISPER_MODEL, "base")
+        self.assertEqual(set(scenarios.WHISPER_PINS), {"base", "tiny"})
+        base = scenarios.whisper_pin_record("base")
+        self.assertEqual(base["repository"], "Systran/faster-whisper-base")
+        self.assertEqual(base["revision"], "ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66")
+        self.assertEqual(
+            base["files"]["model.bin"], "d01c3014881c9c6f3133c182f3d2887eb6ca1c789a7538c5c007196857a0a6a9"
+        )
+        tiny = scenarios.whisper_pin_record("tiny")
+        self.assertEqual(
+            tiny["files"]["model.bin"], "dcb76c6586fc06cbdac6dd21f14cfd129cc4cdd9dce19bf4ffa62e59cbe6e6d1"
+        )
+        for record in (base, tiny):
+            self.assertEqual(set(record["files"]), {"config.json", "model.bin", "tokenizer.json", "vocabulary.txt"})
+            for digest in record["files"].values():
+                self.assertRegex(digest, r"^[0-9a-f]{64}$")
+            json.dumps(record)
 
 
 class ReceiptTests(unittest.TestCase):

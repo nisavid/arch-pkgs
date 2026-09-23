@@ -30,9 +30,13 @@ fixes the shape:
   [Deploy the accepted Open WebUI household stack](https://github.com/nisavid/arch-pkgs/issues/59).
 - The only resource gates are **no OOM kill** and **no unplanned restart**.
   Every other resource value is recorded, not gated.
-- Open WebUI's Lemonade connection uses no credential (owner decision, amended
-  X5). The ticket's Lemonade-key and port-8000 items are superseded; the
-  keyless check below replaces them.
+- Open WebUI's Lemonade connection uses no credential in this refresh (owner
+  decision). The ticket's earlier Lemonade-connection items are superseded;
+  the no-credential check below replaces them.
+- The trial runs on the host's real ML provider set (owner decision). The
+  evidence records each provider's pacman identity as a knowingly-foreign
+  provider of record, and no provider is overlaid; see
+  [Evidence handling](#evidence-handling).
 
 ## Prerequisites
 
@@ -69,12 +73,25 @@ rehearsal may run earlier.
    lowered; a quota trip stops the trial with no override.
 4. **Approved inputs.** With the user's explicit download permission, placed
    under `<root>/inputs/` and checked by digest:
-   - `caddy`, `python-omegaconf`, and `python-antlr4` archives, each verified
-     against the sync database `%SHA256SUM%`, unless the owner has installed
-     them system-wide;
-   - the whisper model snapshot `Systran/faster-whisper-tiny` at revision
-     `d90ca5fe260221311c53c58e660288d3deb8d356`, `model.bin` SHA-256
-     `dcb76c6586fc06cbdac6dd21f14cfd129cc4cdd9dce19bf4ffa62e59cbe6e6d1`;
+   - `caddy`, `python-omegaconf`, and `python-antlr4`: the kit prefers the
+     host-installed package and records its pacman identity (version,
+     architecture, build date, install reason). Only for a package the host
+     lacks does it extract an archive from `<root>/inputs/`, after checking
+     it against the sync database `%SHA256SUM%`;
+   - the Whisper model snapshot `Systran/faster-whisper-base` at revision
+     `ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66`, as the flat directory
+     `<root>/inputs/faster-whisper-base/` holding exactly these files:
+
+     | File | SHA-256 |
+     | --- | --- |
+     | `config.json` | `56a6d8110d311f19c8f0471e562832c7527f146b567275bfca59fcf7c184da9a` |
+     | `model.bin` | `d01c3014881c9c6f3133c182f3d2887eb6ca1c789a7538c5c007196857a0a6a9` |
+     | `tokenizer.json` | `fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab` |
+     | `vocabulary.txt` | `34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913` |
+
+     `stage` checks every digest before it places anything, and places only
+     these four files. `tiny` stays available only when `--whisper-model tiny`
+     is named; its pins are in `tools/open_webui_household_scenarios.py`;
    - the audio clip `jfk.flac` from faster-whisper 1.2.1, SHA-256
      `63a4b1e4c1dc655ac70961ffbf518acd249df237e5a0152faae9a4a836949715`.
 5. **Resident models.** The zembed, zerank, and designated chat models are
@@ -100,15 +117,17 @@ committed; the evidence records each value used.
 | `--root DIR` | `/srv/build/arch-pkgs-owui-acceptance` | Disposable acceptance root. It holds a `.owui-acceptance` marker, and teardown deletes only a marked root. |
 | `--manifest FILE` | none; required | The candidate manifest of record from the build ticket (name, size, SHA-256, source commit). |
 | `--lemond-url URL` | `http://127.0.0.1:13305` | Lemonade base URL. Only `GET /api/v1/health`, `GET /api/v1/models`, and inference requests are sent. In record mode it must be the provider origin of the packaged `open-webui.env` (`RAG_OPENAI_API_BASE_URL` and `RAG_EXTERNAL_RERANKER_URL`); otherwise preflight and every re-entry exit 75. |
-| `--chat-model ID` | none; the lead designates it | The resident chat model used for ordinary chat and the cited answer. The proposed value, awaiting owner confirmation, is `Qwen3.6-35B-A3B-MTP-GGUF-UD-Q4_K_XL`. |
+| `--chat-model ID` | `user.Qwen3.6-35B-A3B-MTP-GGUF-UD-Q4_K_XL` (owner-pinned) | The resident chat model used for ordinary chat and the cited answer. Readiness accepts this canonical id or its bare form without the leading `user.`. |
 | `--embedding-model ID` | the packaged env's `RAG_EMBEDDING_MODEL` | zembed id that must be served and loaded. |
 | `--reranking-model ID` | the packaged env's `RAG_RERANKING_MODEL` | zerank id that must be served and loaded. |
-| `--whisper-model NAME` | `tiny` | Whisper size; the pinned revision and `model.bin` SHA-256 are recorded. |
+| `--whisper-model NAME` | `base` | Pinned Whisper size, `base` or `tiny`; the revision and every file SHA-256 are recorded. |
 | `--provider stub\|lemond` | `lemond` | `stub` serves the rehearsal from `stub_provider.py`; `lemond` is the trial. |
 | `--rehearsal` | off | Required with `--provider stub`; marks every output `mode=rehearsal`. |
 
 A served model id that differs from the expected one exits 75 and escalates.
-The kit never remaps ids silently; a mismatch means a new candidate or a
+The one equivalence is a leading `user.`: a canonical `user.` id and its bare
+name name the same model, because Lemonade's listings may show either.
+Otherwise the kit never remaps ids; a mismatch means a new candidate or a
 lead-approved override.
 
 ## Command sequence
@@ -119,7 +138,7 @@ not hold.
 
 ```bash
 kit=tools/accept_open_webui_household.py
-args=(--root <root> --manifest <manifest> --chat-model <chat-model>)
+args=(--root <root> --manifest <manifest>)
 
 python3 "$kit" preflight "${args[@]}"   # read-only
 python3 "$kit" stage     "${args[@]}"   # extract, render, mint, initialize
@@ -168,7 +187,7 @@ only.
 | `open-webui.acceptance.auth.one-admin` (A-S2) | The packaged `open-webui-commission-admin` succeeds; signup off and exactly one admin, rechecked after both drills. | exact |
 | `open-webui.acceptance.ready.restart` (A-R1) | Restart to UDS `/ready` 200 plus authenticated retrieval health 200. | ceiling 25 s |
 | `open-webui.acceptance.qdrant.g4` (A-S3, A-S4) | Fresh 1.19 state; five `open-webui-rag-v1` collections, 2,560-dim cosine, payload indexes `tenant_id`, `metadata.hash`, `metadata.file_id`; the runtime holds only the `prw` JWT; the negative probe (an `r` JWT upsert and a `prw` collection create or delete return 403). | exact |
-| `open-webui.acceptance.lemonade.keyless` (A-S5) | No Lemonade key anywhere: five secret credentials plus the session-epoch credential; empty API-key fields in the env, overlay, SQLite config, and admin exports. | exact |
+| `open-webui.acceptance.lemonade.no-credential` (A-S5) | Open WebUI holds no credential for its Lemonade connection: five secret credentials plus the session-epoch credential; empty API-key fields in the env, overlay, SQLite config, and admin exports. | exact |
 | `open-webui.resmoke.zembed-canary` (A-R3) | 2,560 dims, `\|norm − 1\| ≤ 0.001`, margin ≥ 0.20, prefixes read from the running process's settings; one indexed chunk's stored vector has cosine ≥ 0.999 with the direct content-prefixed vector. | fixed; failure exits 3 and escalates |
 | `open-webui.resmoke.zerank-qualification` (A-R4) | Retrieval health 200 after start; a direct rerank gives finite scores with the relevant document first. | pass/fail |
 | `open-webui.acceptance.route.caddy-uds` (A-S1) | HTTPS 200 through Caddy to the socket; authenticated WebSocket 101; no Open WebUI TCP listener and no non-loopback listener on the Caddy port. Rechecked after both drills. | exact |
@@ -295,7 +314,7 @@ python3 "$kit" teardown  "${args[@]}"
 ```
 
 - It runs against `tools/fixtures/open-webui-household-acceptance/stub_provider.py`,
-  a keyless deterministic provider. The sampler allowlist excludes the
+  a credential-free deterministic provider. The sampler allowlist excludes the
   Lemonade origin, so any Lemonade contact fails the rehearsal.
 - It may exercise each drill code path once, because the real trial runs only
   once.
@@ -313,13 +332,14 @@ real model's verbatim answer, or provider timings. Only the trial does.
   `docs/maintainers/evidence/open-webui-household-acceptance-<YYYY-MM-DD>.json`.
   It lands as a follow-up commit on the kit PR, or as a stacked PR if the kit
   has already merged. The ticket closes only when that evidence merges.
-- It binds the archive identities, the supporting archives, the host provider
-  identities, the whisper model and audio pins, the Lemonade version, the
+- It binds the archive identities, the supporting packages (host pacman
+  identity or verified archive), the host provider identities, the
+  knowingly-foreign providers of record, the Whisper model and audio pins, the Lemonade version, the
   pre- and post-trial model snapshots, the M4 receipt ids, the canary texts,
   every trial value, the A-ID2 table, and the disposition.
 - The kit's public-safety check runs on it before it is written. Ports appear
   only as `loopback:<port>` tokens, loopback ranges as `loopback/<prefix>`, and
-  a non-loopback Lemonade origin as `<lemond>`; the root path, hostnames, and
+  a non-default Lemonade origin as `<lemond>`; the root path, hostnames, and
   addresses never appear.
 - The full document is always written first to
   `<root>/evidence/raw/trial-evidence.json` (mode 0600). If the public-safety
@@ -401,14 +421,14 @@ systemd-run --user --pipe --wait --collect \
   -p LoadCredentialEncrypted=resmoke-password:"$HOME/.config/credstore.encrypted/open-webui-resmoke.password" \
   /usr/bin/python3 <kit-checkout>/tools/open_webui_household_scenarios.py resmoke \
     --target production --origin https://<household-origin> \
-    --lemond-url <lemond-url> --chat-model <chat-model> \
+    --lemond-url <lemond-url> \
     --audio <retained>/jfk.flac --scenario all --receipt <out>.json
 ```
 
 Add `--cacert <household-ca>` when the origin's certificate is not in the
 system trust store. `--embedding-model`, `--reranking-model`, and
 `--whisper-model` default to the frozen values and are passed only to confirm
-them.
+them. `--chat-model` defaults to the owner-pinned id.
 
 In production each scenario checks:
 
@@ -425,10 +445,8 @@ In production each scenario checks:
 Before the production install, or if it is deferred, revive the kept anchor:
 
 ```bash
-python3 tools/accept_open_webui_household.py up \
-  --root <root> --manifest <manifest> --chat-model <chat-model>
-python3 tools/accept_open_webui_household.py resmoke \
-  --root <root> --manifest <manifest> --chat-model <chat-model>
+python3 tools/accept_open_webui_household.py up --root <root> --manifest <manifest>
+python3 tools/accept_open_webui_household.py resmoke --root <root> --manifest <manifest>
 python3 tools/accept_open_webui_household.py down --root <root> --manifest <manifest>
 ```
 
@@ -449,7 +467,9 @@ no receipt in rehearsal mode.
   with the same restart request unless the service's `ActiveEnterTimestamp`
   is later than the provider's install date.
 - **Model ids.** A missing or different served id exits 75 and escalates. The
-  module never remaps.
+  module never remaps, except that a canonical `user.` id and its bare name
+  are the same model. Open WebUI's chat requests use whichever form Open WebUI
+  lists.
 - **Receipt.** Schema `open-webui-household-resmoke/v1`, one
   `<id> PASS|FAIL <detail>` line per scenario on stdout, and a JSON receipt
   with the scenario ids and results, the Lemonade version and start time, the
@@ -461,13 +481,14 @@ no receipt in rehearsal mode.
 
 ## Ported constants
 
-These constants are copied from open pull requests. Each carries its source
-commit. When those pull requests merge, a one-line consistency check compares
-the kit's copies with the merged values.
+Each constant below carries its source. For those copied from open pull
+requests, a one-line consistency check compares the kit's copies with the
+merged values once those pull requests merge.
 
 | Constant | Source |
 | --- | --- |
-| Whisper model repository, revision, and `model.bin` SHA-256; `jfk.flac` SHA-256 | [feat(ctranslate2): update to 4.8.2 with speech G0-G2 evidence](https://github.com/nisavid/arch-pkgs/pull/92), commit `e12fdd9` |
+| `tiny` Whisper repository, revision, and `model.bin` SHA-256; `jfk.flac` SHA-256 | [feat(ctranslate2): update to 4.8.2 with speech G0-G2 evidence](https://github.com/nisavid/arch-pkgs/pull/92), commit `e12fdd9` |
+| `base` Whisper revision and file SHA-256 values; the other `tiny` file digests | The Hugging Face API, read-only, on 2026-09-23: the revision and `model.bin` LFS SHA-256 from `https://huggingface.co/api/models/Systran/faster-whisper-base?blobs=true`, and the other digests from the files at that revision |
 | Collection body, payload indexes, and the HS256 `prw`/`r` JWT mint | [feat(qdrant): add production cutover route and rebind accepted candidates](https://github.com/nisavid/arch-pkgs/pull/93), commit `b99f9bd` |
 
 ## Cleanup
