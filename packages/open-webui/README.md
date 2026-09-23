@@ -294,10 +294,10 @@ In userspace-networking mode, `tailscaled` forwards tailnet TCP and UDP
 traffic on any port it does not serve to that port on the host's `127.0.0.1`,
 whether the peer used the node's IPv4 or IPv6 tailnet address. That would open
 every service that listens on the host's `127.0.0.1`, such as Valkey, Qdrant,
-and Lemonade, to the tailnet. Tailscale has no setting that turns the forward
-off, and `--shields-up` would also block the serve route. The unit therefore
-sets `IPAddressDeny=127.0.0.1 ::1`. The daemon does not forward to `::1`, so
-that entry only guards against a future change. Keep the deny unchanged:
+and Lemonade, to the tailnet. Tailscale 1.102.2 has no setting that turns the
+forward off, and `--shields-up` would also block the serve route. The unit
+therefore sets `IPAddressDeny=127.0.0.1 ::1`. The forward never dials `::1`,
+so that entry only guards against a future change. Keep the deny unchanged:
 
 - `localhost` (`127.0.0.0/8` and `::1`) and `RestrictNetworkInterfaces=~lo`
   would also block the systemd-resolved stub at `127.0.0.53`, which the
@@ -341,7 +341,9 @@ forwards it, so that traffic neither reaches the deny nor holds a slot. If you
 narrow the policy, do it only after step 2's check has passed. Tailscale
 policy rules only grant access, so a new `tcp:443` rule changes nothing by
 itself: the default allow-all rule, and every other rule that covers this
-node, must stop covering it.
+node, must stop covering it. Because a rule cannot exclude one node, narrowing
+the allow-all rule changes access across the tailnet; grant other devices the
+access they had through it again.
 
 The forwarding code ships in the `tailscale` package, and an upgrade does not
 restart this unit. After each `tailscale` upgrade, restart
@@ -362,11 +364,11 @@ A later custom domain is an open choice between two variants. Both use
 turned off:
 
 - TLS passthrough to a local terminator on a Unix socket:
-  `serve --tcp=443 unix:/run/<dir>/<sock>`, run as root like any `unix:`
+  `serve --bg --tcp=443 unix:/run/<dir>/<sock>`, run as root like any `unix:`
   target. It needs no unit change, but it cannot carry the PROXY protocol, so
   the terminator does not see the client's address.
 - A terminator on `127.0.0.2`, an address outside the deny:
-  `serve --tcp=443 --proxy-protocol=2 tcp://127.0.0.2:<port>`. The PROXY
+  `serve --bg --tcp=443 --proxy-protocol=2 tcp://127.0.0.2:<port>`. The PROXY
   header carries the client's address, but this variant is fragile: it
   breaks if the deny is ever widened, and the terminator must trust PROXY
   headers from `127.0.0.1`, which any local process can forge. It is
