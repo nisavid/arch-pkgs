@@ -1,0 +1,16 @@
+# Dedicated Valkey for Open WebUI sessions and websockets.
+# Rendered by tools/open_webui_household_scenarios.py.
+# RDB only: the backup tuple is dump.rdb, so append-only files stay off.
+bind 127.0.0.1
+port @PORT@
+protected-mode yes
+aclfile @ACL_FILE@
+dir @DIR@
+dbfilename dump.rdb
+appendonly no
+save 900 1
+save 300 10
+save 60 10000
+maxmemory-policy noeviction
+daemonize no
+logfile ""
