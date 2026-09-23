@@ -487,6 +487,7 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
             "SupplementaryGroups=open-webui-proxy",
             "StateDirectory=open-webui-tailnet",
             "RuntimeDirectory=open-webui-tailnet",
+            "Environment=TS_NO_LOGS_NO_SUPPORT=true\n",
             "ProtectSystem=strict",
             "ProtectHome=yes",
             "NoNewPrivileges=yes",
