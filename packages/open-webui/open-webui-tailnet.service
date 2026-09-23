@@ -44,7 +44,7 @@ RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 # itself serves; ::1 is a guard. Unix sockets are not filtered. Keep exactly
 # these addresses: `localhost` or RestrictNetworkInterfaces=~lo would also
 # block the 127.0.0.53 resolver stub, and IPAddressAllow= would undo the deny.
-# See "Loopback deny" in the package README.
+# See "Denying 127.0.0.1 and ::1" in the package README.
 IPAddressDeny=127.0.0.1 ::1
 RestrictNamespaces=yes
 RestrictRealtime=yes
