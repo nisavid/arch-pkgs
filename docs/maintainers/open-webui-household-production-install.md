@@ -98,11 +98,18 @@ The retained state is data only. It is never restored automatically and is
 kept until
 [Release retained rollback anchors and clean target-local state](https://github.com/nisavid/arch-pkgs/issues/62).
 
-- Rollback, before P1:
-  `sudo mv /var/lib/open-webui.legacy-0.11.0-1 /var/lib/open-webui && sudo systemctl enable --now open-webui.service`.
-  After P1 and before P2, first finish the Qdrant runbook's
-  `rollback --apply`, which refuses while `open-webui.service` is active,
-  then run the same command.
+- Rollback, before P2. After P1, first finish the Qdrant runbook's
+  `rollback --apply`, which refuses while `open-webui.service` is active.
+  Any pacman transaction that ships a tmpfiles rule (the Qdrant route runs
+  two) can recreate an empty `/var/lib/open-webui`, so `mv -T` replaces
+  that empty directory and refuses a non-empty one, and the old service
+  starts only when its database is back in place:
+
+  ```bash
+  sudo mv -T /var/lib/open-webui.legacy-0.11.0-1 /var/lib/open-webui
+  sudo test -f /var/lib/open-webui/webui.db && sudo systemctl enable --now open-webui.service
+  ```
+
 - HAND-BACK: `HAND-BACK: open-webui P0 legacy stopped and retained`
 - Agent: `systemctl is-active open-webui.service` is inactive, and
   `ss -ltnH 'sport = :8080'` prints nothing.
@@ -118,7 +125,9 @@ sudo sh -c 'printf probe | systemd-creds encrypt --name=probe - - | systemd-cred
 ```
 
 It must print `probe`. If it fails (on a host where TPM2 unsealing fails, the
-decrypt reports a TPM2 unseal error), try the host key:
+decrypt reports a TPM2 unseal error), try the host key. If
+`/var/lib/systemd/credential.secret` does not exist yet, this first host-key
+encrypt creates it, as any host-key encrypt would:
 
 ```bash
 sudo sh -c 'printf probe | systemd-creds encrypt --with-key=host --name=probe - - | systemd-creds decrypt --name=probe - -'; echo
@@ -147,6 +156,10 @@ Then confirm both are set; this must print the mode:
 echo "${creds_mode:?creds_mode is unset}"
 ```
 
+Every block below that encrypts a credential runs in a subshell whose first
+line checks `creds_mode`. If it is unset, for example in a new shell, the
+whole block stops before it writes anything.
+
 If both fail, stop: the owner repairs credential decryption before this
 install continues.
 
@@ -161,7 +174,7 @@ option forces one mode: its own preflight then probes only that mode, and
 cutover encrypts the runtime credential in it. P1 passes `creds_mode`, so
 every credential Open WebUI loads uses the mode chosen here.
 
-- Rollback: none; the probe writes nothing.
+- Rollback: none; the probe writes no credential.
 - HAND-BACK: `HAND-BACK: open-webui P0.1 credential mode <auto|host>`
 - Agent: none; the owner's output is the proof.
 
@@ -197,8 +210,8 @@ that verify's `HAND-BACK:` line prints, exactly as printed and without
 
 ## P2: install the packages
 
-Run on a fully upgraded host (the owner's routine `sudo pacman -Syu`), with
-Qdrant held as the Qdrant runbook says.
+Run on a fully upgraded host (the owner's routine `sudo pacman -Syu`). P1
+already moved Qdrant to 1.19.0-1, so it needs no hold here.
 
 ```bash
 sudo pacman -S nisavid/open-webui nisavid/python-rapidocr nisavid/python-faster-whisper
@@ -251,10 +264,13 @@ sudo pacman -Rns hayhooks
 ### P3.1 Stable keys
 
 ```bash
+(
+: "${creds_mode:?run P0.1 first}"
 for n in webui-secret-key oauth-client-info-encryption-key oauth-session-token-encryption-key; do
   openssl rand -hex 32 \
     | sudo systemd-creds encrypt "${creds_key[@]}" --name="$n" - "/etc/credstore.encrypted/open-webui.$n"
 done
+)
 ```
 
 `creds_key` comes from [P0.1](#p01-credential-mode-preflight).
@@ -271,6 +287,8 @@ including `-flushall -flushdb`; a test compares the `printf` line below with
 that template, so the two cannot drift.
 
 ```bash
+(
+: "${creds_mode:?run P0.1 first}"
 sudo install -d -o valkey -g valkey -m 0700 /var/lib/valkey/open-webui
 
 sudo install -m 0640 -o root -g valkey /dev/stdin /etc/valkey/open-webui.conf <<'EOF'
@@ -300,11 +318,14 @@ ExecStart=/usr/bin/valkey-server /etc/valkey/open-webui.conf --supervised system
 EOF
 
 sudo systemctl daemon-reload
-sudo systemctl enable --now valkey.service
+sudo systemctl enable valkey.service
+sudo systemctl restart valkey.service
+)
 ```
 
 The password never reaches the screen, an argument list, or shell history; the
-ACL stores only its SHA-256.
+ACL stores only its SHA-256. The block restarts Valkey rather than only
+starting it, so a rerun always loads the ACL file it just wrote.
 
 - Rollback:
   `sudo systemctl disable --now valkey.service && sudo rm /etc/systemd/system/valkey.service.d/10-open-webui.conf /etc/valkey/open-webui.conf /etc/valkey/open-webui.acl /etc/credstore.encrypted/open-webui.valkey-url && sudo systemctl daemon-reload`
@@ -323,9 +344,11 @@ for n in webui-secret-key oauth-client-info-encryption-key oauth-session-token-e
 done
 ```
 
-A missing `ok` means that credential was written in another mode, for
-example from a shell where `creds_key` was unset. Remove it, set the P0.1
-variables again, and rewrite it before P4.
+A missing `ok` means that credential was written in another mode. For one of
+the three P3.1 keys, remove it and rerun P3.1. For `valkey-url`, remove it
+and rerun all of P3.2, which writes a new password and ACL and restarts
+Valkey. For `qdrant-runtime-api-key`, do not remove it: only the Qdrant
+route mints it, so stop and ask the lead.
 
 ### P3.4 Connection seed and speech settings
 
@@ -447,6 +470,8 @@ reach the socket.
    time as `systemd-ask-password`:
 
    ```bash
+   (
+   : "${creds_mode:?run P0.1 first}"
    sudo -v
    for n in admin-email admin-name admin-bootstrap-password admin-final-password; do
      systemd-ask-password -n "$n" \
@@ -455,6 +480,7 @@ reach the socket.
    for n in admin-email admin-name admin-bootstrap-password admin-final-password; do
      sudo systemd-creds decrypt --name="$n" "/etc/credstore.encrypted/open-webui.$n" - >/dev/null && echo "$n ok"
    done
+   )
    ```
 
    Each of the last four lines must end in `ok`.
@@ -472,12 +498,13 @@ reach the socket.
 
 3. First start, then the root commissioning command. The unit is
    `Type=simple` and the first start runs the database migrations, so wait
-   for `/ready` (up to 15 minutes) before commissioning:
+   for `/ready` (up to 15 minutes, or until the unit fails) before commissioning.
+It must print `ready`:
 
    ```bash
    sudo systemctl daemon-reload
    sudo systemctl start open-webui.service
-   sudo timeout 900 sh -c 'until curl -sf --unix-socket /run/open-webui/open-webui.sock http://localhost/ready >/dev/null; do sleep 2; done' && echo ready
+   sudo timeout 900 sh -c 'until curl -sf --unix-socket /run/open-webui/open-webui.sock http://localhost/ready >/dev/null; do systemctl -q is-failed open-webui.service && exit 1; sleep 2; done' && echo ready
    sudo systemd-run --pipe --wait --collect \
      -p LoadCredentialEncrypted=admin-email:/etc/credstore.encrypted/open-webui.admin-email \
      -p LoadCredentialEncrypted=admin-name:/etc/credstore.encrypted/open-webui.admin-name \
@@ -508,7 +535,7 @@ reach the socket.
    sudo systemctl daemon-reload
    sudo systemctl enable open-webui.service
    sudo systemctl restart open-webui.service
-   sudo timeout 180 sh -c 'until curl -sf --unix-socket /run/open-webui/open-webui.sock http://localhost/ready >/dev/null; do sleep 2; done' && echo ready
+   sudo timeout 180 sh -c 'until curl -sf --unix-socket /run/open-webui/open-webui.sock http://localhost/ready >/dev/null; do systemctl -q is-failed open-webui.service && exit 1; sleep 2; done' && echo ready
    sudo curl -sf --unix-socket /run/open-webui/open-webui.sock http://localhost/api/config \
      | jq -e '.features.enable_signup == false'
    ```
@@ -571,7 +598,10 @@ Tailscale added a suffix, the P3.4 origin no longer matches, so stop and
 settle the origin with the lead before P5.3. Then, in the Tailscale admin
 console, disable key expiry for the `<name>` node.
 
-- Rollback: `sudo tailscale --socket=/run/open-webui-tailnet/tailscaled.sock logout && sudo systemctl disable --now open-webui-tailnet.service`
+- Rollback, as two commands so the unit is disabled even if `logout`
+  fails:
+  `sudo tailscale --socket=/run/open-webui-tailnet/tailscaled.sock logout`,
+  then `sudo systemctl disable --now open-webui-tailnet.service`.
 - HAND-BACK: `HAND-BACK: open-webui P5.1 sidecar logged in as <name>, key expiry off`
 - Agent: none; the LocalAPI socket is root-only, so the owner's `status`
   output is the proof.
@@ -655,6 +685,8 @@ smoke account,
 [Deploy the accepted Open WebUI household stack](https://github.com/nisavid/arch-pkgs/issues/59)
 stays open until the lead names another proof for them.
 
+- Rollback: delete the account in the admin UI and remove its two
+  credential files.
 - HAND-BACK: `HAND-BACK: open-webui smoke account ready`
 - Agent: the re-smoke precondition passes: the account signs in and Open
   WebUI lists the chat model for it.
@@ -704,18 +736,23 @@ sudo sh -c '
 ' sh "$a"
 ```
 
-Then record the digests and reopen:
+It must print five `saved` lines. Then record the digests, which refuses
+unless all five snapshot files exist, and reopen, Valkey first:
 
 ```bash
-sudo sh -c 'cd "$1" && find . -type f ! -name SHA256SUMS -exec sha256sum {} + >SHA256SUMS' sh "$a"
-sudo systemctl start valkey.service open-webui.service
+sudo sh -c 'test "$(find "$1/qdrant" -name "*.snapshot" | wc -l)" -eq 5 && cd "$1" && find . -type f ! -name SHA256SUMS -exec sha256sum {} + >SHA256SUMS' sh "$a" && echo recorded
+sudo systemctl start valkey.service
+sudo systemctl start open-webui.service
 ```
 
 The acceptance drill receipts and this anchor together record the drills for
 this install, unless the lead asks for production drills.
 
-- Rollback: none needed; the anchor is additive.
-- HAND-BACK: `HAND-BACK: open-webui P6 anchor retained <anchor-id>`
+- Rollback: the anchor is additive. If a step fails part-way, remove the
+  partial `"$a"` and reopen with `sudo systemctl start valkey.service`, then
+  `sudo systemctl start open-webui.service`.
+- HAND-BACK: `HAND-BACK: open-webui P6 anchor retained <anchor-id>`, where
+  `<anchor-id>` is the anchor directory's name
 - Agent: HTTPS 200 again after reopening.
 
 ## P7: owner-run verification
@@ -780,11 +817,12 @@ The acceptance trial values are the baseline.
   sudo tailscale --socket=/run/open-webui-tailnet/tailscaled.sock serve --https=443 off
   sudo systemctl stop open-webui.service
   sudo /usr/lib/open-webui/open-webui-session-epoch-ledger reserve
-  sudo sh -c 'cd "$1" && sha256sum -c SHA256SUMS' sh <anchor>
+  sudo sh -c 'cd "$1" && sha256sum --quiet -c SHA256SUMS' sh <anchor>
   sudo pacman -U <anchor>/archives/{open-webui-0.11.0-6-x86_64,python-rapidocr-3.9.2-1-any,python-faster-whisper-1.2.1-1-any}.pkg.tar.zst
   ```
 
-  Then restore the tuple from the anchor: the Valkey RDB, the data
+  `<anchor>` is the anchor directory P6.2 created. Then restore the tuple from
+  it: the Valkey RDB, the data
   directory, and the encrypted credential files, then the five Qdrant
   collections by snapshot upload, with the administrative key in a private
   header file as in P6.2:
@@ -812,17 +850,24 @@ The acceptance trial values are the baseline.
   sudo python3 -c 'import sqlite3, sys; print(sqlite3.connect(f"file:{sys.argv[1]}?mode=ro", uri=True).execute("PRAGMA quick_check").fetchone()[0])' \
     /var/lib/open-webui/data/webui.db
   sudo <kit-checkout>/tools/qdrant_production_cutover.zsh verify
-  sudo systemctl start valkey.service open-webui.service
-  sudo timeout 180 sh -c 'until curl -sf --unix-socket /run/open-webui/open-webui.sock http://localhost/ready >/dev/null; do sleep 2; done' && echo ready
   ```
 
-  The `quick_check` line must print `ok`, and verify must print
-  `HAND-BACK: qdrant verify PASSED`, which also checks the five collection
-  shapes. A browser session from before the anchor must be signed out, and a
-  fresh login must work. Then republish the route with the P5.3 `serve`
-  command.
+  The upload must print five `recovered` lines, the `quick_check` line must
+  print `ok`, and verify must print `HAND-BACK: qdrant verify PASSED`, which
+  also checks the five collection shapes. Only then reopen, Valkey first:
+
+  ```bash
+  sudo systemctl start valkey.service
+  sudo systemctl start open-webui.service
+  sudo timeout 180 sh -c 'until curl -sf --unix-socket /run/open-webui/open-webui.sock http://localhost/ready >/dev/null; do systemctl -q is-failed open-webui.service && exit 1; sleep 2; done' && echo ready
+  ```
+
+  A browser session from before the anchor must be signed out, and a fresh
+  login must work. Then republish the route with the P5.3 `serve` command.
 
   - HAND-BACK: `HAND-BACK: open-webui rollback PASSED to anchor <anchor-id>`
+  - Agent: the [Agent post-verification](#agent-post-verification) checks,
+    against the anchor's archives.
 
 - **To withdraw the tailnet route only:** the P5.3 rollback. Caddy is not
   involved; never remove the `caddy` package or change its install reason.

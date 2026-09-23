@@ -119,12 +119,13 @@ rehearsal may run earlier.
    overlap a Lemonade redeploy. A Lemonade restart during the trial voids the
    run; the lead decides whether one rerun is allowed. The kit detects a
    restart only when Lemonade's `/api/v1/health` reports a start time or
-   uptime. When it reports neither, the evidence records `restarted: null`
-   and the condition `lemonade restart: not detectable from /api/v1/health`,
-   and the operator records the Lemonade service's start time just before
-   `trial` and just after it with a read-only
-   `systemctl show -p ActiveEnterTimestamp <lemonade-unit>`; the two must be
-   equal.
+   uptime, and the host's Lemonade reports neither today. The evidence then
+   records `restarted: null` and the condition
+   `lemonade restart: not detectable from /api/v1/health; the operator's service start times are the record`,
+   and `trial` prints a reminder. So the command sequence always reads the
+   Lemonade service's start time just before `trial` and just after it; the
+   two must be equal, and the operator copies both lines into the
+   description of the PR that carries the evidence.
 8. **No concurrent builds.** The trial runs its units under a capped user
    `builds.slice` (see `--slice`), which package builds share. Hold every
    build on the host for the whole trial: a build that fills the shared cap
@@ -160,6 +161,13 @@ lead-approved override.
 
 ## Command sequence
 
+Placeholders: `<root>` is the acceptance root (see the prerequisites),
+`<manifest>` the candidate manifest of record, `<receipt-id>` a Lemonade M4
+receipt id, and `<lemonade-unit>` the host's Lemonade system service unit.
+The production placeholders (`<household-origin>`, `<kit-checkout>`, and the
+rest) are defined in the
+[production handoff](open-webui-household-production-install.md).
+
 Run from a checkout of this repository at the kit commit. Each step is
 idempotent up to its own outputs, and each refuses when its precondition does
 not hold. `up` may run again before `trial` (after a `down` or a refusal); it
@@ -172,14 +180,17 @@ args=(--root <root> --manifest <manifest> --slice builds-owui_acc.slice)
 python3 "$kit" preflight "${args[@]}"
 python3 "$kit" stage     "${args[@]}"
 python3 "$kit" up        "${args[@]}"
+systemctl show -p ActiveEnterTimestamp <lemonade-unit>
 python3 "$kit" trial     "${args[@]}" --lemonade-receipt <receipt-id>
+systemctl show -p ActiveEnterTimestamp <lemonade-unit>
 python3 "$kit" down      "${args[@]}"
 python3 "$kit" teardown  "${args[@]}" --keep-anchor
 ```
 
 `preflight` is read-only; `stage` extracts, renders, mints, and initializes;
-`up` starts the kit slice with the route closed; `trial` runs the one trial
-set and writes the evidence; `down` stops the slice. After a 0400-file
+`up` starts the kit slice with the route closed; the two read-only
+`systemctl show` lines record Lemonade's start time around the trial; `trial`
+runs the one trial set and writes the evidence; `down` stops the slice. After a 0400-file
 credential fallback, `teardown` also needs `--keep-plaintext-credentials`.
 The command blocks carry no trailing comments, because zsh without
 `interactivecomments` would pass them to the kit as arguments.
@@ -370,8 +381,8 @@ endpoint, uses `tls internal` without installing trust, and keeps all its
 storage under `<root>/state/caddy`. Acceptance Valkey runs RDB only
 (`appendonly no`), and the drills back up and restore the RDB.
 
-The production handoff does not repeat these rows one by one. Its P7 check
-proves that the packaged unit is unmodified and that only the two documented
+The production handoff does not repeat these rows one by one. Its agent
+post-verification proves that the packaged unit is unmodified and that only the two documented
 drop-ins apply, so every packaged property that A-ID2 records as dropped or
 not enforced here is in force in production.
 
@@ -391,6 +402,7 @@ pins the mode, and a rehearsal teardown removes the whole root, including
 `inputs/`. Copy the approved inputs into it; do not move them.
 
 ```bash
+kit=tools/accept_open_webui_household.py
 args=(--root <rehearsal-root> --manifest <manifest> --provider stub --rehearsal --slice builds-owui_acc.slice)
 python3 "$kit" preflight "${args[@]}"
 python3 "$kit" stage     "${args[@]}"
@@ -550,8 +562,11 @@ systemd-run --user --pipe --wait --collect "${cred[@]}" \
     --audio <retained>/jfk.flac --scenario all --receipt <out>.json
 ```
 
-Add `--cacert <household-ca>` when the origin's certificate is not in the
-system trust store. `--embedding-model`, `--reranking-model`, and
+`<lemond-url>` is the Lemonade base URL, `<retained>` the directory that
+holds the retained `jfk.flac`, and `<out>` the receipt path; give all paths
+absolutely, because the transient user service runs in `$HOME`, not in the
+current directory. The tailnet origin's certificate is publicly trusted, so
+production needs no `--cacert`. `--embedding-model`, `--reranking-model`, and
 `--whisper-model` default to the frozen values and are passed only to confirm
 them. `--chat-model` defaults to the owner-pinned id.
 
