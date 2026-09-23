@@ -361,6 +361,11 @@ tailnet device, and the node filters its traffic like any peer's. The
 node's own tailnet address loops back inside the daemon without passing the
 policy. That is untested, so do not use it in place of the temporary rule.
 
+If the check fails after an upgrade, do not roll back the route; run
+`sudo systemctl disable --now open-webui-tailnet.service` instead, and keep
+the sidecar stopped except to repeat the check. Once the check passes, run
+`sudo systemctl enable open-webui-tailnet.service`.
+
 A later custom domain is an open choice between two variants. Both use
 `serve --tcp=443`, which cannot share port 443 with the current
 `serve --https=443` route, so either one replaces that route after it is
