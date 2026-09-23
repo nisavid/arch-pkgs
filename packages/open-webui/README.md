@@ -212,13 +212,15 @@ command runs under `sudo`.
    ```
 
    It must time out. The daemon logs the failed forward about 130 seconds
-   after the probe, so wait at least 140 seconds; then
+   after the probe, so wait at least 140 seconds but no more than five
+   minutes; then
    `sudo journalctl -u open-webui-tailnet.service --since=-5min` must show
-   the forward to `127.0.0.1:6333` failing. The time limit ignores lines from
-   checks more than five minutes old. A connection or a quick refusal means
-   the deny is not in effect; stop and roll back. A timeout with no forward
-   line means the tailnet policy blocked the probe (the journal may show a
-   `Drop:` line for it instead); retry from a device it admits.
+   the forward to `127.0.0.1:6333` failing. The time limit ignores lines
+   logged more than five minutes before the query, such as those from an
+   earlier check. A connection or a quick refusal means the deny is not in
+   effect; stop and roll back. A timeout with no forward line usually means
+   the tailnet policy blocked the probe (the journal may show a `Drop:` line
+   for it instead); retry from a device it admits.
 3. Before the first Open WebUI start, set the canonical origin in
    `/etc/open-webui/open-webui.env`:
 
@@ -348,23 +350,11 @@ briefly), then repeat step 2's check. Under a narrowed policy, step 2's `nc`
 needs a temporary rule that admits one device to this node on the Qdrant port;
 remove the rule after the check. Plain `nc` on the host is no exception: it
 can reach the node only through a system `tailscaled` on the host, as another
-tailnet device, and the node filters it like any peer's.
-
-One untested path may avoid the temporary rule. In the `tailscale` 1.102.2
-source, a dial from the node to its own tailnet address loops back inside the
-daemon without passing the policy, so the following command should reach the
-same forward. `<node-ip>` is the node's tailnet IPv4 address, which
-`sudo tailscale --socket=/run/open-webui-tailnet/tailscaled.sock ip -4`
-prints:
-
-```sh
-sudo tailscale --socket=/run/open-webui-tailnet/tailscaled.sock nc <node-ip> 6333
-```
-
-It should hang for about two minutes and then fail; a few seconds later,
-step 2's `journalctl` command shows the same forward line. A quick
-connection refusal or a session that stays open means the deny is not in
-effect; stop and roll back as in step 2.
+tailnet device, and the node filters its traffic like any peer's. The
+`tailscale` 1.102.2 source suggests that a dial through the node's own socket
+(`tailscale --socket=/run/open-webui-tailnet/tailscaled.sock nc`) to the
+node's own tailnet address loops back inside the daemon without passing the
+policy. That is untested, so do not use it in place of the temporary rule.
 
 A later custom domain is an open choice between two variants. Both use
 `serve --tcp=443`, which cannot share port 443 with the current
