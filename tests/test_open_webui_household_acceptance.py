@@ -121,6 +121,20 @@ class ArgumentTests(unittest.TestCase):
         self.assertEqual(kit.mode, "record")
         self.assertEqual(self.kit("down", "--whisper-model", "tiny").whisper_model, "tiny")
 
+    def test_a_model_flag_that_differs_from_the_staged_pin_is_refused(self):
+        with tempfile.TemporaryDirectory() as root:
+            (Path(root) / kit_module.KIT_STATE).parent.mkdir(parents=True, exist_ok=True)
+            (Path(root) / kit_module.KIT_STATE).write_text(
+                json.dumps({"whisper_model": "base", "chat_model": "chat"})
+            )
+            with self.assertRaisesRegex(ValueError, "--whisper-model differs from the staged base"):
+                self.kit("trial", "--root", root, "--whisper-model", "tiny")
+            with self.assertRaisesRegex(ValueError, "--chat-model differs from the staged chat"):
+                self.kit("trial", "--root", root, "--chat-model", "other")
+            kit = self.kit("trial", "--root", root, "--whisper-model", "base", "--chat-model", "chat")
+            self.assertEqual((kit.whisper_model, kit.chat_model), ("base", "chat"))
+            self.assertEqual(self.kit("trial", "--root", root).whisper_model, "base")
+
     def test_the_stub_and_the_rehearsal_go_together(self):
         with self.assertRaises(ValueError):
             self.kit("preflight", "--provider", "stub")

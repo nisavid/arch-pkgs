@@ -471,6 +471,16 @@ class LemonadeSafetyTests(unittest.TestCase):
         with self.assertRaisesRegex(scenarios.Blocked, "does not serve"):
             scenarios.require_models_ready({"data": [{"id": "user.other"}]}, {}, (canonical,))
 
+    def test_a_served_user_id_and_a_distinct_bare_id_make_the_pin_ambiguous(self):
+        models = {"data": [{"id": "user.X"}, {"id": "X"}]}
+        loaded = {"all_models_loaded": [{"model_name": "X"}]}
+        for wanted in ("user.X", "X"):
+            with self.assertRaisesRegex(scenarios.Blocked, "ambiguous"):
+                scenarios.require_models_ready(models, loaded, (wanted,))
+        both_loaded = {"all_models_loaded": [{"model_name": "user.X"}, {"model_name": "X"}]}
+        with self.assertRaisesRegex(scenarios.Blocked, "ambiguous"):
+            scenarios.require_models_ready({"data": [{"id": "user.X"}]}, both_loaded, ("user.X",))
+
     def test_the_open_webui_chat_id_is_the_listed_form_of_the_designated_model(self):
         canonical = scenarios.DEFAULT_CHAT_MODEL
         bare = scenarios.bare_model_id(canonical)
