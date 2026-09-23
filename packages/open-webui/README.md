@@ -168,14 +168,15 @@ ships no node name. The login, node name, and serve configuration are runtime
 state in that state directory, so a later route to another Unix-socket
 target under `/run` (not `/run/user`) that the `open-webui-proxy` group can
 reach, for example a local TLS terminator, needs no unit change. A target on
-the host's loopback address does not work. The route needs the optional
-`tailscale` package.
+`127.0.0.1` or `::1` does not work. The route needs the optional `tailscale`
+package.
 
-The unit denies the daemon the host's loopback address, so tailnet peers reach
-only what the node itself serves; [Loopback deny](#loopback-deny) explains why,
-what it rules out, and the tailnet policy that should accompany it. Do not
-advertise routes or an exit node from this node; those would forward to the
-host network without that check.
+The unit denies the daemon the host addresses `127.0.0.1` and `::1`, so
+tailnet peers reach only what the node itself serves;
+[Denying `127.0.0.1` and `::1`](#denying-127001-and-1) explains why, what it
+rules out, and a tailnet policy that complements it. Do not advertise routes
+or an exit node from this node; those would forward to the host network
+without that check.
 
 These are production cutover steps. Run them only under the accepted
 deployment task, never directly from this package directory (see
@@ -200,7 +201,7 @@ command runs under `sudo`.
 2. In the Tailscale admin console, disable key expiry for the new node, and
    make sure MagicDNS and HTTPS certificates are enabled for the tailnet;
    `serve --https=443` needs them to obtain the node's certificate. Then
-   check the loopback deny from another tailnet computer that has `nc`,
+   check the `127.0.0.1` deny from another tailnet computer that has `nc`,
    before any tailnet policy narrows this node to `tcp:443`. Use the Qdrant
    port in `open-webui.env` (6333 by default):
 
@@ -280,38 +281,56 @@ sudo systemctl disable open-webui-tailnet.service
 sudo systemctl stop open-webui-tailnet.service
 ```
 
-### Loopback deny
+### Denying `127.0.0.1` and `::1`
 
 In userspace-networking mode, `tailscaled` forwards tailnet TCP and UDP
 traffic on any port it does not serve to that port on the host's `127.0.0.1`,
 whether the peer used the node's IPv4 or IPv6 tailnet address. That would open
-every service that listens only on localhost, such as Valkey, Qdrant, and
-Lemonade, to the tailnet. Tailscale has no setting that turns the forward off,
-and `--shields-up` would also block the serve route. The unit therefore sets
-`IPAddressDeny=127.0.0.1 ::1`. The daemon does not forward to `::1`, so that
-entry only guards against a future change. Keep exactly these addresses:
+every service that listens on the host's `127.0.0.1`, such as Valkey, Qdrant,
+and Lemonade, to the tailnet. Tailscale has no setting that turns the forward
+off, and `--shields-up` would also block the serve route. The unit therefore
+sets `IPAddressDeny=127.0.0.1 ::1`. The daemon does not forward to `::1`, so
+that entry only guards against a future change. Keep exactly these addresses:
 
-- `localhost` (all of `127.0.0.0/8`) and `RestrictNetworkInterfaces=~lo`
-  would also block the `127.0.0.53` resolver stub, which the daemon needs for
-  DNS.
+- `localhost` (`127.0.0.0/8` and `::1`) and `RestrictNetworkInterfaces=~lo`
+  would also block the systemd-resolved stub at `127.0.0.53`, which the
+  daemon's system-resolver lookups use.
 - `IPAddressAllow=` cannot make a narrow exception. It has no port scope, and
   an allow overrides the deny, so allowing `127.0.0.1` would expose every
-  localhost-only service again.
+  service on `127.0.0.1` again.
 
 The deny does not filter Unix sockets, so the LocalAPI and the Unix-socket
-serve target keep working. It does break these features if they are enabled
-on this node later: a serve or Funnel target on `127.0.0.1`, `::1`, or
-`localhost`; Taildrive; a `--debug` or metrics listener on loopback; the SOCKS5
-and HTTP proxy listeners (`--socks5-server`, `--outbound-http-proxy-listen`);
-and an `HTTP_PROXY` or `HTTPS_PROXY` on loopback. On a host whose
-`/etc/resolv.conf` points at `127.0.0.1` or `::1` (a local dnsmasq or unbound,
-for example), it also blocks the daemon's own DNS lookups, and the node's
-HTTPS certificate may fail to issue.
+serve target keep working. If these features are enabled on this node later,
+the deny breaks each one that uses `127.0.0.1`, `::1`, or `localhost`:
 
-For a later custom domain, pass TLS through to a local terminator on a Unix
-socket, not `127.0.0.1`: run `serve --tcp=443 unix:/run/<dir>/<sock>` as root,
-like any `unix:` target. That route cannot carry the PROXY protocol, so the
-terminator does not see the client's address.
+- a serve or Funnel target;
+- a `--debug` or metrics listener;
+- a SOCKS5 or HTTP proxy listener (`--socks5-server`,
+  `--outbound-http-proxy-listen`);
+- an `HTTP_PROXY` or `HTTPS_PROXY`;
+- a control server given with `up --login-server`.
+
+Taildrive sharing would break whatever its settings, because its file server
+always listens on `127.0.0.1`. On a host whose `/etc/resolv.conf` points at `127.0.0.1` or `::1`
+(a local dnsmasq or unbound, for example), the deny also blocks the daemon's
+system-resolver lookups. The control client has its own DNS fallback, but no
+fallback was found for certificate requests, so the node's HTTPS certificate
+may fail to issue on such a host. That is untested.
+
+A later custom domain is an open choice between two variants. Both use
+`serve --tcp=443`, so either one replaces the current `serve --https=443`
+route on that port:
+
+- TLS passthrough to a local terminator on a Unix socket:
+  `serve --tcp=443 unix:/run/<dir>/<sock>`, run as root like any `unix:`
+  target. It needs no unit change, but it cannot carry the PROXY protocol, so
+  the terminator does not see the client's address.
+- A terminator on `127.0.0.2`, an address outside the deny:
+  `serve --tcp=443 --proxy-protocol=2 tcp://127.0.0.2:<port>`. The PROXY
+  header carries the client's address, but this variant is fragile: it
+  breaks if the deny is ever widened, and the terminator must trust PROXY
+  headers from `127.0.0.1`, which any local process can forge. It is
+  untested.
 
 The deny drops a blocked TCP forward rather than refusing it. The daemon waits
 out the host's TCP SYN timeout, about two minutes, holding one of its
@@ -323,13 +342,19 @@ already has two. Restarting `open-webui-tailnet.service` clears the slots.
 
 A tailnet policy that admits peers to this node only on `tcp:443` is the
 stronger control. The policy drops all other traffic before `tailscaled`
-forwards it, so that traffic neither reaches the deny nor holds a slot. Apply
-it after step 2's check has passed. Tailscale policy rules only grant access,
-so a new `tcp:443` rule changes nothing by itself: the default allow-all rule,
-and every other rule that covers this node, must stop covering the node. The
-forwarding code ships in the `tailscale` package, so repeat step 2's check
-after each `tailscale` upgrade, from a device that the policy still admits on
-the Qdrant port.
+forwards it, so that traffic neither reaches the deny nor holds a slot. If you
+narrow the policy, do it only after step 2's check has passed. Tailscale
+policy rules only grant access, so a new `tcp:443` rule changes nothing by
+itself: the default allow-all rule, and every other rule that covers this
+node, must stop covering it.
+
+The forwarding code ships in the `tailscale` package, so repeat step 2's check
+after each `tailscale` upgrade. Under a narrowed policy, first add a temporary
+rule that admits one device to this node on the Qdrant port, and remove it
+after the check. Running step 2's `nc` on the host itself does not avoid that
+rule: the host reaches the node's tailnet address only as another tailnet
+device, through its own `tailscaled`, and the node filters that traffic like
+any peer's.
 
 ## Maintenance Baseline
 
@@ -352,9 +377,9 @@ the Qdrant port.
     failure boundary, automatic credential delivery, and forward-only session
     epoch as package-owned source and service assets.
   - Ship a disabled, unprivileged userspace `tailscaled` unit for the
-    tailnet route, with log uploads off unless the operator opts in and no
-    access to the host's loopback address; its login and serve configuration
-    stay runtime state.
+    tailnet route, with log uploads off unless the operator opts in and the
+    host's `127.0.0.1` and `::1` denied to it; its login and serve
+    configuration stay runtime state.
 - `update_notes`:
   - Recompute the complete private closure from the immutable release lock and
     selected optional runtime backends; a digest without the full lock is not a
