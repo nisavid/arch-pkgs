@@ -48,6 +48,10 @@ credstore=/etc/credstore.encrypted
 disk_quota_percent=85
 apply=0
 reuse_credential=0
+# systemd-creds encryption mode: empty probes auto, then host; auto or host
+# forces that mode. select_creds_key fills creds_key for every encrypt.
+creds_key_mode=
+typeset -a creds_key
 
 usage() {
   cat <<EOF
@@ -76,6 +80,8 @@ Options (defaults match the packaged layout):
   --reuse-credential         re-enter after a rollback with the existing runtime
                              credential; preflight requires it to match the
                              token the current HMAC secret mints
+  --creds-key auto|host      systemd-creds encryption mode for the runtime
+                             credential [probe auto, then host]
 EOF
 }
 
@@ -85,6 +91,7 @@ default_opt=(
   --url "$url" --storage-dir "$storage_dir" --config-dir "$config_dir"
   --repo "$repo" --pkg-cache "$pkg_cache" --rollback-root "$rollback_root"
   --credstore "$credstore" --disk-quota-percent "$disk_quota_percent"
+  --creds-key ''
 )
 
 die() { print -ru2 -- "${script_name}: $*"; exit 2; }
@@ -238,6 +245,34 @@ credential_matches_secret() {
   [[ "$have" == "$want" ]]
 }
 
+creds_probe() {
+  # creds_probe [ENCRYPT-ARGS...] -> succeed when a probe encrypted with those
+  # arguments decrypts again on this host. Nothing is written to disk.
+  [[ "$(print -rn -- probe | systemd-creds encrypt "$@" --name=probe - - 2>/dev/null \
+    | systemd-creds decrypt --name=probe - - 2>/dev/null)" == probe ]]
+}
+
+select_creds_key() {
+  # Pick the encryption mode for every systemd-creds encrypt in this run: the
+  # default (auto) mode first, then the host key, unless --creds-key forces
+  # one. Decrypt reads the key type from the credential, so it needs no flag.
+  local -a modes=(auto host)
+  local mode
+  [[ -z "$creds_key_mode" ]] || modes=("$creds_key_mode")
+  for mode in "${modes[@]}"; do
+    creds_key=()
+    [[ "$mode" == auto ]] || creds_key=(--with-key=host)
+    if creds_probe "${creds_key[@]}"; then
+      note "credential mode: ${mode} (systemd-creds encrypt ${creds_key[*]:-with no --with-key})"
+      [[ "$mode" == auto ]] \
+        || note "note: host-key credentials are not TPM-bound; they are sealed with /var/lib/systemd/credential.secret"
+      return 0
+    fi
+  done
+  creds_key=()
+  refuse "systemd-creds: a probe encrypted in ${(j: or :)modes} mode does not decrypt (or systemd-creds needs root); repair credential decryption before cutover"
+}
+
 carried_options() {
   # Every non-default option of this run except --rollback-set, shell-quoted.
   local -a opts
@@ -247,8 +282,9 @@ carried_options() {
     --url "$url" --storage-dir "$storage_dir" --config-dir "$config_dir"
     --repo "$repo" --pkg-cache "$pkg_cache" --rollback-root "$rollback_root"
     --credstore "$credstore" --disk-quota-percent "$disk_quota_percent"
+    --creds-key "$creds_key_mode"
   )
-  for opt in --url --storage-dir --config-dir --repo --pkg-cache --rollback-root --credstore --disk-quota-percent; do
+  for opt in --url --storage-dir --config-dir --repo --pkg-cache --rollback-root --credstore --disk-quota-percent --creds-key; do
     [[ "${given[$opt]}" == "${default_opt[$opt]}" ]] || opts+=("$opt" "${given[$opt]}")
   done
   [[ "$sync_db" == "/var/lib/pacman/sync/${repo}.db" ]] || opts+=(--sync-db "$sync_db")
@@ -321,6 +357,7 @@ do_preflight() {
   fi
   [[ ! -e "${rollback_root}/${rollback_set}" ]] \
     || refuse "rollback set ${rollback_root}/${rollback_set} already exists; choose another --rollback-set"
+  select_creds_key
   if [[ -e "$cred" ]]; then
     if (( ! reuse_credential )); then
       refuse "${cred} already exists; to re-enter after a rollback pass --reuse-credential, otherwise rotation is a separate act"
@@ -456,7 +493,7 @@ deliver_credential() {
   fi
   install -d -m 0700 -- "$credstore" || return 1
   rm -f -- "$tmp"
-  { mint_jwt prw 0 | systemd-creds encrypt --name="$credential_name" - "$tmp" && mv -fT -- "$tmp" "$target"; } \
+  { mint_jwt prw 0 | systemd-creds encrypt "${creds_key[@]}" --name="$credential_name" - "$tmp" && mv -fT -- "$tmp" "$target"; } \
     || { rm -f -- "$tmp"; return 1; }
 }
 
@@ -576,7 +613,7 @@ do_cutover() {
     if [[ -e "${credstore}/open-webui.${credential_name}" ]]; then
       note "DRY-RUN: reuse ${credstore}/open-webui.${credential_name} (preflight matched it to the HMAC secret)"
     else
-      note "DRY-RUN: systemd-creds encrypt --name=${credential_name} <prw JWT> to a temporary file in ${credstore}, then rename it to open-webui.${credential_name}"
+      note "DRY-RUN: systemd-creds encrypt ${creds_key:+${creds_key[*]} }--name=${credential_name} <prw JWT> to a temporary file in ${credstore}, then rename it to open-webui.${credential_name}"
     fi
     note "DRY-RUN: restart qdrant.service, then verify (the collections must survive the restart)"
     hand_back "qdrant cutover dry run complete; rerun as root with --apply"
@@ -794,7 +831,7 @@ while (( $# )); do
   case "$1" in
     --apply) apply=1; shift ;;
     --reuse-credential) reuse_credential=1; shift ;;
-    --url|--storage-dir|--config-dir|--repo|--sync-db|--pkg-cache|--rollback-root|--rollback-set|--credstore|--disk-quota-percent)
+    --url|--storage-dir|--config-dir|--repo|--sync-db|--pkg-cache|--rollback-root|--rollback-set|--credstore|--disk-quota-percent|--creds-key)
       (( $# >= 2 )) || die "$1 requires a value"
       case "$1" in
         --url) url=$2 ;;
@@ -807,6 +844,7 @@ while (( $# )); do
         --rollback-set) rollback_set=$2 ;;
         --credstore) credstore=$2 ;;
         --disk-quota-percent) disk_quota_percent=$2 ;;
+        --creds-key) creds_key_mode=$2 ;;
       esac
       shift 2
       ;;
@@ -816,6 +854,7 @@ while (( $# )); do
 done
 
 [[ "$disk_quota_percent" == <1-100> ]] || die "--disk-quota-percent must be 1-100"
+[[ -z "$creds_key_mode" || "$creds_key_mode" == (auto|host) ]] || die "--creds-key must be auto or host"
 [[ "$rollback_set" == [A-Za-z0-9._-]## && "$rollback_set" != .* ]] || die "--rollback-set must be a plain name"
 [[ -n "$sync_db" ]] || sync_db=/var/lib/pacman/sync/${repo}.db
 [[ "$command" != preflight ]] || (( ! apply )) || die "preflight is read-only; --apply does not apply"
