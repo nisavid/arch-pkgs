@@ -8,6 +8,7 @@ import re
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -711,11 +712,19 @@ class StubProviderTests(unittest.TestCase):
         text, _ = scenarios.parse_chat_response(events, "text/event-stream")
         self.assertEqual(text, scenarios.CANONICAL_FACT)
 
-    def test_stub_parsing_is_linear_on_unclosed_tags(self):
+    def test_stub_parsing_stays_linear_on_hostile_prompts(self):
         self.assertEqual(stub._between("a<context>x</context>", "<context>", "</context>"), "x")
         self.assertIsNone(stub._between("a<context>x", "<context>", "</context>"))
-        hostile = {"model": stub.CHAT_MODEL, "messages": [{"role": "user", "content": "<context>" + "<" * 200_000}]}
-        self.assertIsInstance(stub.chat_answer(hostile), str)
+        for content in (
+            "<context>" + "<" * 40_000 + "</context>",
+            "<context>" * 20_000,
+            "<user_query>" * 20_000,
+        ):
+            hostile = {"model": stub.CHAT_MODEL, "messages": [{"role": "user", "content": content}]}
+            started = time.monotonic()
+            self.assertIsInstance(stub.chat_answer(hostile), str)
+            # The backtracking patterns this replaced took over a second here.
+            self.assertLess(time.monotonic() - started, 0.5)
 
     def test_https_endpoints_refuse_tls_older_than_1_2(self):
         import ssl
