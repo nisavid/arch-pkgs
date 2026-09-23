@@ -589,11 +589,16 @@ class SpeechTests(unittest.TestCase):
         self.assertFalse(scenarios.provider_restart_needed(300.0, 200.0))
         self.assertFalse(scenarios.provider_restart_needed(300.0, None))
 
-    def test_ported_pins_carry_their_source(self):
-        source = SCENARIOS.read_text(encoding="utf-8")
-        self.assertIn("e12fdd98251a01cdc99f22a5a113741b2473b107", source)
-        self.assertEqual(scenarios.WHISPER_TINY["revision"], "d90ca5fe260221311c53c58e660288d3deb8d356")
-        self.assertRegex(scenarios.JFK_FLAC_SHA256, r"^[0-9a-f]{64}$")
+    def test_ported_pins_match_the_merged_speech_evidence(self):
+        relative = "docs/maintainers/evidence/speech-providers-4.8.2-1.2.1/g0-g2.json"
+        self.assertIn(relative, SCENARIOS.read_text(encoding="utf-8"))
+        evidence = json.loads((REPO_ROOT / relative).read_text(encoding="utf-8"))
+        inputs = evidence["gates"]["G2"]["fixture"]["inputs"]
+        whisper = inputs["whisper_model"]
+        self.assertEqual(scenarios.WHISPER_TINY["repository"], whisper["repository"])
+        self.assertEqual(scenarios.WHISPER_TINY["revision"], whisper["revision"])
+        self.assertEqual(scenarios.WHISPER_TINY["files"]["model.bin"], whisper["model.bin_sha256"])
+        self.assertEqual(scenarios.JFK_FLAC_SHA256, inputs["audio"]["sha256"])
 
     def test_whisper_base_is_the_default_and_pinned_by_revision_and_file_digests(self):
         self.assertEqual(scenarios.DEFAULT_WHISPER_MODEL, "base")

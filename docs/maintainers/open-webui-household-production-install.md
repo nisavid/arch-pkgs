@@ -46,8 +46,11 @@ The agent checks these read-only before the window opens:
   archive is `open-webui-0.11.0-6-x86_64.pkg.tar.zst`, size
   **`<pending>`** bytes, SHA-256 **`<pending>`**; both are recorded when the
   candidate is built.
-- The Qdrant cutover route has merged:
-  [feat(qdrant): add production cutover route and rebind accepted candidates](https://github.com/nisavid/arch-pkgs/pull/93).
+- `<kit-checkout>` carries the Qdrant cutover route,
+  `tools/qdrant_production_cutover.zsh`, and its
+  [runbook](qdrant-production-cutover.md), both on `main` since
+  [feat(qdrant): add production cutover route and rebind accepted candidates](https://github.com/nisavid/arch-pkgs/pull/93)
+  merged.
 - The Lemonade M4 receipts are cited, and Lemonade serves and has loaded the
   packaged zembed and zerank ids and the owner-pinned chat model.
 - The [P5.0](#p50-tailnet-prerequisites) prerequisites hold, and the owner
@@ -109,13 +112,14 @@ decrypt reports a TPM2 unseal error), try the host key:
 sudo sh -c 'printf probe | systemd-creds encrypt --with-key=host --name=probe - - | systemd-creds decrypt --name=probe - -'; echo
 ```
 
-Then set one variable in the owner's shell from the mode that printed
-`probe`. Every `systemd-creds encrypt` line below uses it, including the
-admin credentials in P4; set it again in any new shell:
+Then set two variables in the owner's shell from the mode that printed
+`probe`. Every `systemd-creds encrypt` line below uses `creds_key`, including
+the admin credentials in P4, and P1 passes `creds_mode` to the Qdrant cutover
+route; set both again in any new shell:
 
 ```bash
-creds_key=()                 # the default mode printed probe
-creds_key=(--with-key=host)  # only the host-key mode printed probe
+creds_key=() creds_mode=auto                # the default mode printed probe
+creds_key=(--with-key=host) creds_mode=host # only the host-key mode printed probe
 ```
 
 If both fail, stop: the owner repairs credential decryption before this
@@ -127,34 +131,43 @@ warns when that file is not on encrypted media; such credentials are only as
 protected as the root filesystem.
 
 P1 writes the Qdrant runtime credential through the Qdrant cutover route, and
-Open WebUI decrypts it with the rest. That route must encrypt it in the mode
-chosen here, or Open WebUI cannot load it.
+Open WebUI decrypts it with the rest. The route's `--creds-key auto|host`
+option forces one mode: its own preflight then probes only that mode, and
+cutover encrypts the runtime credential in it. P1 passes `creds_mode`, so
+every credential Open WebUI loads uses the mode chosen here.
 
 - Rollback: none; the probe writes nothing.
-- HAND-BACK: `HAND-BACK: open-webui P0.1 credential mode <default|host-key>`
+- HAND-BACK: `HAND-BACK: open-webui P0.1 credential mode <auto|host>`
 - Agent: none; the owner's output is the proof.
 
 ## P1: Qdrant cutover
 
-Follow the runbook in
-[feat(qdrant): add production cutover route and rebind accepted candidates](https://github.com/nisavid/arch-pkgs/pull/93)
+Follow the [Qdrant production cutover runbook](qdrant-production-cutover.md)
 for
-[Deploy the accepted Qdrant service](https://github.com/nisavid/arch-pkgs/issues/58):
+[Deploy the accepted Qdrant service](https://github.com/nisavid/arch-pkgs/issues/58),
+from `<kit-checkout>`, with the mode [P0.1](#p01-credential-mode-preflight)
+chose:
 
 ```bash
-sudo tools/qdrant_production_cutover.zsh preflight
-sudo tools/qdrant_production_cutover.zsh cutover
-sudo tools/qdrant_production_cutover.zsh cutover --apply
+sudo tools/qdrant_production_cutover.zsh preflight --creds-key "$creds_mode"
+sudo tools/qdrant_production_cutover.zsh cutover --creds-key "$creds_mode"
+sudo tools/qdrant_production_cutover.zsh cutover --apply --creds-key "$creds_mode"
 sudo tools/qdrant_production_cutover.zsh verify
 ```
 
-The cutover creates the five `open-webui-rag-v1` collections and delivers the
-runtime credential to
+Preflight must print `credential mode: <creds_mode>`. The cutover creates the
+five `open-webui-rag-v1` collections and delivers the runtime credential to
 `/etc/credstore.encrypted/open-webui.qdrant-runtime-api-key`. The Qdrant
 administrative key stays with the owner.
 
+Before Open WebUI writes, prove rollback: run the dry-run `rollback` command
+that verify's `HAND-BACK:` line prints, exactly as printed and without
+`--apply`. It must end with `HAND-BACK: qdrant rollback dry run complete`.
+
 - Rollback: the Qdrant runbook's `rollback --apply`.
-- HAND-BACK: the script's own `HAND-BACK: qdrant verify PASSED on 1.19.0-1`.
+- HAND-BACK: the script's own lines, first
+  `HAND-BACK: qdrant verify PASSED on 1.19.0-1; …` and then
+  `HAND-BACK: qdrant rollback dry run complete; …`.
 - Agent: the Qdrant runbook's post-verification.
 
 ## P2: install the packages

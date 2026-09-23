@@ -560,15 +560,14 @@ no receipt in rehearsal mode.
 
 ## Ported constants
 
-Each constant below carries its source. For those copied from open pull
-requests, a one-line consistency check compares the kit's copies with the
-merged values once those pull requests merge.
+Each constant below carries its source. Both source pull requests have
+merged, and the kit's copies equal the values on `main`.
 
 | Constant | Source |
 | --- | --- |
-| `tiny` Whisper repository, revision, and `model.bin` SHA-256; `jfk.flac` SHA-256 | [feat(ctranslate2): update to 4.8.2 with speech G0-G2 evidence](https://github.com/nisavid/arch-pkgs/pull/92), commit `e12fdd9` |
+| `tiny` Whisper repository, revision, and `model.bin` SHA-256; `jfk.flac` SHA-256 | `docs/maintainers/evidence/speech-providers-4.8.2-1.2.1/g0-g2.json`, from [feat(ctranslate2): update to 4.8.2 with speech G0-G2 evidence](https://github.com/nisavid/arch-pkgs/pull/92) |
 | `base` Whisper revision and file SHA-256 values; the other `tiny` file digests | The Hugging Face API, read-only, on 2026-09-23: the revision and `model.bin` LFS SHA-256 from `https://huggingface.co/api/models/Systran/faster-whisper-base?blobs=true`, and the other digests from the files at that revision |
-| Collection body, payload indexes, and the HS256 `prw`/`r` JWT mint | [feat(qdrant): add production cutover route and rebind accepted candidates](https://github.com/nisavid/arch-pkgs/pull/93), commit `b99f9bd` |
+| Collection body, payload indexes, and the HS256 `prw`/`r` JWT mint | `tools/qdrant_production_cutover.zsh`, from [feat(qdrant): add production cutover route and rebind accepted candidates](https://github.com/nisavid/arch-pkgs/pull/93) |
 
 ## Cleanup
 
