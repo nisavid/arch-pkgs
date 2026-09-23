@@ -156,10 +156,10 @@ ADMIN_EMAIL = "owui-acc-admin@household.invalid"
 ADMIN_NAME = "Acceptance Administrator"
 VALKEY_USER = "open-webui"
 
-# Ported from "feat(qdrant): add production cutover route and rebind accepted
-# candidates" (https://github.com/nisavid/arch-pkgs/pull/93), commit
-# b99f9bded2c191ff82cca710b400384303dbeb49: the collection body, the payload
-# indexes, and the HS256 JWT claims.
+# Ported from tools/qdrant_production_cutover.zsh, merged through "feat(qdrant):
+# add production cutover route and rebind accepted candidates"
+# (https://github.com/nisavid/arch-pkgs/pull/93): the collection body, the
+# payload indexes, and the HS256 JWT claims.
 COLLECTION_BODY = MappingProxyType(
     {"vectors": {"size": 2560, "distance": "Cosine", "on_disk": False}, "hnsw_config": {"payload_m": 16, "m": 0}}
 )
@@ -358,7 +358,7 @@ def lemond_summary(health: Any) -> dict[str, Any]:
 
 
 def mint_jwt(key: str, role: str, lifetime_s: int = 0, *, now: float | None = None) -> str:
-    """HS256 Qdrant JWT for every household collection (ported from PR #93)."""
+    """HS256 Qdrant JWT for every household collection (ported from qdrant_production_cutover.zsh)."""
 
     def b64(data: bytes) -> bytes:
         return base64.urlsafe_b64encode(data).rstrip(b"=")

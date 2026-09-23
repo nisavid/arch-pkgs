@@ -154,11 +154,11 @@ WHISPER_BASE = MappingProxyType(
     }
 )
 # tiny stays available only as an explicit, non-default ``--whisper-model``.
-# Its revision and model.bin digest are ported from "feat(ctranslate2): update
-# to 4.8.2 with speech G0-G2 evidence"
-# (https://github.com/nisavid/arch-pkgs/pull/92), commit
-# e12fdd98251a01cdc99f22a5a113741b2473b107; the other digests were resolved
-# at that revision like base's.
+# Its revision and model.bin digest are ported from
+# docs/maintainers/evidence/speech-providers-4.8.2-1.2.1/g0-g2.json, merged
+# through "feat(ctranslate2): update to 4.8.2 with speech G0-G2 evidence"
+# (https://github.com/nisavid/arch-pkgs/pull/92); the other digests were
+# resolved at that revision like base's.
 WHISPER_TINY = MappingProxyType(
     {
         "repository": "Systran/faster-whisper-tiny",
