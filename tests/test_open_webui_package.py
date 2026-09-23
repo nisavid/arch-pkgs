@@ -473,11 +473,13 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
 
     def test_tailnet_sidecar_is_unprivileged_nameless_and_private(self):
         recipe = read(OPEN_WEBUI / "PKGBUILD")
-        unit = [
-            line.strip()
-            for line in read(OPEN_WEBUI / "open-webui-tailnet.service").splitlines()
-            if line.strip() and not line.lstrip().startswith(("#", ";"))
-        ]
+        values = {}
+        for line in read(OPEN_WEBUI / "open-webui-tailnet.service").splitlines():
+            line = line.strip()
+            if not line or line.startswith(("#", ";", "[")):
+                continue
+            key, _, value = line.partition("=")
+            values.setdefault(key, []).append(value)
 
         self.assertIn("'open-webui-tailnet.service'", recipe)
         self.assertIn(
@@ -486,36 +488,38 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
         )
         self.assertRegex(recipe, r"'tailscale: [^']+'")
         self.assertNotIn("'tailscale'", recipe.split("optdepends=")[0])
-        for directive in (
-            "DynamicUser=yes",
-            "SupplementaryGroups=open-webui-proxy",
-            "StateDirectory=open-webui-tailnet",
-            "RuntimeDirectory=open-webui-tailnet",
-            "Environment=TS_NO_LOGS_NO_SUPPORT=true",
-            "ProtectSystem=strict",
-            "ProtectHome=yes",
-            "NoNewPrivileges=yes",
-            "CapabilityBoundingSet=",
-            "IPAddressDeny=127.0.0.1 ::1",
-            "Restart=on-failure",
-            "After=network-online.target",
-            "Wants=network-online.target",
-        ):
-            self.assertIn(directive, unit)
-        self.assertEqual(
-            [line for line in unit if line.startswith("Exec")],
-            [
-                "ExecStart=/usr/bin/tailscaled"
+        for key, value in (
+            ("DynamicUser", "yes"),
+            ("SupplementaryGroups", "open-webui-proxy"),
+            ("StateDirectory", "open-webui-tailnet"),
+            ("RuntimeDirectory", "open-webui-tailnet"),
+            ("Environment", "TS_NO_LOGS_NO_SUPPORT=true"),
+            ("ProtectSystem", "strict"),
+            ("ProtectHome", "yes"),
+            ("NoNewPrivileges", "yes"),
+            ("CapabilityBoundingSet", ""),
+            ("AmbientCapabilities", ""),
+            ("IPAddressDeny", "127.0.0.1 ::1"),
+            ("Restart", "on-failure"),
+            ("After", "network-online.target"),
+            ("Wants", "network-online.target"),
+            (
+                "ExecStart",
+                "/usr/bin/tailscaled"
                 " --statedir=%S/open-webui-tailnet"
                 " --socket=%t/open-webui-tailnet/tailscaled.sock"
-                " --tun=userspace-networking --port=0"
-            ],
+                " --tun=userspace-networking --port=0",
+            ),
+        ):
+            self.assertEqual(values.get(key), [value], key)
+        self.assertEqual([key for key in values if key.startswith("Exec")], ["ExecStart"])
+        self.assertFalse(
+            values.keys() & {"User", "Group", "UnsetEnvironment", "IPAddressAllow"}
         )
-        keys = {line.split("=", 1)[0] for line in unit if "=" in line}
-        self.assertFalse(keys & {"User", "Group", "UnsetEnvironment"})
-        for line in unit:
-            for forbidden in ("--hostname", "tag:", ".ts.net"):
-                self.assertNotIn(forbidden, line)
+        for key, entries in values.items():
+            for entry in entries:
+                for forbidden in ("--hostname", "tag:", ".ts.net"):
+                    self.assertNotIn(forbidden, entry, key)
 
     def test_commissioning_helper_uses_uds_and_never_accepts_secret_arguments(self):
         helper = read(OPEN_WEBUI / "open-webui-commission-admin")

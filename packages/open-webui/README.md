@@ -137,7 +137,7 @@ failure; do not silently reset it.
 
 The first start happens while no route is published: no tailnet serve
 configuration and no Caddy route. Set the canonical origin before it
-([Tailnet Route](#tailnet-route) step 3). A temporary systemd drop-in
+([Tailnet Route](#tailnet-route) steps 1 to 3). A temporary systemd drop-in
 supplies `admin-email`, `admin-name`, and
 `admin-bootstrap-password` credentials to the launcher. Run
 `/usr/lib/open-webui/open-webui-commission-admin` once through a transient
@@ -165,15 +165,22 @@ and its own LocalAPI socket at `/run/open-webui-tailnet/tailscaled.sock`. It
 runs as a dynamic user in the `open-webui-proxy` group, which is how it
 reaches the Open WebUI socket. The package installs the unit disabled and
 ships no node name. The login, node name, and serve configuration are runtime
-state in that state directory, so a later route (for example TCP passthrough
-to a local TLS terminator) needs no unit change. The route needs the optional
-`tailscale` package.
+state in that state directory, so a later route to another Unix-socket
+target (for example a local TLS terminator listening on one) needs no unit
+change. A loopback target would need one, and allowing `127.0.0.1` would undo
+the loopback deny below. The route needs the optional `tailscale` package.
 
 In userspace-networking mode, `tailscaled` forwards a tailnet connection on
 any port it does not serve to that port on the host's `127.0.0.1`, which
 would expose services that listen only on localhost to the tailnet. The unit
-therefore denies the daemon `127.0.0.1` and `::1` (`IPAddressDeny=`), so the
-serve route is the only way in.
+therefore denies the daemon `127.0.0.1` and `::1` (`IPAddressDeny=`), so
+tailnet peers reach only what the node itself serves. Do not advertise routes
+or an exit node from this node; those would forward to the host network
+without this check. The deny drops a blocked forward rather than refusing it,
+so the peer's attempt times out and holds one of the daemon's connection slots
+for about two minutes. A peer that scans many ports can therefore delay the
+serve route; a tailnet policy that admits peers to this node only on
+`tcp:443` avoids that.
 
 These are production cutover steps. Run them only under the accepted
 deployment task, never directly from this package directory (see
@@ -215,7 +222,9 @@ command runs under `sudo`.
    `CORS_ALLOW_ORIGIN` is read at every start. A later origin change signs
    every user out and strands their saved passwords, bookmarks, and
    installed web apps, which browsers tie to the old origin.
-4. Only after closed-route commissioning succeeds, publish the route:
+4. Only after
+   [closed-route commissioning](#closed-route-administrator-commissioning)
+   succeeds, publish the route:
 
    ```sh
    sudo tailscale --socket=/run/open-webui-tailnet/tailscaled.sock serve --bg --https=443 unix:/run/open-webui/open-webui.sock
@@ -232,8 +241,17 @@ command runs under `sudo`.
 Verify with
 `sudo tailscale --socket=/run/open-webui-tailnet/tailscaled.sock serve status`,
 then open `https://<name>.<tailnet>.ts.net/` from another tailnet device and
-sign in. From that device, a connection to the node on the port of a
-service that listens only on the host's `127.0.0.1` must fail.
+sign in. Then check the loopback deny from that device against the Qdrant
+port in `open-webui.env` (6333 by default), which Qdrant serves on the host's
+loopback:
+
+```sh
+nc -vz -w 5 <name>.<tailnet>.ts.net 6333
+```
+
+It must time out rather than connect, and about two minutes later
+`sudo journalctl -u open-webui-tailnet.service` must show the forward to
+`127.0.0.1:6333` failing.
 
 Log uploads are off by default. Upstream `tailscaled` uploads its daemon logs
 to Tailscale's log service; the unit sets `TS_NO_LOGS_NO_SUPPORT=true`, so the
