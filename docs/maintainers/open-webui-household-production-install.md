@@ -92,6 +92,48 @@ kept until
 - Agent: `systemctl is-active open-webui.service` is inactive, and
   `ss -ltnH 'sport = :8080'` prints nothing.
 
+## P0.1: credential-mode preflight
+
+Every `/etc/credstore.encrypted` secret in this runbook is encrypted in one
+mode, and this preflight picks it. It encrypts and decrypts a probe as root
+with the same mode the install will use. First the default mode:
+
+```bash
+sudo sh -c 'printf probe | systemd-creds encrypt --name=probe - - | systemd-creds decrypt --name=probe - -'; echo
+```
+
+It must print `probe`. If it fails (on a host where TPM2 unsealing fails, the
+decrypt reports a TPM2 unseal error), try the host key:
+
+```bash
+sudo sh -c 'printf probe | systemd-creds encrypt --with-key=host --name=probe - - | systemd-creds decrypt --name=probe - -'; echo
+```
+
+Then set one variable in the owner's shell from the mode that printed
+`probe`. Every `systemd-creds encrypt` line below uses it, including the
+admin credentials in P4; set it again in any new shell:
+
+```bash
+creds_key=()                 # the default mode printed probe
+creds_key=(--with-key=host)  # only the host-key mode printed probe
+```
+
+If both fail, stop: the owner repairs credential decryption before this
+install continues.
+
+Known limitation of the host-key mode: those credentials are not bound to the
+TPM. They are sealed with `/var/lib/systemd/credential.secret`, and systemd
+warns when that file is not on encrypted media; such credentials are only as
+protected as the root filesystem.
+
+P1 writes the Qdrant runtime credential through the Qdrant cutover route, and
+Open WebUI decrypts it with the rest. That route must encrypt it in the mode
+chosen here, or Open WebUI cannot load it.
+
+- Rollback: none; the probe writes nothing.
+- HAND-BACK: `HAND-BACK: open-webui P0.1 credential mode <default|host-key>`
+- Agent: none; the owner's output is the proof.
+
 ## P1: Qdrant cutover
 
 Follow the runbook in
@@ -146,7 +188,9 @@ package is not a rollback target.
   - `pacman -Q python-rapidocr-onnxruntime` fails;
   - `pacman -Qi caddy python-omegaconf python-antlr4 tailscale` succeeds;
   - `systemctl is-enabled open-webui.service open-webui-tailnet.service`
-    shows both disabled.
+    shows both disabled;
+  - `sha256sum /usr/lib/systemd/system/open-webui-tailnet.service` equals
+    **`<pending>`**, the unit digest recorded by the 0.11.0-6 reference build.
 
 ### Optional: remove hayhooks
 
@@ -170,9 +214,11 @@ sudo pacman -Rns hayhooks
 ```bash
 for n in webui-secret-key oauth-client-info-encryption-key oauth-session-token-encryption-key; do
   openssl rand -hex 32 \
-    | sudo systemd-creds encrypt --name="$n" - "/etc/credstore.encrypted/open-webui.$n"
+    | sudo systemd-creds encrypt "${creds_key[@]}" --name="$n" - "/etc/credstore.encrypted/open-webui.$n"
 done
 ```
+
+`creds_key` comes from [P0.1](#p01-credential-mode-preflight).
 
 ### P3.2 Dedicated Valkey
 
@@ -202,7 +248,7 @@ hash=$(printf '%s' "$pw" | sha256sum | cut -d' ' -f1)
 printf 'user default off\nuser open-webui on #%s ~* &* +@all -@admin -flushall -flushdb\n' "$hash" \
   | sudo install -m 0640 -o root -g valkey /dev/stdin /etc/valkey/open-webui.acl
 printf 'redis://open-webui:%s@127.0.0.1:6379/0' "$pw" \
-  | sudo systemd-creds encrypt --name=valkey-url - /etc/credstore.encrypted/open-webui.valkey-url
+  | sudo systemd-creds encrypt "${creds_key[@]}" --name=valkey-url - /etc/credstore.encrypted/open-webui.valkey-url
 unset pw hash
 
 sudo install -D -m 0644 /dev/stdin /etc/systemd/system/valkey.service.d/10-open-webui.conf <<'EOF'
@@ -248,11 +294,16 @@ Two drop-ins complete the environment. They are not part of the seed:
   failure can never fall back to the network.
 - `30-origin.conf` sets both `WEBUI_URL` and `CORS_ALLOW_ORIGIN` to the
   tailnet origin `https://<name>.<tailnet>.ts.net`. `WEBUI_URL` is a
-  persistent-config seed, so it must be in place before the first start; a
-  later change goes through Admin Settings, General, "WebUI URL".
-  `CORS_ALLOW_ORIGIN` is read at every start. The package README writes the
-  same two lines to `open-webui.env`; this runbook uses the drop-in instead,
-  never both.
+  persistent-config seed: the first start copies it into the database, and
+  the stored value wins after that, so it must be in place before the first
+  start. The lasting way to change it later is Admin Panel > Settings >
+  General > WebUI URL. `ENABLE_PERSISTENT_CONFIG=false` lets the environment
+  win only while it stays set, and for every persistent setting.
+  `CORS_ALLOW_ORIGIN` is read at every start. Changing the origin later signs
+  every user out. The package README's
+  [Tailnet Route](../../packages/open-webui/README.md#tailnet-route) step 3
+  writes the same two lines to `open-webui.env`; this runbook uses the
+  drop-in instead, never both.
 
 Install both before the first start. First confirm the installed env: it must
 print the three seed lines above and nothing for the other four keys. An
@@ -336,7 +387,7 @@ reach the socket.
    ```bash
    for n in admin-email admin-name admin-bootstrap-password admin-final-password; do
      systemd-ask-password -n "$n" \
-       | sudo systemd-creds encrypt --name="$n" - "/etc/credstore.encrypted/open-webui.$n"
+       | sudo systemd-creds encrypt "${creds_key[@]}" --name="$n" - "/etc/credstore.encrypted/open-webui.$n"
    done
    ```
 
@@ -402,13 +453,20 @@ reach the socket.
 
 The route is tailnet-only. The `open-webui-tailnet.service` sidecar that
 0.11.0-6 ships runs a second, untagged `tailscaled` owned by the owner's
-tailnet account, in userspace-networking mode, as a dynamic user in the
-`open-webui-proxy` group. Its Tailscale Serve proxies HTTPS on 443 straight
-to `/run/open-webui/open-webui.sock`. The package README's
-[Tailnet Route](../../packages/open-webui/README.md#tailnet-route) section,
-which lands with 0.11.0-6, describes the unit, its log-upload opt-out, and its prerequisites; this
-section keeps only the operator sequence. There is no LAN route, and Caddy is
-not in Open WebUI's path.
+tailnet account, in userspace-networking mode, and its Tailscale Serve proxies
+HTTPS on 443 straight to `/run/open-webui/open-webui.sock`. The package
+README's [Tailnet Route](../../packages/open-webui/README.md#tailnet-route)
+section, which lands with 0.11.0-6, is the reference for the unit, the
+loopback deny, and each step's reasons; this section keeps only the operator
+sequence and its hand-backs. Caddy is not in Open WebUI's path.
+
+Every `tailscale --socket=/run/open-webui-tailnet/tailscaled.sock ...` command
+runs through `sudo`: the LocalAPI socket's directory admits only root and the
+daemon's own user.
+
+Tailscaled log uploads are off by default (the unit sets
+`TS_NO_LOGS_NO_SUPPORT=true`). The owner decided to keep them off; the
+README's log-upload paragraph describes the opt-in drop-in if that changes.
 
 A dedicated Tailscale Service was rejected: Services require a tagged host,
 which would strip the host's user identity.
@@ -426,16 +484,47 @@ which would strip the host's user identity.
 
 ### P5.1 Start the sidecar and log it in
 
+README step 1:
+
 ```bash
 sudo systemctl enable --now open-webui-tailnet.service
 sudo tailscale --socket=/run/open-webui-tailnet/tailscaled.sock up --hostname=<name>
+sudo tailscale --socket=/run/open-webui-tailnet/tailscaled.sock status --peers=false
 ```
 
 `up` prints a login URL; the owner signs in interactively as themselves, so
-the node stays untagged and user-owned. Then, in the Tailscale admin console,
-disable key expiry for the `<name>` node.
+the node stays untagged and user-owned. `status` shows the node's name; if
+Tailscale added a suffix, the P3.4 origin no longer matches, so stop and
+settle the origin with the lead before P5.3. Then, in the Tailscale admin
+console, disable key expiry for the `<name>` node.
 
-### P5.2 Publish the route
+### P5.2 Loopback check (owner-run proof)
+
+README step 2, before any serve configuration exists. In
+userspace-networking mode `tailscaled` forwards a tailnet connection on a port
+it does not serve to that port on the host's `127.0.0.1`; the unit's
+`IPAddressDeny=127.0.0.1 ::1` must block that on this host. From another
+tailnet device with `nc`, probe the Qdrant port:
+
+```bash
+nc -vz -w 5 <name>.<tailnet>.ts.net 6333
+```
+
+It must time out, and about two minutes later
+`sudo journalctl -u open-webui-tailnet.service` must show the forward to
+`127.0.0.1:6333` failing. A connection or a quick refusal means the deny is
+not in effect: stop and run the P5.3 rollback. A timeout with no journal line
+means the tailnet policy blocked the probe; retry from a device it admits.
+
+- HAND-BACK: `HAND-BACK: open-webui P5.2 loopback deny proven`
+
+### P5.3 Publish the route
+
+README step 4. Run the `serve` command exactly as written, as root through
+`sudo`: since Tailscale 1.98.9
+([TS-2026-005](https://tailscale.com/security-bulletins#ts-2026-005)),
+`tailscaled` accepts a serve configuration with a Unix-socket target only from
+a local admin, and inside the unit's sandbox root is the only admin.
 
 ```bash
 sudo tailscale --socket=/run/open-webui-tailnet/tailscaled.sock serve --bg --https=443 unix:/run/open-webui/open-webui.sock
@@ -445,15 +534,14 @@ sudo tailscale --socket=/run/open-webui-tailnet/tailscaled.sock serve status
 `serve status` must show `https://<name>.<tailnet>.ts.net` proxying to
 `unix:/run/open-webui/open-webui.sock`.
 
-- Rollback, in reverse order:
+- Rollback, in reverse order, always with `sudo` and `--socket` (a bare
+  `tailscale serve --https=443 off` reaches the system `tailscaled` instead):
 
   ```bash
   sudo tailscale --socket=/run/open-webui-tailnet/tailscaled.sock serve --https=443 off
   sudo tailscale --socket=/run/open-webui-tailnet/tailscaled.sock logout
   sudo systemctl disable --now open-webui-tailnet.service
   ```
-
-### P5.3 Hand-back and verification
 
 - HAND-BACK: `HAND-BACK: open-webui P5 tailnet route open`
 - Agent, unprivileged, from another tailnet device:
@@ -466,10 +554,9 @@ sudo tailscale --socket=/run/open-webui-tailnet/tailscaled.sock serve status
 - Agent, on the host:
   - `ss -ltnH 'sport = :8080'` prints nothing, and no Open WebUI TCP listener
     exists;
-  - the `serve status` output the owner ran in P5.2 names only the Open WebUI
-    socket as the target, so Caddy is not in the path. The sidecar's LocalAPI
-    socket admits only root and the daemon's user, so the agent reads the
-    owner's output rather than running it.
+  - the `serve status` output the owner ran names only the Open WebUI socket
+    as the target, so Caddy is not in the path. The agent reads the owner's
+    output rather than running it.
 
 ### P5.4 The smoke account
 
@@ -587,11 +674,11 @@ The acceptance trial values are the baseline.
   five Qdrant snapshots as the Qdrant runbook describes. Start Valkey and Open
   WebUI, check SQLite `quick_check`, the digests, the collection shapes, that
   a pre-anchor session is rejected, and that a fresh login works; then
-  republish the route with the P5.2 `serve` command.
+  republish the route with the P5.3 `serve` command.
 
   - HAND-BACK: `HAND-BACK: open-webui rollback PASSED to anchor <anchor-id>`
 
-- **To withdraw the tailnet route only:** the P5.2 rollback. Caddy is not
+- **To withdraw the tailnet route only:** the P5.3 rollback. Caddy is not
   involved; never remove the `caddy` package or change its install reason.
 - The Qdrant rollback stays with the Qdrant runbook.
 - The former wildcard `:8080` service is never re-enabled. The legacy state
