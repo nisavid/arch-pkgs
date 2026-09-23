@@ -1055,15 +1055,20 @@ class Qdrant:
         return (response.json() or {}).get("version") if response.status == 200 else None
 
     def create_collections(self) -> None:
-        """Create each household collection that Qdrant does not report yet,
-        so an up that stopped part-way can be rerun."""
+        """Create each household collection and payload index that Qdrant does
+        not report yet, so an up that stopped part-way can be rerun."""
 
         for name in COLLECTIONS:
-            if self.status("GET", f"/collections/{name}", token=self.admin_key) == 200:
-                continue
-            self.call("PUT", f"/collections/{name}", dict(COLLECTION_BODY))
+            response = self.endpoint.request("GET", f"/collections/{name}", token=self.admin_key)
+            if response.status == 200:
+                result = (response.json() or {}).get("result") or {}
+                indexed = set(result.get("payload_schema") or {})
+            else:
+                self.call("PUT", f"/collections/{name}", dict(COLLECTION_BODY))
+                indexed = set()
             for index in PAYLOAD_INDEXES:
-                self.call("PUT", f"/collections/{name}/index?wait=true", index)
+                if index["field_name"] not in indexed:
+                    self.call("PUT", f"/collections/{name}/index?wait=true", index)
 
     def shapes(self) -> dict[str, dict[str, Any]]:
         shapes = {}

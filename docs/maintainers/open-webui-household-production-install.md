@@ -113,9 +113,10 @@ kept until
   sudo sh -c 'test -f /var/lib/open-webui/webui.db || test -f /var/lib/open-webui/data/webui.db' && echo restored && sudo systemctl enable --now open-webui.service
   ```
 
-  It must print `restored`. If it does not, stop: the legacy state is still
-  at `/var/lib/open-webui.legacy-0.11.0-1` or already in place, and the
-  lead decides the next step.
+  It must print `restored`, and then `systemctl is-active open-webui.service`
+  must print `active`. If it does not print `restored`, stop: the legacy
+  state is still at `/var/lib/open-webui.legacy-0.11.0-1` or already in
+  place, and the lead decides the next step.
 
 - HAND-BACK: `HAND-BACK: open-webui P0 legacy stopped and retained`
 - Agent: `systemctl is-active open-webui.service` is inactive, and

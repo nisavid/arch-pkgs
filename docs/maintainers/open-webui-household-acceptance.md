@@ -126,8 +126,7 @@ rehearsal may run earlier.
    Lemonade service's state just before `trial` and just after it. Both
    reads must show `LoadState=loaded` and `ActiveState=active`, and the same
    non-empty `ActiveEnterTimestamp`; the operator copies all six lines into
-   the description of the PR that carries the evidence. An empty timestamp
-   means the unit name is wrong.
+   the description of the PR that carries the evidence.
 8. **No concurrent builds.** The trial runs its units under a capped user
    `builds.slice` (see `--slice`), which package builds share. Hold every
    build on the host for the whole trial: a build that fills the shared cap

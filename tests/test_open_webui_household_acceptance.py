@@ -618,17 +618,36 @@ class PreflightTests(unittest.TestCase):
             self.assertTrue(json.loads((kit.raw / "first-start.json").read_text())["qdrant_fresh"])
             self.assertEqual(qdrant.create_collections.call_count, 2)
 
-    def test_qdrant_creates_only_the_collections_it_does_not_report(self):
+    def test_qdrant_creates_only_the_collections_and_indexes_it_does_not_report(self):
         qdrant = kit_module.Qdrant(16333, "admin")
-        present = set(kit_module.COLLECTIONS[:2])
+        full, bare = kit_module.COLLECTIONS[0], kit_module.COLLECTIONS[1]
+        schema = {index["field_name"]: {} for index in kit_module.PAYLOAD_INDEXES}
+
+        def get(method, path, token=None, **_kw):
+            self.assertEqual((method, token), ("GET", "admin"))
+            name = path.split("/")[-1]
+            if name == full:
+                return mock.Mock(status=200, json=lambda: {"result": {"payload_schema": schema}})
+            if name == bare:
+                return mock.Mock(status=200, json=lambda: {"result": {"payload_schema": {}}})
+            return mock.Mock(status=404, json=lambda: None)
+
         calls = []
-        with mock.patch.object(qdrant, "status",
-                               side_effect=lambda _method, path, **_kw: 200 if path.split("/")[-1] in present else 404), \
+        with mock.patch.object(qdrant.endpoint, "request", side_effect=get), \
                 mock.patch.object(qdrant, "call", side_effect=lambda method, path, payload=None: calls.append(path)):
             qdrant.create_collections()
         created = [path.split("/")[2] for path in calls if path.count("/") == 2]
         self.assertEqual(created, list(kit_module.COLLECTIONS[2:]))
-        self.assertEqual(len(calls), len(created) * (1 + len(kit_module.PAYLOAD_INDEXES)))
+        indexed = [path.split("/")[2] for path in calls if "/index" in path]
+        per_collection = len(kit_module.PAYLOAD_INDEXES)
+        # The fully indexed collection is left alone; the bare one gets only its indexes.
+        self.assertEqual(indexed, [bare] * per_collection + [name for name in created for _ in range(per_collection)])
+        # A GET that is not 200 (such as 401 or 503) never counts as present.
+        calls.clear()
+        with mock.patch.object(qdrant.endpoint, "request", return_value=mock.Mock(status=503, json=lambda: None)), \
+                mock.patch.object(qdrant, "call", side_effect=lambda method, path, payload=None: calls.append(path)):
+            qdrant.create_collections()
+        self.assertEqual(len([path for path in calls if path.count("/") == 2]), len(kit_module.COLLECTIONS))
 
     def test_unit_active_since_reads_the_user_managers_activation_time(self):
         with mock.patch.object(kit_module, "systemctl", return_value="@1789564995") as systemctl:
@@ -1245,6 +1264,12 @@ class EvidenceTests(unittest.TestCase):
                 ctx.journal()
                 # The recorded IP-policy warning comes from the same window.
                 trial.unit_properties()
+            warning = "owui-acc-open-webui.service: unit configures an IP firewall, but not running as root."
+            with mock.patch.object(kit_module, "unit_active_since", return_value=250.0), \
+                    mock.patch.object(kit_module, "journal", return_value=f"starting\n{warning}\n"), \
+                    mock.patch.object(kit_module, "a_id2_rows", return_value=[]), \
+                    mock.patch.object(kit_module, "unit_show", return_value={}):
+                self.assertEqual(trial.unit_properties()["journal_warning"], warning)
             self.assertEqual(read.call_count, 2)
             for call in read.call_args_list:
                 self.assertEqual(call, mock.call(kit_module.UNITS["open-webui"], since=250.0))
