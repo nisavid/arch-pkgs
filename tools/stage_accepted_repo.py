@@ -19,6 +19,7 @@ import sys
 import tarfile
 import tempfile
 from pathlib import Path, PurePosixPath
+from typing import NoReturn
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -37,7 +38,7 @@ COMMIT = re.compile(r"^[0-9a-f]{40}$")
 NAME = re.compile(r"^[a-z0-9@._+][a-z0-9@._+:-]*$")
 
 
-def fail(message: str) -> None:
+def fail(message: str) -> NoReturn:
     raise SystemExit(f"stage_accepted_repo: {message}")
 
 
@@ -241,18 +242,19 @@ def database_records(path: Path, *, require_files: bool) -> tuple[set[tuple], li
             continue
         fields = parse_fields(members["desc"].decode())
         try:
-            record = tuple(
+            name, version, arch, filename = (
                 fields[key][0] for key in ("NAME", "VERSION", "ARCH", "FILENAME")
-            ) + (int(fields["CSIZE"][0]), fields["SHA256SUM"][0])
+            )
+            record = (name, version, arch, filename, int(fields["CSIZE"][0]), fields["SHA256SUM"][0])
         except (KeyError, IndexError, ValueError):
             errors.append(f"{path.name}: {entry} lacks a complete package record")
             continue
-        if f"{record[0]}-{record[1]}" != entry:
+        if f"{name}-{version}" != entry:
             errors.append(f"{path.name}: {entry} does not match its record")
-        if record[0] in names or record[3] in filenames:
-            errors.append(f"{path.name}: duplicate package or filename: {record[0]}")
-        names.add(record[0])
-        filenames.add(record[3])
+        if name in names or filename in filenames:
+            errors.append(f"{path.name}: duplicate package or filename: {name}")
+        names.add(name)
+        filenames.add(filename)
         records.add(record)
     return records, errors
 
@@ -331,7 +333,7 @@ def resolve_repo_name(manifest: dict, requested: str | None) -> str:
 
 
 def stage(args: argparse.Namespace) -> int:
-    manifest, _raw = load_manifest(args.manifest)
+    manifest = load_manifest(args.manifest)[0]
     repo_name = resolve_repo_name(manifest, args.repo_name)
     store_root = args.store_root.resolve(strict=True)
     repo_dir = args.repo_dir.absolute()
@@ -477,7 +479,7 @@ def receipt(args: argparse.Namespace) -> int:
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser = argparse.ArgumentParser(description=(__doc__ or "").splitlines()[0])
     commands = parser.add_subparsers(dest="command", required=True)
 
     stage_parser = commands.add_parser("stage", help="build staging from empty")
