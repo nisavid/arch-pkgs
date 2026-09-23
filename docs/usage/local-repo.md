@@ -183,7 +183,10 @@ with the rest of its contents.
 
 `receipt` verifies the published directory again and requires its
 repository-manifest SHA-256 to equal `SHA`, the value the publisher printed as
-`Verified repository-manifest SHA-256`. Pass the path the publisher printed as
+`Verified repository-manifest SHA-256`. It takes every live field from one
+repository manifest and refuses when the published directory or the previous
+copy changes while it reads them, such as when another publication runs
+concurrently. Pass the path the publisher printed as
 `Retained previous pacman repo` as `PREVIOUS`. When the publisher printed no
 such line, because the published directory did not exist yet, omit
 `--previous-dir`. The receipt then records `previous_copy` as `null`. A

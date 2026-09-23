@@ -3,6 +3,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -164,6 +165,12 @@ class StageAcceptedRepoTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         return json.loads(output.read_text())
 
+    def _load_stager(self):
+        spec = importlib.util.spec_from_file_location("stage_accepted_repo", STAGER)
+        stager = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(stager)
+        return stager
+
     def _staged(self) -> Path:
         result = self._stage()
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -234,9 +241,7 @@ class StageAcceptedRepoTests(unittest.TestCase):
         )
 
     def test_releases_writer_lock_when_work_directory_creation_fails(self):
-        spec = importlib.util.spec_from_file_location("stage_accepted_repo", STAGER)
-        stager = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(stager)
+        stager = self._load_stager()
         manifest = self._write_manifest()
         full = OSError(errno.ENOSPC, "No space left on device")
 
@@ -323,6 +328,28 @@ class StageAcceptedRepoTests(unittest.TestCase):
         self._assert_refused(
             self._stage(self._write_manifest(archives)), "relative store subdirectory"
         )
+
+    def test_refuses_symlinked_source_directory_outside_store(self):
+        outside = self.root / "outside"
+        shutil.copytree(self.store / "lane-a" / "abc1234", outside)
+        (self.store / "escape").symlink_to(outside, target_is_directory=True)
+        archives = [dict(self.archives[0], source="escape"), self.archives[1]]
+        self._assert_refused(
+            self._stage(self._write_manifest(archives)), "regular file inside the store"
+        )
+        self.assertFalse(self.staging.exists())
+
+    def test_refuses_symlinked_source_archive(self):
+        linked = self.store / "linked"
+        linked.mkdir()
+        (linked / self.archives[0]["filename"]).symlink_to(
+            self.store / "lane-a" / "abc1234" / self.archives[0]["filename"]
+        )
+        archives = [dict(self.archives[0], source="linked"), self.archives[1]]
+        self._assert_refused(
+            self._stage(self._write_manifest(archives)), "regular file inside the store"
+        )
+        self.assertFalse(self.staging.exists())
 
     def test_verify_is_read_only(self):
         live = self._staged()
@@ -499,6 +526,39 @@ class StageAcceptedRepoTests(unittest.TestCase):
             {record["filename"] for record in receipt["published_records"]},
             {record["filename"] for record in self.archives},
         )
+
+    def test_receipt_refuses_a_live_repository_replaced_while_it_is_read(self):
+        live = self._staged()
+        publisher_sha = self._manifest_sha(live)
+        replacement = self.root / "replacement"
+        shutil.copytree(live, replacement, symlinks=True)
+        os.utime(replacement / "nisavid.db.tar.zst", ns=(1_786_914_731_000_000_000,) * 2)
+        stager = self._load_stager()
+        verify_repository = stager.verify_repository
+
+        def verify_then_publish(*args):
+            errors = verify_repository(*args)
+            live.rename(self.root / "retained")
+            replacement.rename(live)
+            return errors
+
+        manifest = self._write_manifest()
+        with (
+            mock.patch.object(stager, "verify_repository", side_effect=verify_then_publish),
+            self.assertRaises(SystemExit) as refusal,
+        ):
+            stager.main(
+                [
+                    "receipt",
+                    "--manifest", str(manifest),
+                    "--staging-manifest-sha", publisher_sha,
+                    "--live-dir", str(live),
+                    "--output", str(self.root / "receipt.json"),
+                ]
+            )
+
+        self.assertIn("live repository changed while the receipt was being written", str(refusal.exception))
+        self.assertFalse((self.root / "receipt.json").exists())
 
     def test_receipt_refuses_mismatched_publisher_sha(self):
         live = self._staged()
