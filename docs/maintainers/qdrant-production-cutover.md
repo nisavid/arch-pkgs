@@ -101,9 +101,10 @@ It refuses when any of these fails:
   filesystem must have room for the copy.
 - **State.** The running server reports 1.17.1 and holds zero collections. A
   non-empty host must take the runbook's full migration route instead.
-- **Consumers.** No client connection to 6333 or 6334 is open, and neither
-  `open-webui.service` nor `hayhooks.service` is running or starting. Keep them stopped
-  until verify passes.
+- **Consumers.** No client connection to 6333 or 6334 is open, and both
+  `open-webui.service` and `hayhooks.service` are inactive or failed. Any other
+  state, such as activating or reloading, refuses. Keep them stopped until
+  verify passes.
 - **Fresh names.** The rollback set and the runtime credential do not exist
   yet.
 
