@@ -35,7 +35,7 @@ import urllib.parse
 import uuid
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Iterable, Mapping, Sequence
 
 TOOLS = Path(__file__).resolve().parent
 REPO_ROOT = TOOLS.parent
@@ -70,7 +70,12 @@ RESULT_EXIT_CODES = MappingProxyType(
 )
 
 DEFAULT_LEMOND_URL = "http://127.0.0.1:13305"
-DEFAULT_WHISPER_MODEL = "tiny"
+DEFAULT_WHISPER_MODEL = "base"
+# The owner's Lemonade config pins this chat model.  The fork's listing
+# surfaces may emit the bare name of the precedence winner, and bare names
+# resolve as input, so every readiness check compares ids through
+# ``bare_model_id``.
+DEFAULT_CHAT_MODEL = "user.Qwen3.6-35B-A3B-MTP-GGUF-UD-Q4_K_XL"
 DEFAULT_ACCEPTANCE_ORIGIN = "https://localhost:18443"
 ACCEPTANCE_UNIT = "owui-acc-open-webui.service"
 PRODUCTION_UNIT = "open-webui.service"
@@ -125,16 +130,59 @@ PRODUCTION_EXPECTATION_KEYS = (
 )
 PRODUCTION_EXPECTATIONS: Mapping[str, Mapping[str, str]] = MappingProxyType({})
 
-# Ported from "feat(ctranslate2): update to 4.8.2 with speech G0-G2 evidence"
+# Whisper snapshots, pinned by Hugging Face revision (the model repository's
+# source commit) and the SHA-256 of every file faster-whisper loads.  Only
+# these files are placed, and ``HF_HUB_OFFLINE=1`` keeps a load failure from
+# reaching the network.
+#
+# base is the owner's choice for acceptance and production.  Its revision and
+# model.bin digest come from the Hugging Face API
+# (``/api/models/Systran/faster-whisper-base``, LFS metadata), and the other
+# digests from the files at that revision, resolved read-only on 2026-09-23.
+WHISPER_BASE = MappingProxyType(
+    {
+        "repository": "Systran/faster-whisper-base",
+        "revision": "ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66",
+        "files": MappingProxyType(
+            {
+                "config.json": "56a6d8110d311f19c8f0471e562832c7527f146b567275bfca59fcf7c184da9a",
+                "model.bin": "d01c3014881c9c6f3133c182f3d2887eb6ca1c789a7538c5c007196857a0a6a9",
+                "tokenizer.json": "fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab",
+                "vocabulary.txt": "34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913",
+            }
+        ),
+    }
+)
+# tiny stays available only as an explicit, non-default ``--whisper-model``.
+# Its revision and model.bin digest are ported from "feat(ctranslate2): update
+# to 4.8.2 with speech G0-G2 evidence"
 # (https://github.com/nisavid/arch-pkgs/pull/92), commit
-# e12fdd98251a01cdc99f22a5a113741b2473b107.
+# e12fdd98251a01cdc99f22a5a113741b2473b107; the other digests were resolved
+# at that revision like base's.
 WHISPER_TINY = MappingProxyType(
     {
         "repository": "Systran/faster-whisper-tiny",
         "revision": "d90ca5fe260221311c53c58e660288d3deb8d356",
-        "model.bin_sha256": "dcb76c6586fc06cbdac6dd21f14cfd129cc4cdd9dce19bf4ffa62e59cbe6e6d1",
+        "files": MappingProxyType(
+            {
+                "config.json": "a73a28cdfe1c43ccc7202fa333d1f89c202477271407ae9a7f19afa52039cac8",
+                "model.bin": "dcb76c6586fc06cbdac6dd21f14cfd129cc4cdd9dce19bf4ffa62e59cbe6e6d1",
+                "tokenizer.json": "fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab",
+                "vocabulary.txt": "34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913",
+            }
+        ),
     }
 )
+WHISPER_PINS: Mapping[str, Mapping[str, Any]] = MappingProxyType({"base": WHISPER_BASE, "tiny": WHISPER_TINY})
+
+
+def whisper_pin_record(model: str) -> dict[str, Any]:
+    """One Whisper pin as plain JSON-ready data, for evidence and receipts."""
+
+    pin = WHISPER_PINS[model]
+    return {"repository": pin["repository"], "revision": pin["revision"], "files": dict(pin["files"])}
+
+
 JFK_FLAC_SHA256 = "63a4b1e4c1dc655ac70961ffbf518acd249df237e5a0152faae9a4a836949715"
 JFK_PHRASES = (
     "ask not what your country can do for you",
@@ -305,6 +353,22 @@ def loaded_model_names(health: Any) -> set[str]:
     return names
 
 
+def bare_model_id(model_id: str) -> str:
+    """Strip one leading ``user.`` so a canonical id and its bare name compare equal."""
+
+    return model_id.removeprefix("user.")
+
+
+def listed_model_id(listed: Iterable[str], wanted: str) -> str | None:
+    """The listed id that names ``wanted``: the exact id first, else its bare-name match."""
+
+    ids = set(listed)
+    if wanted in ids:
+        return wanted
+    matches = sorted(item for item in ids if bare_model_id(item) == bare_model_id(wanted))
+    return matches[0] if matches else None
+
+
 def served_model_ids(models: Any) -> set[str]:
     data = models.get("data") if isinstance(models, dict) else None
     return {
@@ -321,12 +385,12 @@ def require_models_ready(models: Any, health: Any, model_ids: Sequence[str]) -> 
     served but not resident is a precondition failure, not something to fix.
     """
 
-    served = served_model_ids(models)
-    missing = [item for item in model_ids if item not in served]
+    served = {bare_model_id(item) for item in served_model_ids(models)}
+    missing = [item for item in model_ids if bare_model_id(item) not in served]
     if missing:
         raise Blocked(f"NEEDS LEAD: Lemonade does not serve {', '.join(missing)}")
-    loaded = loaded_model_names(health)
-    unloaded = [item for item in model_ids if item not in loaded]
+    loaded = {bare_model_id(item) for item in loaded_model_names(health)}
+    unloaded = [item for item in model_ids if bare_model_id(item) not in loaded]
     if unloaded:
         raise Blocked(f"NEEDS LEAD: Lemonade has not loaded {', '.join(unloaded)}")
 
@@ -519,7 +583,7 @@ def render_valkey_acl(password_sha256: str) -> str:
 
 
 def connection_seed(lemond_url: str = DEFAULT_LEMOND_URL) -> dict[str, str]:
-    """The keyless, Lemonade-only chat connection seed for one provider origin.
+    """The credential-free, Lemonade-only chat connection seed for one provider origin.
 
     The packaged ``open-webui.env`` carries this seed for the default origin
     from 0.11.0-5 on, so the acceptance overlay sets only the keys whose
@@ -897,6 +961,7 @@ class Context:
     settings: Settings
     chat_model: str
     audio: Path | None = None
+    whisper_model: str = DEFAULT_WHISPER_MODEL
     # Acceptance only: returns (chunk text, stored Qdrant vector) for one
     # indexed chunk of the handbook, so A-R3 can tie the app path to the
     # settings prefix.  None skips that part of the canary.
@@ -1101,7 +1166,7 @@ def stt(ctx: Context) -> dict[str, Any]:
         "transcription_s": elapsed,
         "language": language,
         "word_count": len(normalize_words(text).split()),
-        "whisper": dict(WHISPER_TINY),
+        "whisper": {"model": ctx.whisper_model, **whisper_pin_record(ctx.whisper_model)},
     }
     if not transcription_passes(text, language):
         raise ScenarioFailure(f"transcription did not match: {normalize_words(text)[:120]}")
@@ -1241,7 +1306,7 @@ def configure(
     lemond_url: str = DEFAULT_LEMOND_URL,
     whisper_model: str = DEFAULT_WHISPER_MODEL,
 ) -> dict[str, Any]:
-    """Set the keyless Lemonade connection, local Whisper STT, and the chat model."""
+    """Set the credential-free Lemonade connection, local Whisper STT, and the chat model."""
 
     ollama = webui.json("GET", API["ollama_config"], token=token) or {}
     webui.json("POST", API["ollama_config_update"], {**ollama, "ENABLE_OLLAMA_API": False}, token=token)
@@ -1261,12 +1326,33 @@ def configure(
     audio = webui.json("GET", API["audio_config"], token=token) or {}
     stt_config = {**(audio.get("stt") or {}), "ENGINE": "", "WHISPER_MODEL": whisper_model}
     webui.json("POST", API["audio_config_update"], {**audio, "stt": stt_config}, token=token)
-    models = webui.json("GET", API["models"], token=token) or {}
-    if chat_model not in served_model_ids(models):
-        raise Blocked(f"NEEDS LEAD: Open WebUI does not list the chat model {chat_model}")
+    listed = webui_chat_model(webui, token, chat_model)
     defaults = webui.json("GET", API["models_config"], token=token) or {}
-    webui.json("POST", API["models_config"], {**defaults, "DEFAULT_MODELS": chat_model}, token=token)
-    return {"chat_model": chat_model, "whisper_model": whisper_model, "ollama": False, "openai_keys": "empty"}
+    webui.json("POST", API["models_config"], {**defaults, "DEFAULT_MODELS": listed}, token=token)
+    return {
+        "chat_model": listed,
+        "designated_chat_model": chat_model,
+        "whisper_model": whisper_model,
+        "ollama": False,
+        "openai_keys": "empty",
+    }
+
+
+def webui_chat_model(webui: Endpoint, token: str, chat_model: str) -> str:
+    """The id Open WebUI lists for the designated chat model, as this account sees it.
+
+    Open WebUI forwards chat by the id it lists, which may be the bare name of
+    a ``user.`` id.  A model the account cannot see is a precondition: the
+    owner grants the account access in the admin UI.
+    """
+
+    models = webui.json("GET", API["models"], token=token) or {}
+    listed = listed_model_id(served_model_ids(models), chat_model)
+    if listed is None:
+        raise Blocked(
+            f"NEEDS OWNER: Open WebUI does not list the chat model {chat_model} for this account"
+        )
+    return listed
 
 
 # ---------------------------------------------------------------------------
@@ -1284,10 +1370,16 @@ def _parser() -> argparse.ArgumentParser:
     resmoke.add_argument("--socket", type=Path, help="talk to Open WebUI over this UNIX socket instead")
     resmoke.add_argument("--cacert", type=Path, help="CA for the origin (acceptance default: the Caddy internal root)")
     resmoke.add_argument("--lemond-url", default=DEFAULT_LEMOND_URL, help=f"Lemonade origin (default {DEFAULT_LEMOND_URL})")
-    resmoke.add_argument("--chat-model", required=True, help="the designated resident chat model; no default")
+    resmoke.add_argument(
+        "--chat-model", default=DEFAULT_CHAT_MODEL,
+        help=f"the designated resident chat model; its bare name also matches (default {DEFAULT_CHAT_MODEL})",
+    )
     resmoke.add_argument("--embedding-model", help="confirm the effective zembed id (default: the Open WebUI setting)")
     resmoke.add_argument("--reranking-model", help="confirm the effective zerank id (default: the Open WebUI setting)")
-    resmoke.add_argument("--whisper-model", default=DEFAULT_WHISPER_MODEL, help="recorded Whisper size (default tiny)")
+    resmoke.add_argument(
+        "--whisper-model", choices=tuple(WHISPER_PINS), default=DEFAULT_WHISPER_MODEL,
+        help=f"recorded Whisper size (default {DEFAULT_WHISPER_MODEL})",
+    )
     resmoke.add_argument("--audio", type=Path, help="retained jfk.flac, SHA-256 verified before use")
     resmoke.add_argument("--scenario", action="append", default=[], help="scenario id or all (default all)")
     resmoke.add_argument("--receipt", type=Path, required=True)
@@ -1297,9 +1389,9 @@ def _parser() -> argparse.ArgumentParser:
 
     configure_parser = commands.add_parser("configure", help="admin connection, STT, and chat-model settings over the socket")
     configure_parser.add_argument("--socket", type=Path, required=True)
-    configure_parser.add_argument("--chat-model", required=True)
+    configure_parser.add_argument("--chat-model", default=DEFAULT_CHAT_MODEL)
     configure_parser.add_argument("--lemond-url", default=DEFAULT_LEMOND_URL)
-    configure_parser.add_argument("--whisper-model", default=DEFAULT_WHISPER_MODEL)
+    configure_parser.add_argument("--whisper-model", choices=tuple(WHISPER_PINS), default=DEFAULT_WHISPER_MODEL)
     configure_parser.add_argument("--credentials-dir", type=Path, help="directory with admin-email and admin-final-password (default $CREDENTIALS_DIRECTORY)")
     return parser
 
@@ -1349,13 +1441,14 @@ def _resmoke(args: argparse.Namespace) -> int:
                 raise Blocked(
                     f"Open WebUI is unreachable or rejected the smoke sign-in ({type(error).__name__})"
                 ) from error
+            chat_model = webui_chat_model(webui, token, args.chat_model)
         except Blocked as error:
             print(f"precondition BLOCKED {error}", flush=True)
             precondition = str(error)
         else:
             ctx = Context(
                 target=args.target, webui=webui, lemond=lemond, token=token, settings=settings,
-                chat_model=args.chat_model, audio=args.audio, unit=args.unit,
+                chat_model=chat_model, audio=args.audio, unit=args.unit, whisper_model=args.whisper_model,
             )
             results = run_scenarios(ctx, args.scenario)
     except Exception as error:

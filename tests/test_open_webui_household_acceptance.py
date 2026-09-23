@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sys
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -50,7 +51,7 @@ def make_kit(root, *, rehearsal=False, route=None):
         chat_model="household-chat-stub-v1" if rehearsal else "resident-chat",
         embedding_model=None,
         reranking_model=None,
-        whisper_model="tiny",
+        whisper_model="base",
         candidate_store=root / "store",
         runtime_dir=root / "run",
     )
@@ -116,8 +117,9 @@ class ArgumentTests(unittest.TestCase):
         self.assertEqual(
             packaged_env()["RAG_OPENAI_API_BASE_URL"], sc.DEFAULT_LEMOND_URL + "/api/v1"
         )
-        self.assertEqual(kit.whisper_model, "tiny")
+        self.assertEqual(kit.whisper_model, "base")
         self.assertEqual(kit.mode, "record")
+        self.assertEqual(self.kit("down", "--whisper-model", "tiny").whisper_model, "tiny")
 
     def test_the_stub_and_the_rehearsal_go_together(self):
         with self.assertRaises(ValueError):
@@ -131,10 +133,9 @@ class ArgumentTests(unittest.TestCase):
         self.assertEqual(kit.lemond_url, kit_module.STUB_URL)
         self.assertEqual(kit.chat_model, "household-chat-stub-v1")
 
-    def test_the_chat_model_has_no_default_with_lemonade(self):
+    def test_the_chat_model_defaults_to_the_owner_pin_with_lemonade(self):
         for command in ("up", "trial", "resmoke"):
-            with self.assertRaises(ValueError):
-                self.kit(command)
+            self.assertEqual(self.kit(command).chat_model, "user.Qwen3.6-35B-A3B-MTP-GGUF-UD-Q4_K_XL")
         self.assertEqual(self.kit("trial", "--chat-model", "chat").chat_model, "chat")
 
     def test_a_bad_combination_is_a_usage_error(self):
@@ -214,7 +215,7 @@ class UnitDerivationTests(unittest.TestCase):
             self.assertIn(f"serve --uds {kit.root}/run/owui-acc/open-webui.sock", exec_start)
             self.assertIn(("IPAddressDeny", "any"), values)
             self.assertIn(("Environment", "HF_HUB_OFFLINE=1"), values)
-            self.assertIn(("Environment", "WHISPER_MODEL=tiny"), values)
+            self.assertIn(("Environment", "WHISPER_MODEL=base"), values)
             by_property = {}
             for row in rows:
                 by_property.setdefault(row["property"], []).append(row["status"])
@@ -395,6 +396,18 @@ class PreflightTests(unittest.TestCase):
         self.assertEqual(refusals, [])
         self.assertEqual(sorted(report["archives"].values()), ["ok"] * 6)
 
+    def test_readiness_accepts_the_bare_listing_of_a_user_prefixed_chat_model(self):
+        env = packaged_env()
+        ids = [env["RAG_EMBEDDING_MODEL"], env["RAG_RERANKING_MODEL"], "Qwen3.6-35B-A3B-MTP-GGUF-UD-Q4_K_XL"]
+        models = {"data": [{"id": item} for item in ids]}
+        health = {"all_models_loaded": [{"model_name": item} for item in ids]}
+        with tempfile.TemporaryDirectory() as directory:
+            kit = make_kit(directory)
+            kit.chat_model = sc.DEFAULT_CHAT_MODEL
+            with mock.patch.object(kit_module.Kit, "packaged_env", return_value=env), \
+                    mock.patch.object(sc, "lemond_snapshot", return_value=(health, models)):
+                kit_module.require_lemond_ready(kit)
+
     def test_preflight_refuses_instead_of_loading_a_model(self):
         models, _ = self.served()
         env = packaged_env()
@@ -532,6 +545,104 @@ class PreflightTests(unittest.TestCase):
             self.assertTrue(kit.root.is_dir())
 
 
+class InputTests(unittest.TestCase):
+    FILES = {"config.json": b"{}", "model.bin": b"weights", "tokenizer.json": b"tok", "vocabulary.txt": b"voc"}
+
+    def pinned(self, kit):
+        source = kit.root / "inputs" / "faster-whisper-base"
+        source.mkdir(parents=True)
+        for name, data in self.FILES.items():
+            (source / name).write_bytes(data)
+        (source / "README.md").write_text("not pinned")
+        pin = {
+            "repository": "Systran/faster-whisper-base",
+            "revision": "f" * 40,
+            "files": {name: v1._sha256_bytes(data) for name, data in self.FILES.items()},
+        }
+        return source, {"base": pin}
+
+    def test_the_whisper_snapshot_is_placed_offline_from_its_pinned_files_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit = make_kit(directory)
+            _, pins = self.pinned(kit)
+            cache = Path(directory) / "whisper"
+            with mock.patch.object(sc, "WHISPER_PINS", pins), \
+                    mock.patch.object(kit_module, "whisper_dir", return_value=cache):
+                kit_module.place_whisper(kit)
+            base = cache / "models--Systran--faster-whisper-base"
+            snapshot = base / "snapshots" / ("f" * 40)
+            self.assertEqual(sorted(item.name for item in snapshot.iterdir()), sorted(self.FILES))
+            self.assertEqual((base / "refs" / "main").read_text(), "f" * 40)
+
+    def test_any_pinned_whisper_file_that_differs_or_is_missing_is_refused(self):
+        for damage in ("tamper", "remove"):
+            with tempfile.TemporaryDirectory() as directory:
+                kit = make_kit(directory)
+                source, pins = self.pinned(kit)
+                if damage == "tamper":
+                    (source / "tokenizer.json").write_bytes(b"other")
+                else:
+                    (source / "tokenizer.json").unlink()
+                with mock.patch.object(sc, "WHISPER_PINS", pins), \
+                        mock.patch.object(kit_module, "whisper_dir", return_value=Path(directory) / "whisper"):
+                    with self.assertRaisesRegex(sc.Blocked, "tokenizer.json"):
+                        kit_module.place_whisper(kit)
+                self.assertFalse((Path(directory) / "whisper").exists())
+
+    def test_the_host_providers_of_record_are_identified_with_their_foreign_flag(self):
+        listing = {
+            ("pacman", "-Qq"): b"python-sentence-transformers\npython-pytorch-opt-rocm-gfx1151\n"
+                               b"python-onnxruntime-opt-rocm\npython-pytorch\nzsh\n",
+            ("pacman", "-Qqm"): b"python-sentence-transformers\n",
+        }
+
+        def fake_run(command, **_kwargs):
+            return subprocess.CompletedProcess(command, 0, stdout=listing[tuple(command)])
+
+        def identity(name):
+            return {"package": name, "source": "host", "version": "5.7.0-1"}
+
+        with mock.patch.object(kit_module, "run", side_effect=fake_run), \
+                mock.patch.object(kit_module, "host_package_identity", side_effect=identity):
+            record = kit_module.providers_of_record()
+        by_name = {item["package"]: item for item in record["packages"]}
+        self.assertEqual(
+            sorted(by_name),
+            ["python-onnxruntime-opt-rocm", "python-pytorch-opt-rocm-gfx1151", "python-sentence-transformers"],
+        )
+        self.assertTrue(by_name["python-sentence-transformers"]["foreign"])
+        self.assertFalse(by_name["python-pytorch-opt-rocm-gfx1151"]["foreign"])
+        self.assertIn("python-faster-whisper", record["absent"])
+        self.assertIn("knowingly-foreign providers of record", record["note"])
+        v1.assert_public_safe(record)
+
+    def test_host_installed_supporting_packages_are_preferred_and_identified(self):
+        info = (
+            "Name            : caddy\nVersion         : 2.10.2-1\nArchitecture    : x86_64\n"
+            "Packager        : Someone <someone@example.org>\nBuild Date      : Mon 01 Sep 2026\n"
+            "Install Reason  : Installed as a dependency for another package\n"
+        ).encode()
+        with mock.patch.object(kit_module, "run",
+                               return_value=subprocess.CompletedProcess([], 0, stdout=info)):
+            identity = kit_module.host_package_identity("caddy")
+        self.assertEqual(identity, {
+            "package": "caddy", "source": "host", "version": "2.10.2-1", "architecture": "x86_64",
+            "build_date": "Mon 01 Sep 2026", "install_reason": "Installed as a dependency for another package",
+        })
+        with mock.patch.object(kit_module, "run", return_value=subprocess.CompletedProcess([], 1, stdout=b"")):
+            self.assertIsNone(kit_module.host_package_identity("caddy"))
+        with tempfile.TemporaryDirectory() as directory:
+            kit = make_kit(directory)
+            host = {package: {"package": package, "source": "host", "version": "1-1"}
+                    for package in kit_module.SUPPORTING_PACKAGES}
+            with mock.patch.object(kit_module, "host_package_identity", side_effect=host.get), \
+                    mock.patch.object(kit_module, "extract") as extract:
+                records = kit_module.verify_supporting(kit)
+            extract.assert_not_called()
+            self.assertEqual(records, [host[package] for package in kit_module.SUPPORTING_PACKAGES])
+            self.assertEqual(kit.caddy_binary(), Path("/usr/bin/caddy"))
+
+
 class ProductionDocTests(unittest.TestCase):
     doc = (REPO_ROOT / "docs" / "maintainers" / "open-webui-household-production-install.md").read_text()
 
@@ -542,9 +653,16 @@ class ProductionDocTests(unittest.TestCase):
         self.assertEqual(printf.group(1).replace("\\n", "\n"), rendered)
 
     def test_the_production_drop_in_carries_the_speech_settings(self):
-        for key, value in sc.speech_environment("<whisper-model>").items():
+        for key, value in sc.speech_environment().items():
             self.assertIn(f"Environment={key}={value}", self.doc)
         self.assertNotIn("inputs/whisper/", self.doc)
+
+    def test_the_production_whisper_placement_uses_the_base_pin(self):
+        pin = sc.whisper_pin_record(sc.DEFAULT_WHISPER_MODEL)
+        self.assertIn(f"rev={pin['revision']}", self.doc)
+        for name, digest in pin["files"].items():
+            self.assertIn(f"| `{name}` | `{digest}` |", self.doc)
+            self.assertIn(f'"$src/{name}"', self.doc)
 
 
 class LemonadeSafetyTests(unittest.TestCase):
@@ -622,7 +740,7 @@ class CredentialTests(unittest.TestCase):
         self.assertEqual(signature, expected)
         self.assertEqual(kit_module.jwt_claims(kit_module.mint_jwt("k", "r", 300, now=1000))["exp"], 1300)
 
-    def test_keyless_check_ignores_toggles_and_flags_key_material(self):
+    def test_no_credential_check_ignores_toggles_and_flags_key_material(self):
         env = packaged_env()
         self.assertEqual(kit_module.nonempty_key_paths(env, {"OPENAI_API_KEYS": ""}), [])
         config = {
@@ -694,11 +812,14 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(kit_module.publicize("127.1.2.3:80 and 127.0.0.1", []), "loopback:80 and loopback")
         self.assertEqual(kit_module.publicize("10.127.0.0.1x", []), "10.127.0.0.1x")
 
-    def test_a_non_loopback_lemonade_origin_never_reaches_evidence(self):
+    def test_a_non_default_lemonade_origin_never_reaches_evidence(self):
         with tempfile.TemporaryDirectory() as directory:
             kit = make_kit(directory)
             kit.lemond_url = "http://lemond-host:13305"
             public = kit_module.publicize({"url": "http://lemond-host:13305/api/v1"}, kit.replacements())
+            self.assertEqual(public, {"url": "<lemond>/api/v1"})
+            kit.lemond_url = "http://127.0.0.1:23999"
+            public = kit_module.publicize({"url": "http://127.0.0.1:23999/api/v1"}, kit.replacements())
             self.assertEqual(public, {"url": "<lemond>/api/v1"})
             self.assertEqual(make_kit(directory).replacements()[0][1], "<root>")
 
@@ -781,7 +902,7 @@ class EvidenceTests(unittest.TestCase):
                 ran.append("restore")
                 raise sc.ScenarioFailure('{"restore_s": 41.0}')
 
-            for name in ("identity", "unit_properties", "first_start", "commission", "restart", "g4", "keyless",
+            for name in ("identity", "unit_properties", "first_start", "commission", "restart", "g4", "no_credential",
                          "reranker_down", "recovery", "privacy", "rollback_drill", "resources"):
                 setattr(trial, name, ok(name))
             trial.restore_drill = over_ceiling
