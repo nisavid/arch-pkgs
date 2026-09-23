@@ -724,14 +724,17 @@ the `:443` route fails closed. Valkey saves its RDB when it stops.
 
 ```bash
 a=/var/lib/arch-pkgs-anchors/open-webui-0.11.0-6-$(date -u +%Y%m%dT%H%M%SZ)
-sudo install -d -m 0700 "$a" "$a/credstore" "$a/archives" "$a/qdrant"
-sudo systemctl stop open-webui.service valkey.service
-sudo cp -a /var/lib/open-webui/data "$a/open-webui-data"
-sudo cp -a /var/lib/valkey/open-webui/dump.rdb "$a/"
-sudo sh -c 'cp -a /etc/credstore.encrypted/open-webui.* "$1/credstore/"' sh "$a"
-sudo /usr/lib/open-webui/open-webui-session-epoch-ledger current | sudo tee "$a/epoch-bound"
-sudo cp -a /var/cache/pacman/pkg/{open-webui-0.11.0-6-x86_64,python-rapidocr-3.9.2-1-any,python-faster-whisper-1.2.1-1-any}.pkg.tar.zst "$a/archives/"
+sudo install -d -m 0700 "$a" "$a/credstore" "$a/archives" "$a/qdrant" \
+  && sudo systemctl stop open-webui.service valkey.service \
+  && sudo cp -a /var/lib/open-webui/data "$a/open-webui-data" \
+  && sudo cp -a /var/lib/valkey/open-webui/dump.rdb "$a/" \
+  && sudo sh -c 'cp -a /etc/credstore.encrypted/open-webui.* "$1/credstore/"' sh "$a" \
+  && sudo sh -c '/usr/lib/open-webui/open-webui-session-epoch-ledger current >"$1/epoch-bound"' sh "$a" \
+  && sudo cp -a /var/cache/pacman/pkg/{open-webui-0.11.0-6-x86_64,python-rapidocr-3.9.2-1-any,python-faster-whisper-1.2.1-1-any}.pkg.tar.zst "$a/archives/" \
+  && echo copied
 ```
+
+It must print `copied`; each step runs only if the one before it succeeded.
 
 With Open WebUI stopped, take the five collection snapshots as root. The
 administrative key goes from `/etc/qdrant/qdrant.env` into a private header
@@ -755,11 +758,34 @@ sudo sh -c '
 ```
 
 It must print five `saved` lines; a failed download leaves no file behind.
-Then record the digests, which refuses unless all five snapshot files exist
-and must print `recorded`, and reopen, Valkey first:
+Then record the digests. The block first checks that every anchor member is
+present and non-empty, by name, and must print `recorded`; `SHA256SUMS` then
+lists exactly those members, so the rollback's check cannot pass on an
+anchor that is missing one:
 
 ```bash
-sudo sh -c 'test "$(find "$1/qdrant" -name "*.snapshot" | wc -l)" -eq 5 && cd "$1" && find . -type f ! -name SHA256SUMS -exec sha256sum {} + >SHA256SUMS' sh "$a" && echo recorded
+sudo sh -c '
+  set -eu
+  test -d "$1/open-webui-data"
+  test -s "$1/dump.rdb"
+  test -s "$1/epoch-bound"
+  for n in webui-secret-key oauth-client-info-encryption-key oauth-session-token-encryption-key valkey-url qdrant-runtime-api-key admin-email admin-name admin-final-password; do
+    test -s "$1/credstore/open-webui.$n"
+  done
+  for n in open-webui-0.11.0-6-x86_64 python-rapidocr-3.9.2-1-any python-faster-whisper-1.2.1-1-any; do
+    test -s "$1/archives/$n.pkg.tar.zst"
+  done
+  for s in memories knowledge files web-search hash-based; do
+    test -s "$1/qdrant/open-webui-rag-v1_$s.snapshot"
+  done
+  cd "$1"
+  find . -type f ! -name SHA256SUMS -exec sha256sum {} + >SHA256SUMS
+' sh "$a" && echo recorded
+```
+
+Then reopen, Valkey first:
+
+```bash
 sudo systemctl start valkey.service
 sudo systemctl start open-webui.service
 ```

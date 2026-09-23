@@ -1143,14 +1143,28 @@ def cited_answer(ctx: Context) -> dict[str, Any]:
         values = {
             "timings": timings,
             "sources": summary,
-            "canonical_citation": CANONICAL_CITATION,
+            # Open WebUI names a file source by its upload name, so that is
+            # the one source name the check requires.
+            "expected_source_name": HANDBOOK_NAME,
             "fact_present": CANONICAL_FACT in text,
         }
         if not cited_answer_passes(text, summary, HANDBOOK_NAME):
             raise ScenarioFailure(json.dumps(values, sort_keys=True, ensure_ascii=False))
-        return values
-    finally:
-        ctx.webui.request("DELETE", API["file"].format(id=file_id), token=ctx.token)
+    except BaseException:
+        # Clean up on every path, but never let the cleanup hide the failure.
+        _delete_file(ctx, file_id)
+        raise
+    deleted = _delete_file(ctx, file_id)
+    if deleted != 200:
+        raise ScenarioFailure(f"the handbook delete returned {deleted}; the uploaded file remains")
+    return values
+
+
+def _delete_file(ctx: Context, file_id: str) -> int | str:
+    try:
+        return ctx.webui.request("DELETE", API["file"].format(id=file_id), token=ctx.token).status
+    except (OSError, http.client.HTTPException) as error:
+        return type(error).__name__
 
 
 def _active_enter_epoch(unit: str) -> float | None:
@@ -1441,6 +1455,8 @@ def _resmoke(args: argparse.Namespace) -> int:
                 raise Blocked("--root is required for the acceptance target")
             if args.socket is None and args.target == "production" and not args.origin:
                 raise Blocked("--origin is required for the production target")
+            if args.socket is None and args.origin and urllib.parse.urlsplit(args.origin).scheme != "https":
+                raise Blocked("--origin must be an https URL; the smoke sign-in sends a password")
             lemond = Endpoint(origin=args.lemond_url)
             try:
                 if args.socket is not None:

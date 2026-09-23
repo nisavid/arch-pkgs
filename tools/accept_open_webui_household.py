@@ -1458,6 +1458,16 @@ def snapshot_resources(kit: Kit, label: str) -> None:
             except (OSError, ValueError):
                 entry["oom_kill"] = None
         record["units"][unit] = entry
+    # The slice's memory.events is hierarchical, so it still counts an OOM
+    # kill in a unit whose own cgroup is already gone.
+    shown = unit_show(kit.slice, "ControlGroup", "ActiveState")
+    record["slice"] = {"unit": kit.slice, "state": shown.get("ActiveState"), "oom_kill": None}
+    if shown.get("ControlGroup"):
+        try:
+            events = (Path("/sys/fs/cgroup") / shown["ControlGroup"].lstrip("/") / "memory.events").read_text()
+            record["slice"]["oom_kill"] = int(dict(line.split() for line in events.splitlines()).get("oom_kill", "0"))
+        except (OSError, ValueError):
+            pass
     kit.raw.mkdir(parents=True, exist_ok=True)
     with (kit.raw / "resources.jsonl").open("a", encoding="utf-8") as sink:
         sink.write(json.dumps(record, sort_keys=True) + "\n")
@@ -1467,13 +1477,21 @@ def resource_gates(records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     """The only resource gates: no OOM kill, no unplanned restart.  The rest is recorded."""
 
     oom: dict[str, int] = {}
+    unobserved: set[str] = set()
     restarts: dict[str, int] = {}
     peaks: dict[str, int] = {}
     cpu: dict[str, int] = {}
     for record in records:
-        for unit, entry in (record.get("units") or {}).items():
+        members = dict(record.get("units") or {})
+        if record.get("slice"):
+            members[record["slice"].get("unit") or "slice"] = record["slice"]
+        for unit, entry in members.items():
             if isinstance(entry.get("oom_kill"), int):
                 oom[unit] = max(oom.get(unit, 0), entry["oom_kill"])
+            elif entry.get("state") == "active":
+                # A running unit whose OOM count cannot be read leaves the
+                # gate indeterminate, which fails it.
+                unobserved.add(unit)
             if isinstance(entry.get("NRestarts"), int):
                 # systemd resets NRestarts on every explicit start or restart,
                 # and a snapshot precedes every planned one, so any nonzero
@@ -1485,10 +1503,11 @@ def resource_gates(records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
                 cpu[unit] = max(cpu.get(unit, 0), entry["CPUUsageNSec"])
     return {
         "oom_kills": oom,
+        "oom_unobserved": sorted(unobserved),
         "unplanned_restarts": restarts,
         "memory_peak_max_bytes": peaks,
         "cpu_usage_nsec_max": cpu,
-        "passes": not any(oom.values()) and not any(restarts.values()),
+        "passes": not any(oom.values()) and not unobserved and not any(restarts.values()),
     }
 
 
@@ -1605,12 +1624,14 @@ def backup_anchor(kit: Kit, qdrant: Qdrant) -> dict[str, Any]:
     shutil.copytree(kit.credstore, kit.anchor / "credstore")
     shapes = qdrant.shapes()
     snapshot_bytes = {name: qdrant.snapshot(name, kit.anchor / "qdrant" / f"{name}.snapshot") for name in COLLECTIONS}
+    snapshot_sha256 = {name: sha256_file(kit.anchor / "qdrant" / f"{name}.snapshot") for name in COLLECTIONS}
     record = {
         "data_digest": tree_digest(kit.anchor / "data"),
         "rdb_sha256": sha256_file(kit.anchor / "dump.rdb"),
         "credstore_digest": tree_digest(kit.anchor / "credstore"),
         "collections": shapes,
         "snapshot_bytes": snapshot_bytes,
+        "snapshot_sha256": snapshot_sha256,
         "epoch_bound": ledger(kit, "current"),
         "archives": kit.state()["archives"],
         "sizes": tree_sizes(kit.anchor),
@@ -1622,8 +1643,34 @@ def backup_anchor(kit: Kit, qdrant: Qdrant) -> dict[str, Any]:
     return record
 
 
+def verify_anchor(kit: Kit) -> None:
+    """Check every anchor member against anchor.json before a restore replaces
+    live state, so a damaged anchor stops the restore with nothing changed."""
+
+    anchor = json.loads((kit.anchor / "anchor.json").read_text())
+    problems = []
+    if not (kit.anchor / "data").is_dir() or tree_digest(kit.anchor / "data") != anchor.get("data_digest"):
+        problems.append("data")
+    rdb = kit.anchor / "dump.rdb"
+    if not rdb.is_file() or sha256_file(rdb) != anchor.get("rdb_sha256"):
+        problems.append("dump.rdb")
+    if not (kit.anchor / "credstore").is_dir() or tree_digest(kit.anchor / "credstore") != anchor.get("credstore_digest"):
+        problems.append("credstore")
+    for name in COLLECTIONS:
+        snapshot = kit.anchor / "qdrant" / f"{name}.snapshot"
+        expected = (anchor.get("snapshot_sha256") or {}).get(name)
+        if (not snapshot.is_file() or snapshot.stat().st_size != (anchor.get("snapshot_bytes") or {}).get(name)
+                or (expected is not None and sha256_file(snapshot) != expected)):
+            problems.append(f"qdrant/{name}.snapshot")
+    if problems:
+        raise sc.ScenarioFailure(f"the anchor does not match anchor.json ({', '.join(problems)}); live state is unchanged")
+
+
 def restore_tuple(kit: Kit, qdrant: Qdrant) -> dict[str, Any]:
-    """Wipe and restore SQLite and uploads, the RDB, the credstore, and Qdrant."""
+    """Wipe and restore SQLite and uploads, the RDB, the credstore, and Qdrant.
+
+    Callers run verify_anchor first, outside any timed window.
+    """
 
     remove_tree(data_dir(kit))
     shutil.copytree(kit.anchor / "data", data_dir(kit))
@@ -2212,6 +2259,7 @@ class Trial:
                        secrets.token_hex(16))
         kit.store_credential(MARKER_CREDENTIAL, secrets.token_hex(16))
         pre_restore = marker_divergence(kit)
+        verify_anchor(kit)
         snapshot_resources(kit, "before restore")
         epoch = ledger(kit, "reserve")
         started = time.monotonic()
@@ -2247,6 +2295,7 @@ class Trial:
         if not self.anchor.get("archives") or not (kit.anchor / "anchor.json").is_file():
             # Nothing destructive happens without an anchor to roll back to.
             raise sc.ScenarioFailure("no anchor backup exists; the rollback drill cannot run")
+        verify_anchor(kit)
         legacy_before = legacy_service_state()
         snapshot_resources(kit, "before rollback")
         window = time.monotonic()
@@ -2413,6 +2462,12 @@ class Trial:
 
         self.step("rehearsal.embedding-prefixes", check)
 
+    def drill_counts(self) -> dict[str, int]:
+        """How many restore and rollback drills this trial actually ran."""
+
+        ran = [step.id for step in self.steps]
+        return {"restore_drills": ran.count(TRIAL_STEPS[15]), "rollback_drills": ran.count(TRIAL_STEPS[16])}
+
     def finish(self) -> int:
         kit = self.kit
         restarted = lemond_restarted(self.lemond_pre, self.lemond_post)
@@ -2427,10 +2482,14 @@ class Trial:
             detail = "ok"
         except ValueError as error:
             safe, detail = False, str(error)
-        evidence_step = Step(TRIAL_STEPS[18], sc.PASS if safe else sc.FAIL, detail, 0.0,
-                             {"trial_set_count": 1, "restore_drills": 1, "rollback_drills": 1})
+        drills = self.drill_counts()
+        complete = drills == {"restore_drills": 1, "rollback_drills": 1}
+        if safe and not complete:
+            detail = "a critical failure stopped the trial before both drills ran"
+        evidence_step = Step(TRIAL_STEPS[18], sc.PASS if safe and complete else sc.FAIL, detail, 0.0,
+                             {"trial_set_count": 1, **drills})
         self.record(evidence_step)
-        if not safe and exit_code == sc.EXIT_PASS:
+        if (not safe or not complete) and exit_code == sc.EXIT_PASS:
             exit_code = sc.EXIT_FAIL
         if kit.rehearsal:
             print(f"rehearsal bring-up {'PASS' if exit_code == sc.EXIT_PASS else 'FAIL'} (no evidence written)")
@@ -2539,8 +2598,7 @@ def build_evidence(kit: Kit, trial: Trial, exit_code: int, lemond_restarted_: bo
         "recorded_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "kit_commit": state.get("kit_commit"),
         "trial_set_count": 1,
-        "restore_drills": 1,
-        "rollback_drills": 1,
+        **trial.drill_counts(),
         "disposition": disposition,
         "exit_code": exit_code,
         "lemonade": {
@@ -2551,7 +2609,7 @@ def build_evidence(kit: Kit, trial: Trial, exit_code: int, lemond_restarted_: bo
         },
         "models": {"embedding": embedding, "reranking": reranking, "chat": kit.chat_model},
         "canary_texts": {"query": sc.CANARY_QUERY, "relevant": sc.CANARY_RELEVANT, "unrelated": sc.CANARY_UNRELATED},
-        "canonical_citation": sc.CANONICAL_CITATION,
+        "expected_source_name": sc.HANDBOOK_NAME,
         "limits": dict(LIMITS),
         "credential_route": kit.credential_route(),
         "conditions": trial_conditions(kit) + ([] if lemond_restarted_ is not None else [LEMONADE_RESTART_CONDITION]),
@@ -2879,6 +2937,7 @@ def cmd_up(kit: Kit, args: argparse.Namespace) -> int:
     if revive:
         if kit.rehearsal:
             raise sc.Blocked("a rehearsal root is never revived")
+        verify_anchor(kit)
         revive_from_anchor(kit)
     install_units(kit)
     qdrant_storage = kit.path("state", "qdrant", "storage")

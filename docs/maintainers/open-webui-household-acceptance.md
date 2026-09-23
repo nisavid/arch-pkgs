@@ -271,15 +271,15 @@ only.
 | `open-webui.resmoke.zembed-canary` (A-R3) | 2,560 dims, `\|norm − 1\| ≤ 0.001`, margin ≥ 0.20, prefixes read from the running process's settings; one indexed chunk's stored vector has cosine ≥ 0.999 with the direct content-prefixed vector. | fixed; failure exits 3 and escalates |
 | `open-webui.resmoke.zerank-qualification` (A-R4) | Retrieval health 200 after start; a direct rerank gives finite scores with the relevant document first. | pass/fail |
 | `open-webui.acceptance.route.caddy-uds` (A-S1) | HTTPS 200 through Caddy to the socket; authenticated WebSocket 101; no Open WebUI TCP listener and no non-loopback listener on the Caddy port. Rechecked after both drills. | exact |
-| `open-webui.resmoke.cited-answer` (A-S6) | "The brass key opens the seed cabinet." with exactly one source, named as the fixture's canonical citation, and a finite rerank score. Timings recorded. | pass/fail |
+| `open-webui.resmoke.cited-answer` (A-S6) | "The brass key opens the seed cabinet." with exactly one source, named as the uploaded fixture handbook (`winter-garden-handbook.md`), because Open WebUI names a file source by its upload name, and a finite rerank score. The uploaded handbook is deleted afterwards, and a failed delete fails the scenario. Timings recorded. | pass/fail |
 | `open-webui.acceptance.failclosed.reranker-down` (A-F1) | With the relay stopped: chat 200; retrieval, file-attached chat, and health 503 with the fixed detail and no citation. | exact |
 | `open-webui.acceptance.failclosed.recovery` (A-F2) | Relay back, latch still 503, RAG config re-saved, then health 200 and a cited answer. | exact |
 | `open-webui.resmoke.stt` (A-S7) | `jfk.flac` through local faster-whisper on the CPU (int8): language `en`, both expected phrases, at least 20 ordered words; no `WhisperModel initialization failed` in the journal. | pass/fail |
 | `open-webui.acceptance.privacy` (A-P1..P3, A-E2) | A-P1 recorded; peer samples only within the allowed set; the five telemetry values; Haystack absent from the acceptance environment. | pass/fail (A-P1 record) |
 | `open-webui.acceptance.drill.restore` (A-D1, A-D3) | One restore, clock from epoch reservation to ready plus the cited fact. | ceiling 40 s |
 | `open-webui.acceptance.drill.rollback` (A-D2, A-D3) | Archives match the anchor manifest; state restore timed; total window recorded; never `:8080`: the host's own `open-webui.service` state is unchanged across the drill and no acceptance process listens on `:8080`. | ceiling 40 s state; window recorded |
-| `open-webui.acceptance.resources` (A-RES1..3) | `memory.events` `oom_kill` 0, and `NRestarts` 0 in every snapshot for every unit (systemd resets it on each planned start, and a snapshot precedes each one); peak memory, CPU, Qdrant sizes, snapshot and backup sizes, and the cache inventory recorded. | gates: no OOM, no unplanned restart |
-| `open-webui.acceptance.evidence` (A-E1, A-E3) | Public-safe evidence with `trial_set_count=1`, one restore, one rollback, and no generation fields. | pass/fail |
+| `open-webui.acceptance.resources` (A-RES1..3) | `memory.events` `oom_kill` 0 for every unit and for the kit slice, whose count is hierarchical and so still covers a unit whose cgroup is gone; an active unit whose count cannot be read fails the gate as unobserved; and `NRestarts` 0 in every snapshot for every unit (systemd resets it on each planned start, and a snapshot precedes each one); peak memory, CPU, Qdrant sizes, snapshot and backup sizes, and the cache inventory recorded. | gates: no OOM, no unplanned restart |
+| `open-webui.acceptance.evidence` (A-E1, A-E3) | Public-safe evidence with `trial_set_count=1`, the restore and rollback drills counted from the steps that actually ran (a critical failure that stops the trial first records 0 and fails this step), and no generation fields. | pass/fail |
 
 Between the no-credential check and the zembed canary, the trial also
 records one setup step, `open-webui.acceptance.handbook-indexed`: the fixture handbook
@@ -307,6 +307,11 @@ Notes on specific checks:
   stops the clock when the service is ready and returns the cited fact. A
   restore that misses its ceiling is recorded as the drill's failure; the
   rollback drill still runs.
+- **Before either drill restores the anchor, and before `up` revives a kept
+  root,** the kit checks every anchor member against `anchor.json` (the data and credential tree
+  digests, the RDB SHA-256, and each Qdrant snapshot's size and SHA-256). A
+  mismatch fails the drill with the live state untouched; the check runs
+  before the drill's clock starts.
 - **The rollback drill (A-D2)** stops the slice, removes `tree/` and all state,
   re-extracts from `inputs/` after a digest check against the anchor manifest,
   reserves the epoch, and restores the tuple into fresh Qdrant 1.19.
