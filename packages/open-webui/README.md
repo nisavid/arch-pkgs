@@ -217,14 +217,13 @@ command runs under `sudo`.
    `sudo journalctl -u open-webui-tailnet.service --since=-5min` must show
    the forward to `127.0.0.1:6333` failing (`--since=-5min` ignores lines
    logged more than five minutes before the query, such as those from an
-   earlier check). Go on to step 3 only after both. A connection or a quick
-   refusal means the deny is not in effect; stop and roll back. A timeout
-   with no forward line leaves the deny unverified. It usually means the
-   tailnet policy blocked the probe (the journal may show a `Drop:` line for
-   it instead), so retry from a device the policy admits. If that device
-   gets the same result, check that the node is online with
+   earlier check). Go on to step 3 only after both; otherwise stop and roll
+   back. A connection or a quick refusal means the deny is not in effect.
+   One result allows a single retry: a timeout with no forward line usually
+   means the tailnet policy blocked the probe (the journal may show a
+   `Drop:` line for it instead). Once
    `sudo tailscale --socket=/run/open-webui-tailnet/tailscaled.sock status --peers=false`
-   and repeat the check.
+   shows the node online, retry once from a device the policy admits.
 3. Before the first Open WebUI start, set the canonical origin in
    `/etc/open-webui/open-webui.env`:
 
