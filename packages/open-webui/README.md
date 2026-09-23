@@ -30,11 +30,16 @@ remains in
   security boundary.
 - Native RAG uses the five Qdrant collections under
   `open-webui-rag-v1`, zembed query/document prefixes, and the external zerank
-  reranker. The packaged defaults send embedding and reranking requests to
+  reranker (Lemonade model `zerank-2-GGUF`, the built-in entry that carries
+  the ZeroEntropy selected-logit adapter). The packaged defaults send embedding and reranking requests to
   Lemonade at `http://127.0.0.1:13305/api/v1` and enable hybrid search,
   because the reranker gate rejects non-hybrid document retrieval. Reranker
   qualification is mandatory for document RAG; ordinary chat remains
   available when that provider is unhealthy.
+- The packaged chat connection seed disables the Ollama API and names only
+  Lemonade at `http://127.0.0.1:13305/api/v1`, so a fresh instance has no
+  default Ollama or `api.openai.com` peer. Because persistent configuration is on,
+  connection settings saved in the admin UI take precedence over these seeds.
 - Open WebUI's Lemonade connection uses no credential in this refresh (owner
   decision). The package still keeps the embedding and reranking API-key
   settings out of persistent configuration and out of the document settings
