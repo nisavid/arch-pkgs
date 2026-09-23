@@ -276,11 +276,18 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--host", default="127.0.0.1", choices=["127.0.0.1", "::1"])
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
+    parser.add_argument("--embedding-model", default=EMBEDDING_MODEL,
+                        help="zembed id to serve (the kit passes the staged packaged env's value)")
+    parser.add_argument("--reranking-model", default=RERANKING_MODEL,
+                        help="zerank id to serve (the kit passes the staged packaged env's value)")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
+    global EMBEDDING_MODEL, RERANKING_MODEL, MODELS
+    EMBEDDING_MODEL, RERANKING_MODEL = args.embedding_model, args.reranking_model
+    MODELS = (EMBEDDING_MODEL, RERANKING_MODEL, CHAT_MODEL)
     try:
         server_class = _IPv6Server if args.host == "::1" else ThreadingHTTPServer
         server = server_class((args.host, args.port), StubRequestHandler)

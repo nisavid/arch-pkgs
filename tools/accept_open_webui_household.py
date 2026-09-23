@@ -1222,9 +1222,11 @@ def render_units(kit: Kit) -> dict[str, str]:
         ),
     }
     if kit.provider == "stub":
+        packaged = kit.packaged_env()
         units[UNITS["stub"]] = kit_unit(
             kit, "stub", "keyless rehearsal provider",
-            f"/usr/bin/python3 {STUB_SCRIPT} --host 127.0.0.1 --port {PORTS['stub']}",
+            f"/usr/bin/python3 {STUB_SCRIPT} --host 127.0.0.1 --port {PORTS['stub']} "
+            f"--embedding-model {packaged['RAG_EMBEDDING_MODEL']} --reranking-model {packaged['RAG_RERANKING_MODEL']}",
         )
     return units
 
