@@ -133,6 +133,16 @@ class ExitCodeTests(unittest.TestCase):
         stack.enter_context(mock.patch.object(scenarios, "read_process_environ", return_value=packaged_env()))
         return stack
 
+    def test_an_interrupted_resmoke_leaves_a_failing_receipt(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(scenarios, "open_webui_pid", side_effect=KeyboardInterrupt), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(KeyboardInterrupt):
+                scenarios.main(self.resmoke_args(tmp, "--lemond-url", "http://127.0.0.1:9"))
+            receipt = json.loads(Path(f"{tmp}/r.json").read_text())
+        self.assertEqual(receipt["exit_code"], 1)
+        self.assertEqual(receipt["scenarios"][0]["id"], "open-webui.resmoke.run")
+
     def test_an_unreachable_lemonade_is_a_precondition_with_a_receipt(self):
         with tempfile.TemporaryDirectory() as tmp, self.acceptance_process(), \
                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):

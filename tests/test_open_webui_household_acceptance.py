@@ -587,6 +587,36 @@ class PreflightTests(unittest.TestCase):
             self.assertTrue(json.loads(first)["qdrant_fresh"])
             qdrant.create_collections.assert_called_once()
 
+    def test_an_up_after_a_refused_first_up_still_records_fresh_qdrant(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit = make_kit(directory)
+            (kit.root / kit_module.MARKER).write_text("marker\n")
+            kit.save_state(mode="record")
+            kit.raw.mkdir(parents=True)
+            storage = kit.path("state", "qdrant", "storage")
+            storage.mkdir(parents=True)
+            qdrant = mock.Mock()
+            qdrant.create_collections.side_effect = lambda: (storage / "collection").mkdir()
+            starts = iter([sc.Blocked("NEEDS LEAD: a model is not loaded"), 7.5])
+
+            def start(*_args, **_kwargs):
+                outcome = next(starts)
+                if isinstance(outcome, BaseException):
+                    raise outcome
+                return outcome
+
+            with mock.patch.object(kit_module, "install_units"), mock.patch.object(kit_module, "systemctl"), \
+                    mock.patch.object(kit_module, "start_qdrant", return_value=qdrant), \
+                    mock.patch.object(kit_module, "start_open_webui", side_effect=start), \
+                    mock.patch.object(kit_module, "snapshot_resources"), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                with self.assertRaises(sc.Blocked):
+                    kit_module.cmd_up(kit, kit_module.parser().parse_args(["up"]))
+                self.assertFalse((kit.raw / "first-start.json").exists())
+                kit_module.cmd_up(kit, kit_module.parser().parse_args(["up"]))
+            self.assertTrue(json.loads((kit.raw / "first-start.json").read_text())["qdrant_fresh"])
+            qdrant.create_collections.assert_called_once()
+
     def test_an_unset_runtime_dir_is_a_precondition(self):
         with mock.patch.dict(os.environ, {}, clear=True), contextlib.redirect_stderr(io.StringIO()) as error:
             code = kit_module.main(["preflight", "--root", "/nonexistent-owui-acc-root"])
@@ -861,6 +891,17 @@ class ProductionDocTests(unittest.TestCase):
         for name, digest in pin["files"].items():
             self.assertIn(f"| `{name}` | `{digest}` |", self.doc)
             self.assertIn(f'"$src/{name}"', self.doc)
+        acceptance = (REPO_ROOT / "docs" / "maintainers" / "open-webui-household-acceptance.md").read_text(encoding="utf-8")
+        self.assertIn(f"`{pin['revision']}`", acceptance)
+        for name, digest in pin["files"].items():
+            self.assertIn(f"| `{name}` | `{digest}` |", acceptance)
+        self.assertIn(f"`{sc.JFK_FLAC_SHA256}`", acceptance)
+
+    def test_the_production_qdrant_loops_name_the_kit_collections(self):
+        loops = re.findall(r"for s in ([^;]+); do\n\s*c=([\w-]+)_\$s", self.doc)
+        self.assertEqual(len(loops), 2)
+        for suffixes, prefix in loops:
+            self.assertEqual(tuple(f"{prefix}_{suffix}" for suffix in suffixes.split()), kit_module.COLLECTIONS)
 
 
 class LemonadeSafetyTests(unittest.TestCase):
@@ -1140,18 +1181,37 @@ class EvidenceTests(unittest.TestCase):
             self.assertEqual(evidence["disposition"], "accepted")
             v1.assert_public_safe(evidence)
 
-    def test_the_stt_journal_starts_at_the_latest_open_webui_start(self):
+    def test_the_trial_reads_the_journal_from_the_current_open_webui_activation(self):
         with tempfile.TemporaryDirectory() as directory:
             kit, trial = self.trial(directory, rehearsal=False)
             kit.raw.mkdir(parents=True, exist_ok=True)
             (kit.raw / "first-start.json").write_text(json.dumps({"started_at": 100.0}))
-            self.assertEqual(trial.open_webui_since(), 100.0)
-            with mock.patch.object(kit_module, "require_lemond_ready"), \
-                    mock.patch.object(kit_module, "systemctl"), mock.patch.object(kit_module, "wait_open_webui"), \
-                    mock.patch.object(kit_module, "unit_active", return_value=True), \
-                    mock.patch.object(kit_module.time, "time", return_value=250.0):
-                kit_module.start_open_webui(kit, restart=True)
-            self.assertEqual(trial.open_webui_since(), 250.0)
+            with mock.patch.object(kit_module, "unit_active_since", return_value=None):
+                self.assertEqual(trial.open_webui_since(), 100.0)
+            # The scenario context's journal is bound to that window.
+            with mock.patch.object(kit_module, "unit_active_since", return_value=250.0), \
+                    mock.patch.object(kit_module, "journal", return_value="") as read, \
+                    mock.patch.object(kit_module, "upload_handbook", return_value="file-1"), \
+                    mock.patch.object(kit_module.sc, "open_webui_pid", return_value=1), \
+                    mock.patch.object(kit_module.sc, "read_process_environ", return_value=packaged_env()), \
+                    mock.patch.object(kit_module, "effective_models",
+                                      return_value=(packaged_env()["RAG_EMBEDDING_MODEL"],
+                                                    packaged_env()["RAG_RERANKING_MODEL"])), \
+                    mock.patch.object(kit_module.Kit, "caddy"), mock.patch.object(kit_module.Kit, "lemond"), \
+                    mock.patch.object(kit_module.Kit, "qdrant"), \
+                    mock.patch.object(kit_module, "a_id2_rows", return_value=[]), \
+                    mock.patch.object(kit_module, "unit_show", return_value={}):
+                trial.token = "token"
+                trial.listed_chat_model = "resident-chat"
+                ctx = trial.prepare_scenarios()
+                self.assertIsNotNone(ctx.journal)
+                assert ctx.journal is not None
+                ctx.journal()
+                # The recorded IP-policy warning comes from the same window.
+                trial.unit_properties()
+            self.assertEqual(read.call_count, 2)
+            for call in read.call_args_list:
+                self.assertEqual(call, mock.call(kit_module.UNITS["open-webui"], since=250.0))
 
     def test_record_mode_writes_evidence_and_rehearsal_writes_none(self):
         with tempfile.TemporaryDirectory() as directory:

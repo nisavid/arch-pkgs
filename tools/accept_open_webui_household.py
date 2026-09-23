@@ -712,6 +712,13 @@ def unit_active(unit: str) -> bool:
     return systemctl("is-active", unit, check=False) == "active"
 
 
+def unit_active_since(unit: str) -> float | None:
+    """Wall-clock start of the unit's current activation, from the user manager."""
+
+    raw = systemctl("show", "--property=ActiveEnterTimestamp", "--timestamp=unix", "--value", unit, check=False)
+    return float(raw[1:]) if raw.startswith("@") else None
+
+
 def unit_pids(unit: str) -> set[int]:
     cgroup = unit_show(unit, "ControlGroup").get("ControlGroup", "")
     if not cgroup:
@@ -865,8 +872,6 @@ class Kit:
     candidate_store: Path
     runtime_dir: Path
     slice: str = SLICE
-    # Wall-clock time of this process's latest Open WebUI (re)start.
-    open_webui_started_at: float | None = None
 
     # Layout -----------------------------------------------------------
     def path(self, *parts: str) -> Path:
@@ -1500,7 +1505,6 @@ def start_open_webui(kit: Kit, *, restart: bool = False, timeout: float = 180.0)
     if not unit_active(UNITS["open-webui"]) and kit.socket_path.exists():
         kit.socket_path.unlink()
     started = time.monotonic()
-    kit.open_webui_started_at = time.time()
     systemctl("restart" if restart else "start", UNITS["open-webui"])
     wait_open_webui(kit, timeout)
     return time.monotonic() - started
@@ -1975,7 +1979,7 @@ class Trial:
         rows = a_id2_rows(self.kit)
         shown = unit_show(UNITS["open-webui"], "IPAddressDeny", "IPAddressAllow")
         warning = next(
-            (line for line in journal(UNITS["open-webui"]).splitlines() if "IPAddress" in line or "BPF" in line),
+            (line for line in self.open_webui_journal().splitlines() if "IPAddress" in line or "BPF" in line),
             None,
         )
         return {"rows": rows, "effective": shown, "journal_warning": warning}
@@ -2299,13 +2303,16 @@ class Trial:
 
     # The run -------------------------------------------------------------------
     def open_webui_since(self) -> float:
-        """Start of the running Open WebUI's journal: the latest start in this
-        trial, or the first start that up recorded."""
+        """Start of the running Open WebUI's journal: the unit's current
+        activation, or, if systemd reports none, the first start up recorded."""
 
-        kit = self.kit
-        if kit.open_webui_started_at is not None:
-            return kit.open_webui_started_at
-        return float(json.loads((kit.raw / "first-start.json").read_text())["started_at"])
+        since = unit_active_since(UNITS["open-webui"])
+        if since is not None:
+            return since
+        return float(json.loads((self.kit.raw / "first-start.json").read_text())["started_at"])
+
+    def open_webui_journal(self) -> str:
+        return journal(UNITS["open-webui"], since=self.open_webui_since())
 
     def prepare_scenarios(self) -> sc.Context:
         """Index the handbook the drills keep as their marker, and bind the scenario context."""
@@ -2323,7 +2330,7 @@ class Trial:
             settings=self.settings, chat_model=self.chat_id(),
             audio=kit.path("inputs", "jfk.flac"), whisper_model=kit.whisper_model,
             stored_chunk=lambda: qdrant.stored_chunk(self.seed_file),
-            journal=lambda: journal(UNITS["open-webui"], since=self.open_webui_since()),
+            journal=self.open_webui_journal,
         )
 
     def run(self) -> int:
@@ -2420,6 +2427,9 @@ class Trial:
         evidence = build_evidence(kit, self, exit_code, restarted)
         if restarted:
             print("NEEDS LEAD: Lemonade restarted during the trial; the run is void", file=sys.stderr)
+        elif restarted is None:
+            print("lemonade restart: not detectable from /api/v1/health; compare the Lemonade service start "
+                  "times recorded before and after trial", file=sys.stderr)
         # The one trial's values always survive: the full document goes to a
         # private raw file first, and only the public copy waits on the
         # safety check.
@@ -2862,6 +2872,11 @@ def cmd_up(kit: Kit, args: argparse.Namespace) -> int:
     install_units(kit)
     qdrant_storage = kit.path("state", "qdrant", "storage")
     fresh = not any(qdrant_storage.iterdir())
+    if not state.get("commissioned") and "first_up_qdrant_fresh" not in state:
+        # A first up that stops after creating the collections (a refusal
+        # or a failed start) must not make the next up record them as
+        # pre-existing state.
+        state = kit.save_state(first_up_qdrant_fresh=fresh)
     qdrant = start_qdrant(kit)
     if revive:
         restore_tuple(kit, qdrant)
@@ -2882,7 +2897,8 @@ def cmd_up(kit: Kit, args: argparse.Namespace) -> int:
         # trial (after a down or a refusal) keeps it, with its Qdrant state.
         if not first.is_file():
             first.write_text(json.dumps(
-                {"started_at": started_at, "ready_s": round(seconds, 3), "qdrant_fresh": fresh}, sort_keys=True))
+                {"started_at": started_at, "ready_s": round(seconds, 3),
+                 "qdrant_fresh": state.get("first_up_qdrant_fresh", fresh)}, sort_keys=True))
         timing = "" if kit.rehearsal else f" (first start {seconds:.1f} s)"
         print(f"Open WebUI is up with the route closed{timing}; run trial next")
     else:
