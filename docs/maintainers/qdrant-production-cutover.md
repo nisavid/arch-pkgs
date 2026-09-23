@@ -82,7 +82,10 @@ it is already there, remove it before `cutover --apply` or `rollback --apply`:
 both run `pacman --noconfirm` on `qdrant`, and the route does not rely on how
 `--noconfirm` answers pacman's ignored-package prompt.
 
-Preflight is read-only. Run it as root so it can size the state directory.
+Preflight is read-only, with one exception: if the host has no `systemd-creds`
+host key yet, the credential-mode probe makes systemd create it (see
+**Credential mode** below). Run preflight as root so it can size the state
+directory.
 
 ```bash
 sudo tools/qdrant_production_cutover.zsh preflight
@@ -117,9 +120,12 @@ It refuses when any of these fails:
   again, first in the default (`auto`) mode, then with `--with-key=host`.
   Preflight prints the first mode that passes, and cutover encrypts the
   runtime credential in that mode. `--creds-key auto` or `--creds-key host`
-  tests only that mode. If no mode passes, preflight refuses before anything
-  is written. On a host where TPM2 unsealing fails, only the host-key mode
-  passes. Host-key credentials are not bound to the TPM: they are sealed with
+  tests only that mode. If no mode passes, preflight refuses before cutover
+  writes anything. The probe writes no credential, but if
+  `/var/lib/systemd/credential.secret` does not exist yet, `systemd-creds`
+  creates it on the first encrypt, as any host-key encrypt would. On a host
+  where TPM2 unsealing fails, only the host-key mode passes. Host-key
+  credentials are not bound to the TPM: they are sealed with
   `/var/lib/systemd/credential.secret`, and systemd warns when that file is
   not on encrypted media.
 - **Fresh names.** The rollback set does not exist yet. The runtime credential
@@ -189,8 +195,9 @@ set is saved, it names both the rollback command and the re-entry command.
 An interrupt (INT, TERM, or HUP) removes the private directory that holds the
 admin and runtime headers, then prints a `HAND-BACK:` line. During
 `stop 1.17.1` or `save rollback set`, that line gives the same restart
-guidance as a failure in that stage. Later, it names both commands. Every printed command uses the script's absolute path and carries
-every non-default option of the run, such as `--rollback-root`, `--pkg-cache`,
+guidance as a failure in that stage. Later, it names both commands. Every
+printed command uses the script's absolute path and carries every non-default
+option of the run, such as `--rollback-root`, `--pkg-cache`,
 `--credstore`, `--repo`, and `--url`.
 
 ### Re-entry After a Failed Cutover
