@@ -174,10 +174,11 @@ package.
 The unit denies the daemon the host addresses `127.0.0.1` and `::1`, so
 tailnet peers reach only what the node itself serves.
 [Denying `127.0.0.1` and `::1`](#denying-127001-and-1) explains why and what
-it rules out, how to clear the stall a port scan can cause, a tailnet policy
-that complements the deny, and the check to repeat after each `tailscale`
-upgrade. Do not advertise routes or an exit node from this node; those would
-forward traffic to the host's network, which the deny does not cover.
+it rules out, a DNS caveat, how to clear the stall a port scan can cause, a
+tailnet policy that complements the deny, the check to repeat after each
+`tailscale` upgrade, and the options for a later custom domain. Do not
+advertise routes or an exit node from this node; those would forward traffic
+to the host's network, which the deny does not cover.
 
 These are production cutover steps. Run them only under the accepted
 deployment task, never directly from this package directory (see
@@ -210,14 +211,14 @@ command runs under `sudo`.
    nc -vz -w 5 <name>.<tailnet>.ts.net 6333
    ```
 
-   It must time out, and about two minutes (roughly 130 seconds) later
+   It must time out. The daemon logs the failed forward about 130 seconds
+   after the probe, so wait at least 140 seconds; then
    `sudo journalctl -u open-webui-tailnet.service --since=-5min` must show
-   the forward to `127.0.0.1:6333` failing. The time limit keeps a line from
-   a check more than five minutes earlier from counting. A connection or a
-   quick refusal means the deny is not in effect; stop and roll back. A
-   timeout with no forward line means the tailnet policy blocked the probe
-   (the journal may show a `Drop:` line for it instead); retry from a device
-   it admits.
+   the forward to `127.0.0.1:6333` failing. The time limit ignores lines from
+   checks more than five minutes old. A connection or a quick refusal means
+   the deny is not in effect; stop and roll back. A timeout with no forward
+   line means the tailnet policy blocked the probe (the journal may show a
+   `Drop:` line for it instead); retry from a device it admits.
 3. Before the first Open WebUI start, set the canonical origin in
    `/etc/open-webui/open-webui.env`:
 
@@ -360,9 +361,10 @@ prints:
 sudo tailscale --socket=/run/open-webui-tailnet/tailscaled.sock nc <node-ip> 6333
 ```
 
-It should hang for about two minutes and then fail, with the same journal line
-as step 2. A quick connection refusal or a session that stays open means the
-deny is not in effect.
+It should hang for about two minutes and then fail; a few seconds later,
+step 2's `journalctl` command shows the same forward line. A quick
+connection refusal or a session that stays open means the deny is not in
+effect; stop and roll back as in step 2.
 
 A later custom domain is an open choice between two variants. Both use
 `serve --tcp=443`, which cannot share port 443 with the current
