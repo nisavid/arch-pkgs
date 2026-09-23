@@ -372,8 +372,8 @@ class TemplateTests(unittest.TestCase):
         self.assertEqual(seed["OPENAI_API_BASE_URLS"], "http://127.0.0.1:13305/api/v1")
         self.assertEqual(seed["OPENAI_API_KEYS"], "")
         self.assertEqual(scenarios.speech_environment(), {"WHISPER_MODEL": "tiny", "HF_HUB_OFFLINE": "1"})
-        self.assertTrue(scenarios.render_connection_seed().startswith("#"))
-        self.assertIn("[Service]\n", scenarios.render_connection_seed())
+        env = packaged_env()
+        self.assertEqual({key: env[key] for key in scenarios.CONNECTION_SEED_KEYS}, seed)
 
 
 class OverlayTests(unittest.TestCase):
@@ -381,7 +381,9 @@ class OverlayTests(unittest.TestCase):
         env = packaged_env()
         root = Path("/srv/build/arch-pkgs-owui-acceptance")
         overlay = scenarios.acceptance_overlay(env, root)
-        self.assertEqual(set(overlay), scenarios.overlay_allowlist(env, rehearsal=False))
+        self.assertEqual(
+            set(overlay), scenarios.overlay_allowlist(env, rehearsal=False) - scenarios.CONNECTION_SEED_KEYS
+        )
         path_keys = {key for key, value in env.items() if "/var/lib/open-webui" in value}
         self.assertEqual(scenarios.packaged_state_path_keys(env), path_keys)
         self.assertEqual(
@@ -410,9 +412,17 @@ class OverlayTests(unittest.TestCase):
         overlay = scenarios.acceptance_overlay(
             env, Path("/r"), lemond_url="http://127.0.0.1:23305", relay_port=13306, rehearsal=True
         )
-        self.assertEqual(set(overlay), scenarios.overlay_allowlist(env, rehearsal=True))
+        self.assertEqual(
+            set(overlay),
+            scenarios.overlay_allowlist(env, rehearsal=True) - {"ENABLE_OLLAMA_API", "OPENAI_API_KEYS"},
+        )
         self.assertEqual(overlay["RAG_OPENAI_API_BASE_URL"], "http://127.0.0.1:23305/api/v1")
         self.assertEqual(overlay["OPENAI_API_BASE_URLS"], "http://127.0.0.1:23305/api/v1")
+
+    def test_overlay_adds_the_whole_seed_for_a_package_without_it(self):
+        env = {key: value for key, value in packaged_env().items() if key not in scenarios.CONNECTION_SEED_KEYS}
+        overlay = scenarios.acceptance_overlay(env, Path("/r"))
+        self.assertEqual({key: overlay[key] for key in scenarios.CONNECTION_SEED_KEYS}, scenarios.connection_seed())
 
     def test_overlay_never_touches_secret_or_telemetry_keys(self):
         allowed = scenarios.overlay_allowlist(packaged_env(), rehearsal=True)

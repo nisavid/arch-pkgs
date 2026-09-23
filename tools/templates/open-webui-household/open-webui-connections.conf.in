@@ -1,9 +1,0 @@
-# Connection seed for the household Open WebUI: keyless Lemonade only and no
-# Ollama. These are first-start seeds for persistent config; later edits need
-# an admin re-save. The local Whisper settings (WHISPER_MODEL, HF_HUB_OFFLINE)
-# are not part of the seed.
-# Rendered by tools/open_webui_household_scenarios.py.
-[Service]
-Environment=ENABLE_OLLAMA_API=false
-Environment=OPENAI_API_BASE_URLS=@OPENAI_API_BASE_URLS@
-Environment=OPENAI_API_KEYS=

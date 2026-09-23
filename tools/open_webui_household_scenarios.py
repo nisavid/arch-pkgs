@@ -394,7 +394,9 @@ def summarize_sources(sources: Sequence[dict[str, Any]]) -> dict[str, Any]:
 
     documents: dict[str, dict[str, Any]] = {}
     for source in sources:
-        described = source.get("source") if isinstance(source.get("source"), dict) else {}
+        described = source.get("source")
+        if not isinstance(described, dict):
+            described = {}
         key = str(described.get("id") or described.get("name") or "")
         entry = documents.setdefault(key, {"name": described.get("name"), "scores": []})
         for score in source.get("distances") or []:
@@ -516,22 +518,19 @@ def render_valkey_acl(password_sha256: str) -> str:
     return render_template("valkey-open-webui.acl.in", {"PASSWORD_SHA256": password_sha256})
 
 
-def render_connection_seed(lemond_url: str = DEFAULT_LEMOND_URL) -> str:
-    return render_template(
-        "open-webui-connections.conf.in",
-        {"OPENAI_API_BASE_URLS": lemond_url.rstrip("/") + "/api/v1"},
-    )
-
-
 def connection_seed(lemond_url: str = DEFAULT_LEMOND_URL) -> dict[str, str]:
-    """The seed as KEY=VALUE pairs, parsed from the same drop-in template."""
+    """The keyless, Lemonade-only chat connection seed for one provider origin.
 
-    seed: dict[str, str] = {}
-    for line in render_connection_seed(lemond_url).splitlines():
-        if line.startswith("Environment="):
-            key, _, value = line[len("Environment=") :].partition("=")
-            seed[key] = value
-    return seed
+    The packaged ``open-webui.env`` carries this seed for the default origin
+    from 0.11.0-5 on, so the acceptance overlay sets only the keys whose
+    packaged value differs (the rehearsal stub origin, or an older package).
+    """
+
+    return {
+        "ENABLE_OLLAMA_API": "false",
+        "OPENAI_API_BASE_URLS": lemond_url.rstrip("/") + "/api/v1",
+        "OPENAI_API_KEYS": "",
+    }
 
 
 def speech_environment(whisper_model: str = DEFAULT_WHISPER_MODEL) -> dict[str, str]:
@@ -595,7 +594,11 @@ def acceptance_overlay(
     }
     overlay["QDRANT_URI"] = f"http://127.0.0.1:{int(qdrant_port)}"
     overlay["RAG_EXTERNAL_RERANKER_URL"] = f"http://127.0.0.1:{int(relay_port)}/api/v1/rerank"
-    overlay.update(connection_seed(lemond_url))
+    overlay.update(
+        (key, value)
+        for key, value in connection_seed(lemond_url).items()
+        if packaged_env.get(key) != value
+    )
     if rehearsal:
         overlay["RAG_OPENAI_API_BASE_URL"] = lemond_url.rstrip("/") + "/api/v1"
     extra = set(overlay) - overlay_allowlist(packaged_env, rehearsal=rehearsal)
@@ -1085,9 +1088,15 @@ def stt(ctx: Context) -> dict[str, Any]:
     elapsed = round(time.monotonic() - started, 3)
     if response.status != 200:
         raise ScenarioFailure(f"transcription returned HTTP {response.status}")
-    result = response.json() or {}
-    text = result.get("text") if isinstance(result.get("text"), str) else ""
-    language = result.get("language") if isinstance(result.get("language"), str) else None
+    result = response.json()
+    if not isinstance(result, dict):
+        result = {}
+    text = result.get("text")
+    if not isinstance(text, str):
+        text = ""
+    language = result.get("language")
+    if not isinstance(language, str):
+        language = None
     values = {
         "transcription_s": elapsed,
         "language": language,

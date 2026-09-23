@@ -154,7 +154,7 @@ class OverlayTests(unittest.TestCase):
                 self.assertLessEqual(set(overlay), sc.overlay_allowlist(env, rehearsal=rehearsal))
                 self.assertEqual(overlay["QDRANT_URI"], "http://127.0.0.1:16333")
                 self.assertEqual(overlay["RAG_EXTERNAL_RERANKER_URL"], "http://127.0.0.1:13306/api/v1/rerank")
-                self.assertEqual(overlay["OPENAI_API_KEYS"], "")
+                self.assertEqual({**env, **overlay}["OPENAI_API_KEYS"], "")
                 self.assertNotIn("HF_HUB_OFFLINE", overlay)
                 self.assertNotIn("WHISPER_MODEL", overlay)
                 state = str(Path(directory) / "state" / "open-webui")
@@ -168,7 +168,9 @@ class OverlayTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             record = make_kit(directory)
             rehearsal = make_kit(directory, rehearsal=True)
-            self.assertEqual(record.overlay(env)["OPENAI_API_BASE_URLS"], "http://127.0.0.1:13305/api/v1")
+            self.assertNotIn("OPENAI_API_BASE_URLS", record.overlay(env))
+            self.assertEqual(env["OPENAI_API_BASE_URLS"], "http://127.0.0.1:13305/api/v1")
+            self.assertEqual(rehearsal.overlay(env)["OPENAI_API_BASE_URLS"], "http://127.0.0.1:23305/api/v1")
             self.assertNotIn("RAG_OPENAI_API_BASE_URL", record.overlay(env))
             self.assertEqual(rehearsal.overlay(env)["RAG_OPENAI_API_BASE_URL"], "http://127.0.0.1:23305/api/v1")
             self.assertEqual((rehearsal.lemond_host, rehearsal.lemond_port), ("127.0.0.1", 23305))
@@ -278,6 +280,16 @@ class UnitDerivationTests(unittest.TestCase):
 
 
 class PreflightTests(unittest.TestCase):
+    def test_locate_archive_picks_the_store_file_with_the_pinned_bytes(self):
+        name = "open-webui-0.11.0-5-x86_64.pkg.tar.zst"
+        with tempfile.TemporaryDirectory() as directory:
+            kit = make_kit(directory)
+            write_archive(kit.candidate_store / "3647a6f", name, b"superseded")
+            record = write_archive(kit.candidate_store / "dd9a307", name, b"record bytes")
+            self.assertEqual(kit_module.locate_archive(kit, record), kit.candidate_store / "dd9a307" / name)
+            stale = {**record, "sha256": "0" * 64}
+            self.assertEqual(kit_module.locate_archive(kit, stale), kit.candidate_store / "3647a6f" / name)
+
     def test_root_refusals(self):
         refuse = kit_module.root_refusals
         free = 400 * 1024**3
