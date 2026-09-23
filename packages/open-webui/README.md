@@ -38,8 +38,12 @@ remains in
   available when that provider is unhealthy.
 - The packaged chat connection seed disables the Ollama API and names only
   Lemonade at `http://127.0.0.1:13305/api/v1`, so a fresh instance has no
-  default Ollama or `api.openai.com` peer. Because persistent configuration is on,
-  connection settings saved in the admin UI take precedence over these seeds.
+  default Ollama or `api.openai.com` peer. Open WebUI copies these values, and
+  the other persistent settings such as `RAG_RERANKING_MODEL`, into its
+  database the first time an instance starts. After that, the stored values
+  win over `open-webui.env`, so a later edit to the file or a package update
+  does not change an existing instance. Change them in the admin UI, or start
+  from a fresh data directory.
 - Open WebUI's Lemonade connection uses no credential in this refresh (owner
   decision). The package still keeps the embedding and reranking API-key
   settings out of persistent configuration and out of the document settings
