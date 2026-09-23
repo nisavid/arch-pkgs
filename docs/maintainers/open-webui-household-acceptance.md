@@ -64,6 +64,12 @@ rehearsal may run earlier.
    | `open-webui-0.11.0-5-x86_64.pkg.tar.zst` | 240005573 | `bd273be8c33287f7ac3c44592c91005034da8ada886fbd8a480f3dbf7a7e2fc8` |
    | `python-rapidocr-3.9.2-1-any.pkg.tar.zst` | 27198440 | `0e70fb599a535f9bb1c0c0b3a2f88abe9993f7632eba8e2c618826c7f01bf99b` |
 
+   The 0.11.0-6 candidate, which adds the `open-webui-tailnet.service`
+   sidecar for the tailnet-only production route, replaces the 0.11.0-5 row
+   as the candidate of record once it is built, merged, and tree-equal. Its
+   size and SHA-256 are **pending** until that build; `python-rapidocr` is
+   unchanged.
+
    The candidate store also keeps superseded archives under the same names
    (an earlier `open-webui-0.11.0-5` build differs in size and digest), so
    the kit picks the store file whose size and SHA-256 match the manifest
