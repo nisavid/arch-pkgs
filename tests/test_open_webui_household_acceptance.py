@@ -720,6 +720,19 @@ class PreflightTests(unittest.TestCase):
             with self.assertRaisesRegex(sc.ScenarioFailure, "credstore \\(symlink\\)"):
                 kit_module.verify_anchor(kit)
             (anchor / "credstore" / "extra").unlink()
+            # A symlinked tree root is refused too, not only symlinks below it.
+            (anchor / "credstore").rename(anchor / "credstore.real")
+            (anchor / "credstore").symlink_to(anchor / "credstore.real")
+            with self.assertRaisesRegex(sc.ScenarioFailure, "credstore \\(symlink\\)"):
+                kit_module.verify_anchor(kit)
+            (anchor / "credstore").unlink()
+            (anchor / "credstore.real").rename(anchor / "credstore")
+            # A malformed anchor.json is a ScenarioFailure, so cleanup always runs.
+            saved = (anchor / "anchor.json").read_text()
+            (anchor / "anchor.json").write_text("{not json")
+            with self.assertRaisesRegex(sc.ScenarioFailure, "cannot be read"):
+                kit_module.verify_anchor(kit)
+            (anchor / "anchor.json").write_text(saved)
             # An anchor without snapshot digests cannot prove its snapshots.
             del record["snapshot_sha256"]
             (anchor / "anchor.json").write_text(json.dumps(record))

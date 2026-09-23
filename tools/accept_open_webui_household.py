@@ -1645,14 +1645,29 @@ def backup_anchor(kit: Kit, qdrant: Qdrant) -> dict[str, Any]:
 
 def verify_anchor(kit: Kit) -> None:
     """Check every anchor member against anchor.json before a restore replaces
-    live state, so a damaged anchor stops the restore with nothing changed."""
+    live state, so a damaged anchor stops the restore with nothing changed.
 
+    Every failure, including an unreadable or malformed anchor, is a
+    ScenarioFailure, so callers clean up on one exception type.
+    """
+
+    try:
+        problems = _anchor_problems(kit)
+    except (OSError, ValueError, AttributeError, TypeError) as error:
+        raise sc.ScenarioFailure(f"the anchor cannot be read ({type(error).__name__}); live state is unchanged") from error
+    if problems:
+        raise sc.ScenarioFailure(f"the anchor does not match anchor.json ({', '.join(problems)}); live state is unchanged")
+
+
+def _anchor_problems(kit: Kit) -> list[str]:
     anchor = json.loads((kit.anchor / "anchor.json").read_text())
     problems = []
     for tree in ("data", "credstore"):
         # tree_digest skips symlinks, but the restore's copytree would follow
-        # them, so a symlink anywhere in either tree is a damaged anchor.
-        if (kit.anchor / tree).is_dir() and any(item.is_symlink() for item in (kit.anchor / tree).rglob("*")):
+        # them, so a symlink at or anywhere below either tree root is a
+        # damaged anchor.
+        root = kit.anchor / tree
+        if root.is_symlink() or (root.is_dir() and any(item.is_symlink() for item in root.rglob("*"))):
             problems.append(f"{tree} (symlink)")
     if not (kit.anchor / "data").is_dir() or tree_digest(kit.anchor / "data") != anchor.get("data_digest"):
         problems.append("data")
@@ -1668,8 +1683,7 @@ def verify_anchor(kit: Kit) -> None:
                 or snapshot.stat().st_size != (anchor.get("snapshot_bytes") or {}).get(name)
                 or sha256_file(snapshot) != expected):
             problems.append(f"qdrant/{name}.snapshot")
-    if problems:
-        raise sc.ScenarioFailure(f"the anchor does not match anchor.json ({', '.join(problems)}); live state is unchanged")
+    return problems
 
 
 def restore_tuple(kit: Kit, qdrant: Qdrant) -> dict[str, Any]:
