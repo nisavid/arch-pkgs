@@ -42,6 +42,7 @@ import ssl
 import stat
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.parse
 from pathlib import Path
@@ -1847,6 +1848,24 @@ class Step:
         return f"{self.id} {self.result} {self.detail}"
 
 
+MIGRATION_FAILURE = re.compile(r"\b(?:ERROR|CRITICAL|FAILED)\b|Traceback|\w*(?:Error|Exception):")
+PYTHON_WARNING = re.compile(r"\w*Warning:")
+
+
+def migration_errors(lines: Iterable[str]) -> list[str]:
+    """Journal lines that report an Alembic failure.
+
+    A Python warning is never a failure, even when its text says it may
+    become an exception: Open WebUI 0.11's first start logs one for
+    ``_alembic_tmp_tag``.
+    """
+
+    return [
+        line for line in lines
+        if "alembic" in line.lower() and not PYTHON_WARNING.search(line) and MIGRATION_FAILURE.search(line)
+    ]
+
+
 class Stop(Exception):
     """The trial stops after an escalation, a blocked precondition, or a critical failure."""
 
@@ -1875,7 +1894,10 @@ class Trial:
 
     def record(self, step: Step) -> None:
         self.steps.append(step)
-        print(step.line() if not self.kit.rehearsal else f"{step.id} {step.result}", flush=True)
+        # A rehearsal prints no timings or measurements, but a step that does not
+        # pass keeps its detail so the kit bug it found can be diagnosed.
+        print(step.line() if not self.kit.rehearsal or step.result != sc.PASS else f"{step.id} {step.result}",
+              flush=True)
 
     def step(self, step_id: str, action: Callable[[], dict[str, Any]], *, critical: bool = False) -> None:
         started = time.monotonic()
@@ -1948,10 +1970,7 @@ class Trial:
         first = json.loads((kit.raw / "first-start.json").read_text())
         with sqlite3.connect(f"file:{data_dir(kit) / 'webui.db'}?mode=ro", uri=True) as connection:
             head = connection.execute("SELECT version_num FROM alembic_version").fetchone()[0]
-        errors = [
-            line for line in journal(UNITS["open-webui"], first["started_at"]).splitlines()
-            if "alembic" in line.lower() and re.search(r"error|exception|failed", line, re.IGNORECASE)
-        ]
+        errors = migration_errors(journal(UNITS["open-webui"], first["started_at"]).splitlines())
         values = {"ready_s": first["ready_s"], "alembic_head": head, "migration_errors": len(errors),
                   "qdrant_fresh": first["qdrant_fresh"]}
         if head != ALEMBIC_HEAD or errors:
@@ -2647,12 +2666,25 @@ def verify_supporting(kit: Kit) -> list[dict[str, Any]]:
 
 
 def probe_systemd_creds() -> bool:
+    """Whether both consumers can open a ``systemd-creds --user`` credential.
+
+    The kit decrypts from its own process (``read_credential``) and the units
+    through ``LoadCredentialEncrypted=``; the route is usable only if both work.
+    """
+
     try:
-        sealed = run(["systemd-creds", "--user", "encrypt", "--name=owui-acc-probe", "-", "-"], input=b"probe").stdout
-        opened = run(["systemd-creds", "--user", "decrypt", "--name=owui-acc-probe", "-", "-"], input=sealed).stdout
+        with tempfile.TemporaryDirectory(prefix="owui-acc-probe-") as directory:
+            sealed = Path(directory) / "probe.cred"
+            run(["systemd-creds", "--user", "encrypt", "--name=owui-acc-probe", "-", str(sealed)], input=b"probe")
+            opened = run(["systemd-creds", "--user", "decrypt", "--name=owui-acc-probe", str(sealed), "-"]).stdout
+            loaded = run([
+                "systemd-run", "--user", "--wait", "--pipe", "--collect", "--quiet",
+                f"--property=LoadCredentialEncrypted=owui-acc-probe:{sealed}",
+                "sh", "-c", 'cat "$CREDENTIALS_DIRECTORY/owui-acc-probe"',
+            ]).stdout
     except KitError:
         return False
-    return opened == b"probe"
+    return opened == loaded == b"probe"
 
 
 def render_etc(kit: Kit) -> None:
