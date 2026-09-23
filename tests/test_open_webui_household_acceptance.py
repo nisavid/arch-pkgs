@@ -662,7 +662,7 @@ class ProductionDocTests(unittest.TestCase):
 
     def test_the_production_acl_is_the_kit_template(self):
         printf = re.search(r"printf '(user default off\\nuser open-webui [^']*)'", self.doc)
-        self.assertIsNotNone(printf)
+        assert printf is not None
         rendered = sc.render_valkey_acl("0" * 64).replace("0" * 64, "%s")
         self.assertEqual(printf.group(1).replace("\\n", "\n"), rendered)
 
@@ -767,6 +767,36 @@ class CredentialTests(unittest.TestCase):
             kit_module.nonempty_key_paths({"rag": {"openai": {"api_key": "sk-x"}}, "openai": {"api_keys": ["", "k"]}}),
             ["openai.api_keys", "rag.openai.api_key"],
         )
+
+    def test_user_credentials_need_the_units_to_load_them_too(self):
+        def fake_run(command, **_kwargs):
+            if command[0] == "systemd-run":
+                raise kit_module.KitError("systemd-run exited 243: Failed to set up credentials")
+            return subprocess.CompletedProcess(command, 0, stdout=b"probe" if "decrypt" in command else b"")
+
+        with mock.patch.object(kit_module, "run", side_effect=fake_run):
+            self.assertFalse(kit_module.probe_systemd_creds())
+        with mock.patch.object(kit_module, "run",
+                               side_effect=lambda command, **_: subprocess.CompletedProcess(command, 0, stdout=b"probe")):
+            self.assertTrue(kit_module.probe_systemd_creds())
+
+
+class FirstStartTests(unittest.TestCase):
+    def test_the_alembic_tmp_table_warning_is_not_a_migration_error(self):
+        warning = (
+            "/usr/lib/python3.14/contextlib.py:148: SAWarning: Table '_alembic_tmp_tag' specifies columns 'id' as "
+            "primary_key=True, not matching locally specified columns 'id', 'user_id'; setting the current primary "
+            "key columns to 'id', 'user_id'. This warning may become an exception in a future release"
+        )
+        self.assertEqual(kit_module.migration_errors([warning, "INFO  [alembic.runtime.migration] Running upgrade"]), [])
+
+    def test_real_alembic_failures_are_migration_errors(self):
+        failures = [
+            "ERROR [alembic.util.messaging] Can't locate revision identified by 'f0bd01a18a3d'",
+            "alembic.util.exc.CommandError: Can't locate revision identified by 'f0bd01a18a3d'",
+            "  FAILED: Multiple head revisions are present (alembic)",
+        ]
+        self.assertEqual(kit_module.migration_errors(failures), failures)
 
 
 class ResourceTests(unittest.TestCase):
@@ -886,6 +916,18 @@ class EvidenceTests(unittest.TestCase):
             self.assertFalse((kit.root / "evidence").exists())
             self.assertIn("no evidence written", output.getvalue())
             self.assertNotIn("1.0", output.getvalue())
+
+    def test_a_rehearsal_prints_the_detail_of_a_step_that_does_not_pass(self):
+        with tempfile.TemporaryDirectory() as directory:
+            _kit, trial = self.trial(directory, rehearsal=True)
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                trial.record(kit_module.Step("a", sc.PASS, "ok", 2.5, {"ready_s": 2.5}))
+                trial.record(kit_module.Step("b", sc.FAIL, "ScenarioFailure: head mismatch", 2.5))
+                trial.record(kit_module.Step("c", sc.BLOCKED, "stub unreachable", 2.5))
+            self.assertEqual(
+                output.getvalue().splitlines(),
+                ["a PASS", "b FAIL ScenarioFailure: head mismatch", "c BLOCKED stub unreachable"],
+            )
 
     def test_an_unsafe_record_keeps_the_values_privately(self):
         with tempfile.TemporaryDirectory() as directory:
