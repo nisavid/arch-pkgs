@@ -19,7 +19,7 @@ class UnixHTTPConnection(http.client.HTTPConnection):
     def connect(self) -> None:
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         self.sock.settimeout(self.timeout)
-        self.sock.connect(self.socket_path)
+        self.sock.connect(os.fspath(self.socket_path))
 
 
 def credential(name: str) -> str:
