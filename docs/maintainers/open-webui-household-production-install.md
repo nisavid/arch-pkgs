@@ -779,7 +779,7 @@ sudo sh -c '
     test -s "$1/qdrant/open-webui-rag-v1_$s.snapshot"
   done
   cd "$1"
-  find . -type f ! -name SHA256SUMS -exec sha256sum {} + >SHA256SUMS
+  find . -type f ! -path ./SHA256SUMS -exec sha256sum {} + >SHA256SUMS
 ' sh "$a" && echo recorded
 ```
 
