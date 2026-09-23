@@ -475,7 +475,9 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
         recipe = read(OPEN_WEBUI / "PKGBUILD")
         values = {}
         section = None
-        for line in read(OPEN_WEBUI / "open-webui-tailnet.service").splitlines():
+        unit_lines = read(OPEN_WEBUI / "open-webui-tailnet.service").splitlines()
+        self.assertFalse([line for line in unit_lines if line.rstrip().endswith("\\")])
+        for line in unit_lines:
             line = line.strip()
             if not line or line.startswith(("#", ";")):
                 continue
