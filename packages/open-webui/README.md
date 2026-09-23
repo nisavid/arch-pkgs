@@ -172,11 +172,12 @@ reach, for example a local TLS terminator, needs no unit change. A target on
 package.
 
 The unit denies the daemon the host addresses `127.0.0.1` and `::1`, so
-tailnet peers reach only what the node itself serves;
-[Denying `127.0.0.1` and `::1`](#denying-127001-and-1) explains why, what it
-rules out, and a tailnet policy that complements it. Do not advertise routes
-or an exit node from this node; those would forward to the host network
-without that check.
+tailnet peers reach only what the node itself serves.
+[Denying `127.0.0.1` and `::1`](#denying-127001-and-1) explains why and what
+it rules out, how to clear the stall a port scan can cause, a tailnet policy
+that complements the deny, and the check to repeat after each `tailscale`
+upgrade. Do not advertise routes or an exit node from this node; those would
+forward traffic to the host's network, which the deny does not cover.
 
 These are production cutover steps. Run them only under the accepted
 deployment task, never directly from this package directory (see
@@ -294,7 +295,7 @@ that entry only guards against a future change. Keep exactly these addresses:
 
 - `localhost` (`127.0.0.0/8` and `::1`) and `RestrictNetworkInterfaces=~lo`
   would also block the systemd-resolved stub at `127.0.0.53`, which the
-  daemon's system-resolver lookups use.
+  daemon's system-resolver lookups use on a host that resolves through it.
 - `IPAddressAllow=` cannot make a narrow exception. It has no port scope, and
   an allow overrides the deny, so allowing `127.0.0.1` would expose every
   service on `127.0.0.1` again.
@@ -311,15 +312,18 @@ the deny breaks each one that uses `127.0.0.1`, `::1`, or `localhost`:
 - a control server given with `up --login-server`.
 
 Taildrive sharing would break whatever its settings, because its file server
-always listens on `127.0.0.1`. On a host whose `/etc/resolv.conf` points at `127.0.0.1` or `::1`
-(a local dnsmasq or unbound, for example), the deny also blocks the daemon's
+always listens on `127.0.0.1`.
+
+On a host whose `/etc/resolv.conf` points at `127.0.0.1` or `::1` (a local
+dnsmasq or unbound, for example), the deny also blocks the daemon's
 system-resolver lookups. The control client has its own DNS fallback, but no
 fallback was found for certificate requests, so the node's HTTPS certificate
 may fail to issue on such a host. That is untested.
 
 A later custom domain is an open choice between two variants. Both use
-`serve --tcp=443`, so either one replaces the current `serve --https=443`
-route on that port:
+`serve --tcp=443`, which cannot share port 443 with the current
+`serve --https=443` route, so either one replaces that route after it is
+turned off:
 
 - TLS passthrough to a local terminator on a Unix socket:
   `serve --tcp=443 unix:/run/<dir>/<sock>`, run as root like any `unix:`
@@ -338,7 +342,8 @@ forwarding slots, and then logs the failure. One source address can hold at
 most two thirds of the slots, so a port scan from one address mostly stalls
 that peer itself. Stalling the serve route for every peer takes scans from two
 or more addresses, and a peer with both an IPv4 and an IPv6 tailnet address
-already has two. Restarting `open-webui-tailnet.service` clears the slots.
+already has two. If the serve route stops answering after such a scan,
+restart `open-webui-tailnet.service`; that clears the slots.
 
 A tailnet policy that admits peers to this node only on `tcp:443` is the
 stronger control. The policy drops all other traffic before `tailscaled`
@@ -348,13 +353,27 @@ policy rules only grant access, so a new `tcp:443` rule changes nothing by
 itself: the default allow-all rule, and every other rule that covers this
 node, must stop covering it.
 
-The forwarding code ships in the `tailscale` package, so repeat step 2's check
-after each `tailscale` upgrade. Under a narrowed policy, first add a temporary
-rule that admits one device to this node on the Qdrant port, and remove it
-after the check. Running step 2's `nc` on the host itself does not avoid that
-rule: the host reaches the node's tailnet address only as another tailnet
-device, through its own `tailscaled`, and the node filters that traffic like
-any peer's.
+The forwarding code ships in the `tailscale` package, and an upgrade does not
+restart this unit. After each `tailscale` upgrade, restart
+`open-webui-tailnet.service` so that the new daemon runs (the serve route drops
+briefly), then repeat step 2's check. Under a narrowed policy, step 2's `nc`
+needs a temporary rule that admits one device to this node on the Qdrant port;
+remove the rule after the check. Plain `nc` on the host is no exception: it
+reaches the node through the host's own `tailscaled`, as another tailnet
+device, and the node filters it like any peer's.
+
+One path may avoid the temporary rule. In the `tailscale` 1.102.2 source, a
+dial from the node to its own tailnet address loops back inside the daemon
+without passing the policy, so the following command, with the node's tailnet
+IPv4 address as `<node-ip>`, should reach the same forward:
+
+```sh
+sudo tailscale --socket=/run/open-webui-tailnet/tailscaled.sock nc <node-ip> 6333
+```
+
+That is untested. If you try it, it should hang for about two minutes and then
+fail, with the same journal line as step 2; a connection means the deny is not
+in effect.
 
 ## Maintenance Baseline
 
