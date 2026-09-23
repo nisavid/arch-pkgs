@@ -3,8 +3,9 @@
 This is the owner handoff for
 [Deploy the accepted Open WebUI household stack](https://github.com/nisavid/arch-pkgs/issues/59).
 It replaces the host's out-of-band `open-webui` 0.11.0-1 with the published
-0.11.0-5 identity, served on the tailnet by Tailscale Serve and on the LAN by
-Caddy, both proxying to the service's Unix socket. The former state is retained, never migrated.
+0.11.0-6 identity, served on the tailnet only: the package's
+`open-webui-tailnet.service` sidecar runs Tailscale Serve and proxies straight
+to the service's Unix socket. The former state is retained, never migrated.
 
 Every privileged step belongs to the owner. Each phase lists its exact
 commands, its rollback, the HAND-BACK phrase the owner replies with, and the
@@ -15,9 +16,10 @@ helpers and the Qdrant cutover route from
 
 Placeholders: `<kit-checkout>` is a root-readable checkout of this repository
 at the kit commit recorded in the acceptance evidence; `<root>` is the kept
-acceptance root; `<household-origin>` and `<cors-allow-origin>` are the
-canonical origin and the CORS origins that [P5.0](#p50-owner-decisions)
-records, and P5.0 defines the route placeholders.
+acceptance root; `<name>` is the sidecar's tailnet node name and
+`<tailnet>` the tailnet's DNS label, so `<household-origin>` is
+`https://<name>.<tailnet>.ts.net`. None of these values is committed; the
+concrete ones stay in the owner's session-local handoff variables.
 
 Fixed values: the chat model is the owner-pinned
 `user.Qwen3.6-35B-A3B-MTP-GGUF-UD-Q4_K_XL` (Lemonade may list its bare form,
@@ -37,14 +39,20 @@ The agent checks these read-only before the window opens:
   promoted the stack.
 - [Publish the accepted-only package repository](https://github.com/nisavid/arch-pkgs/issues/57)
   is done: `pacman -Si nisavid/open-webui nisavid/python-rapidocr nisavid/python-faster-whisper`
-  shows 0.11.0-5, 3.9.2-1, and 1.2.1-1, and the sync-database SHA-256 values
+  shows 0.11.0-6, 3.9.2-1, and 1.2.1-1, and the sync-database SHA-256 values
   equal the candidate manifest.
+- The 0.11.0-6 candidate, which adds the tailnet sidecar, replaces 0.11.0-5
+  as the candidate of record once it is built, merged, and tree-equal. Its
+  archive is `open-webui-0.11.0-6-x86_64.pkg.tar.zst`, size
+  **`<pending>`** bytes, SHA-256 **`<pending>`**; both are recorded when the
+  candidate is built.
 - The Qdrant cutover route has merged:
   [feat(qdrant): add production cutover route and rebind accepted candidates](https://github.com/nisavid/arch-pkgs/pull/93).
 - The Lemonade M4 receipts are cited, and Lemonade serves and has loaded the
   packaged zembed and zerank ids and the owner-pinned chat model.
-- The owner has recorded the pending [P5.0](#p50-owner-decisions) decisions,
-  because P3.4 writes `<household-origin>` before the first start.
+- The [P5.0](#p50-tailnet-prerequisites) prerequisites hold, and the owner
+  has chosen `<name>`, because P3.4 writes `<household-origin>` before the
+  first start.
 - No file under `/opt/open-webui` is unowned by pacman (a hard precondition,
   because P2 replaces the same package name in place):
 
@@ -62,7 +70,9 @@ The agent checks these read-only before the window opens:
 
 Runtime dependencies come through pacman: `open-webui` depends on `caddy`,
 `qdrant`, and `valkey`, and `python-rapidocr` pulls in `python-omegaconf` and
-`python-antlr4`.
+`python-antlr4`. The tailnet route also needs `tailscale`, an optional
+dependency of `open-webui`. Caddy is installed but is not in Open WebUI's
+path; never remove the `caddy` package or change its install reason.
 
 ## P0: stop and retain the current install
 
@@ -120,24 +130,23 @@ sudo pacman -S nisavid/open-webui nisavid/python-rapidocr nisavid/python-faster-
   different build and must be replaced.
 - `open-webui` 0.11.0-1 is replaced in place. Its unowned legacy files under
   `/etc/open-webui` were copied in P0.
-- Leave `open-webui.service` and `caddy.service` disabled.
+- Leave `open-webui.service` and `open-webui-tailnet.service` disabled.
 
 Rollback, if P2 is aborted: `sudo systemctl disable --now open-webui.service`,
 and reinstall `python-rapidocr-onnxruntime` with `sudo pacman -U` only if its
 archive is still in the package cache. The service stays closed; the former
 package is not a rollback target.
 
-- HAND-BACK: `HAND-BACK: open-webui P2 installed 0.11.0-5`
+- HAND-BACK: `HAND-BACK: open-webui P2 installed 0.11.0-6`
 - Agent:
   - `pacman -Q open-webui python-rapidocr python-faster-whisper` shows the
     published versions;
-  - `sha256sum /var/cache/pacman/pkg/{open-webui-0.11.0-5-x86_64,python-rapidocr-3.9.2-1-any,python-faster-whisper-1.2.1-1-any}.pkg.tar.zst`
+  - `sha256sum /var/cache/pacman/pkg/{open-webui-0.11.0-6-x86_64,python-rapidocr-3.9.2-1-any,python-faster-whisper-1.2.1-1-any}.pkg.tar.zst`
     equals the promotion record;
   - `pacman -Q python-rapidocr-onnxruntime` fails;
-  - `pacman -Qi caddy python-omegaconf python-antlr4` succeeds;
-  - `id -nG caddy` includes `open-webui-proxy`;
-  - `systemctl is-enabled open-webui.service caddy.service` shows both
-    disabled.
+  - `pacman -Qi caddy python-omegaconf python-antlr4 tailscale` succeeds;
+  - `systemctl is-enabled open-webui.service open-webui-tailnet.service`
+    shows both disabled.
 
 ### Optional: remove hayhooks
 
@@ -237,11 +246,13 @@ Two drop-ins complete the environment. They are not part of the seed:
 - `20-speech.conf` sets only the two local Whisper settings the acceptance
   unit carried: `WHISPER_MODEL=base` and `HF_HUB_OFFLINE=1`, so a Whisper load
   failure can never fall back to the network.
-- `30-origin.conf` sets `WEBUI_URL` and `CORS_ALLOW_ORIGIN` from the P5.0
-  decisions. `WEBUI_URL` is a persistent-config seed, so it must be in place
-  before the first start; a later change goes through Admin Settings,
-  General, "WebUI URL". `CORS_ALLOW_ORIGIN` lists both route origins, scheme
-  and host only, separated by `;`.
+- `30-origin.conf` sets both `WEBUI_URL` and `CORS_ALLOW_ORIGIN` to the
+  tailnet origin `https://<name>.<tailnet>.ts.net`. `WEBUI_URL` is a
+  persistent-config seed, so it must be in place before the first start; a
+  later change goes through Admin Settings, General, "WebUI URL".
+  `CORS_ALLOW_ORIGIN` is read at every start. The package README writes the
+  same two lines to `open-webui.env`; this runbook uses the drop-in instead,
+  never both.
 
 Install both before the first start. First confirm the installed env: it must
 print the three seed lines above and nothing for the other four keys. An
@@ -260,8 +271,8 @@ Environment=HF_HUB_OFFLINE=1
 EOF
 sudo install -D -m 0644 /dev/stdin /etc/systemd/system/open-webui.service.d/30-origin.conf <<'EOF'
 [Service]
-Environment=WEBUI_URL=<household-origin>
-Environment=CORS_ALLOW_ORIGIN=<cors-allow-origin>
+Environment=WEBUI_URL=https://<name>.<tailnet>.ts.net
+Environment=CORS_ALLOW_ORIGIN=https://<name>.<tailnet>.ts.net
 EOF
 sudo systemctl daemon-reload
 ```
@@ -317,8 +328,8 @@ evidence also records.
 
 ## P4: closed-route commissioning
 
-No `:443` route points at the socket yet, so nothing outside the host can
-reach it.
+The tailnet route is not published yet, so nothing outside the host can
+reach the socket.
 
 1. The owner types the four admin values; none pass through an agent:
 
@@ -387,131 +398,78 @@ reach it.
   is active with no restarts; `DropInPaths` no longer lists
   `10-bootstrap.conf`.
 
-## P5: open the routes
+## P5: open the tailnet route
 
-Two routes reach the same socket, `/run/open-webui/open-webui.sock`:
+The route is tailnet-only. The `open-webui-tailnet.service` sidecar that
+0.11.0-6 ships runs a second, untagged `tailscaled` owned by the owner's
+tailnet account, in userspace-networking mode, as a dynamic user in the
+`open-webui-proxy` group. Its Tailscale Serve proxies HTTPS on 443 straight
+to `/run/open-webui/open-webui.sock`. The package README's
+[Tailnet Route](../../packages/open-webui/README.md#tailnet-route) section,
+which lands with 0.11.0-6, describes the unit, its log-upload opt-out, and its prerequisites; this
+section keeps only the operator sequence. There is no LAN route, and Caddy is
+not in Open WebUI's path.
 
-- **Tailnet:** Tailscale Serve, run by `tailscaled`, proxies a dedicated
-  Tailscale Service straight to the socket. It listens on the host's tailnet
-  addresses only and provisions certificates automatically for MagicDNS
-  names. `tailscaled` runs as root, so it can reach the socket. Caddy is not
-  in this path.
-- **LAN:** Caddy, the package's TLS front, listens on the host's LAN address
-  only and proxies to the same socket. At least one household member is
-  LAN-only, so production needs this route too. The `caddy` user reaches the
-  socket through the `open-webui-proxy` group (checked in P2).
+A dedicated Tailscale Service was rejected: Services require a tagged host,
+which would strip the host's user identity.
 
-### P5.0 Owner decisions
+### P5.0 Tailnet prerequisites
 
-Decided by the owner (2026-09-23):
+- Each household member who uses Open WebUI joins the tailnet; the owner
+  invites them.
+- The tailnet policy stays the default allow-all.
+- MagicDNS and HTTPS certificates are enabled for the tailnet.
+- The owner has chosen the node name `<name>` before P3, because P3.4 seeds
+  `WEBUI_URL` from it. Record the choice on
+  [Deploy the accepted Open WebUI household stack](https://github.com/nisavid/arch-pkgs/issues/59)
+  generically; the concrete name is never committed.
 
-- The tailnet route is a dedicated Tailscale Service, `svc:<name>`. (A path
-  on the host's existing HTTPS handler was rejected: Open WebUI is not
-  documented as safe to serve under a path prefix.)
-- Tailscale Serve proxies directly to the socket; Caddy is not in the
-  tailnet path.
-- Production also needs a LAN route, fronted by Caddy on the LAN address.
-
-Still pending. Record each on
-[Deploy the accepted Open WebUI household stack](https://github.com/nisavid/arch-pkgs/issues/59)
-before P3, because P3.4 writes `<household-origin>` and
-`<cors-allow-origin>` before the first start. Record them generically; the
-concrete values stay in the owner's session-local handoff variables and are
-never committed.
-
-- **OWNER DECISION PENDING: the service name** `<name>`.
-- **OWNER DECISION PENDING: the LAN TLS approach** `<lan-tls>`, and the LAN
-  name `<lan-name>` that clients use. The certificate must verify on every
-  LAN-only household device.
-- **OWNER DECISION PENDING: the canonical origin** `<household-origin>`
-  (`WEBUI_URL`): the tailnet origin `https://<name>.<tailnet-domain>` or the
-  LAN origin `https://<lan-name>`. `<cors-allow-origin>` lists both route
-  origins, scheme and host only, separated by `;`.
-- **OWNER DECISION PENDING: the LAN firewall boundary** `<lan-firewall-rule>`:
-  which LAN sources may reach `<lan-address>:443`, and the rule that enforces
-  it.
-
-| Placeholder | Meaning |
-| --- | --- |
-| `<name>` | The Tailscale Service name (pending). |
-| `<tailnet-domain>` | The tailnet's MagicDNS domain. |
-| `<lan-address>` | The host's LAN address. Never a wildcard or a tailnet address. |
-| `<lan-name>` | The LAN name clients use (pending). |
-| `<lan-tls>` | The Caddy `tls` directive arguments for the LAN name (pending). |
-| `<household-origin>` | The canonical origin written as `WEBUI_URL` (pending). |
-| `<cors-allow-origin>` | Both route origins, `;`-separated (pending). |
-| `<lan-firewall-rule>` | The owner's firewall rule for LAN access (pending). |
-
-### P5.1 Tailnet route: a dedicated Tailscale Service
-
-Owner prerequisites, in the Tailscale admin console: define the service
-`svc:<name>`, give the host the tags the service requires, and approve the
-host as a proxy for the service after the command below advertises it.
+### P5.1 Start the sidecar and log it in
 
 ```bash
-sudo tailscale serve status --json   # record the current handlers first
-sudo tailscale serve --bg --service=svc:<name> --https=443 unix:/run/open-webui/open-webui.sock
-sudo tailscale serve status --json
+sudo systemctl enable --now open-webui-tailnet.service
+sudo tailscale --socket=/run/open-webui-tailnet/tailscaled.sock up --hostname=<name>
 ```
 
-The second `status --json` must equal the recorded one plus a `svc:<name>`
-handler with HTTPS on 443 proxying to `unix:/run/open-webui/open-webui.sock`.
+`up` prints a login URL; the owner signs in interactively as themselves, so
+the node stays untagged and user-owned. Then, in the Tailscale admin console,
+disable key expiry for the `<name>` node.
 
-- Rollback: `sudo tailscale serve clear svc:<name>`, which removes all config
-  for the service, so the host no longer advertises itself as its proxy. The
-  form `sudo tailscale serve --service=svc:<name> --https=443 unix:/run/open-webui/open-webui.sock off`
-  is equivalent. Then `sudo tailscale serve status --json` must match the
-  recorded baseline. Remove the service definition in the admin console if it
-  is no longer wanted.
-
-### P5.2 LAN route: Caddy on the LAN address
-
-This is a skeleton until the pending P5.0 LAN decisions are recorded. The
-`bind` line is fixed: Caddy must listen on `<lan-address>` only, never on a
-wildcard, so it cannot collide with the `:443` listener `tailscaled` holds on
-the tailnet addresses. The `caddy` package is installed explicitly and stays
-installed either way.
+### P5.2 Publish the route
 
 ```bash
-sudo install -D -m 0644 /dev/stdin /etc/caddy/conf.d/open-webui.caddy <<'EOF'
-https://<lan-name> {
-	bind <lan-address>
-	tls <lan-tls>
-	reverse_proxy unix//run/open-webui/open-webui.sock
-}
-EOF
-grep -n 'import /etc/caddy/conf.d' /etc/caddy/Caddyfile
-sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
-# OWNER DECISION PENDING: apply <lan-firewall-rule> here, before Caddy listens.
-sudo systemctl enable --now caddy.service
+sudo tailscale --socket=/run/open-webui-tailnet/tailscaled.sock serve --bg --https=443 unix:/run/open-webui/open-webui.sock
+sudo tailscale --socket=/run/open-webui-tailnet/tailscaled.sock serve status
 ```
 
-The `grep` must print the `import` line, and `caddy validate` must succeed,
-before `caddy.service` is enabled.
+`serve status` must show `https://<name>.<tailnet>.ts.net` proxying to
+`unix:/run/open-webui/open-webui.sock`.
 
-- Rollback:
-  `sudo rm /etc/caddy/conf.d/open-webui.caddy && sudo systemctl disable --now caddy.service`,
-  then remove `<lan-firewall-rule>`. Never remove the `caddy` package or
-  change its install reason.
+- Rollback, in reverse order:
+
+  ```bash
+  sudo tailscale --socket=/run/open-webui-tailnet/tailscaled.sock serve --https=443 off
+  sudo tailscale --socket=/run/open-webui-tailnet/tailscaled.sock logout
+  sudo systemctl disable --now open-webui-tailnet.service
+  ```
 
 ### P5.3 Hand-back and verification
 
-- HAND-BACK: `HAND-BACK: open-webui P5 routes open`
-- Agent, unprivileged:
-  - `tailscale serve status --json` shows the `svc:<name>` handler, and its
-    target is `unix:/run/open-webui/open-webui.sock`;
-  - for each route origin (`https://<name>.<tailnet-domain>` and
-    `https://<lan-name>`):
-    - `curl -sS -o /dev/null -w '%{http_code}\n' <origin>/` returns 200 with
-      the certificate verification the recorded `<lan-tls>` approach gives
-      household devices (default verification for the tailnet origin);
-    - `curl -sS <origin>/api/config | jq -e '.features.enable_signup == false'`
-      succeeds;
-    - an authenticated WebSocket upgrade returns 101;
-  - `ss -ltnpH 'sport = :443'` shows Caddy only on `<lan-address>`, and no
-    wildcard `:443` listener;
+- HAND-BACK: `HAND-BACK: open-webui P5 tailnet route open`
+- Agent, unprivileged, from another tailnet device:
+  - `curl -sS -o /dev/null -w '%{http_code}\n' https://<name>.<tailnet>.ts.net/`
+    returns 200 on the portless HTTPS origin, with default certificate
+    verification;
+  - `curl -sS https://<name>.<tailnet>.ts.net/api/config | jq -e '.features.enable_signup == false'`
+    succeeds;
+  - an authenticated WebSocket upgrade returns 101.
+- Agent, on the host:
   - `ss -ltnH 'sport = :8080'` prints nothing, and no Open WebUI TCP listener
-    exists.
+    exists;
+  - the `serve status` output the owner ran in P5.2 names only the Open WebUI
+    socket as the target, so Caddy is not in the path. The sidecar's LocalAPI
+    socket admits only root and the daemon's user, so the agent reads the
+    owner's output rather than running it.
 
 ### P5.4 The smoke account
 
@@ -538,14 +496,14 @@ Quiesce writers, copy the state tuple, then restart. With Open WebUI stopped,
 the `:443` route fails closed. Valkey saves its RDB when it stops.
 
 ```bash
-a=/var/lib/arch-pkgs-anchors/open-webui-0.11.0-5-$(date -u +%Y%m%dT%H%M%SZ)
+a=/var/lib/arch-pkgs-anchors/open-webui-0.11.0-6-$(date -u +%Y%m%dT%H%M%SZ)
 sudo install -d -m 0700 "$a" "$a/credstore" "$a/archives" "$a/qdrant"
 sudo systemctl stop open-webui.service valkey.service
 sudo cp -a /var/lib/open-webui/data "$a/open-webui-data"
 sudo cp -a /var/lib/valkey/open-webui/dump.rdb "$a/"
 sudo sh -c 'cp -a /etc/credstore.encrypted/open-webui.* "$1/credstore/"' sh "$a"
 sudo /usr/lib/open-webui/open-webui-session-epoch-ledger current | sudo tee "$a/epoch-bound"
-sudo cp -a /var/cache/pacman/pkg/{open-webui-0.11.0-5-x86_64,python-rapidocr-3.9.2-1-any,python-faster-whisper-1.2.1-1-any}.pkg.tar.zst "$a/archives/"
+sudo cp -a /var/cache/pacman/pkg/{open-webui-0.11.0-6-x86_64,python-rapidocr-3.9.2-1-any,python-faster-whisper-1.2.1-1-any}.pkg.tar.zst "$a/archives/"
 ```
 
 With Open WebUI stopped, take the five collection snapshots with the Qdrant
@@ -591,7 +549,7 @@ Then, signed in as the admin:
 3. Restore the packaged reranker URL and save. Retrieval health returns 200,
    and a cited answer carries a finite score.
 
-- HAND-BACK: `HAND-BACK: open-webui verify PASSED on 0.11.0-5`
+- HAND-BACK: `HAND-BACK: open-webui verify PASSED on 0.11.0-6`
 
 ## Agent post-verification
 
@@ -616,15 +574,12 @@ The acceptance trial values are the baseline.
 - **After P5, to the anchor:**
 
   ```bash
-  # first close both routes with the P5.1 and P5.2 rollbacks:
-  #   sudo tailscale serve clear svc:<name>
-  #   sudo rm /etc/caddy/conf.d/open-webui.caddy && sudo systemctl disable --now caddy.service
-  #   (then remove <lan-firewall-rule>)
-  # (never remove the caddy package or change its install reason)
+  # first close the route:
+  sudo tailscale --socket=/run/open-webui-tailnet/tailscaled.sock serve --https=443 off
   sudo systemctl stop open-webui.service
   sudo /usr/lib/open-webui/open-webui-session-epoch-ledger reserve
   sudo sh -c 'cd "$1" && sha256sum -c SHA256SUMS' sh <anchor>
-  sudo pacman -U <anchor>/archives/{open-webui-0.11.0-5-x86_64,python-rapidocr-3.9.2-1-any,python-faster-whisper-1.2.1-1-any}.pkg.tar.zst
+  sudo pacman -U <anchor>/archives/{open-webui-0.11.0-6-x86_64,python-rapidocr-3.9.2-1-any,python-faster-whisper-1.2.1-1-any}.pkg.tar.zst
   ```
 
   Then restore the tuple: stop Valkey and replace its `dump.rdb`, replace
@@ -632,10 +587,12 @@ The acceptance trial values are the baseline.
   five Qdrant snapshots as the Qdrant runbook describes. Start Valkey and Open
   WebUI, check SQLite `quick_check`, the digests, the collection shapes, that
   a pre-anchor session is rejected, and that a fresh login works; then
-  reopen both routes with P5.1 and P5.2.
+  republish the route with the P5.2 `serve` command.
 
   - HAND-BACK: `HAND-BACK: open-webui rollback PASSED to anchor <anchor-id>`
 
+- **To withdraw the tailnet route only:** the P5.2 rollback. Caddy is not
+  involved; never remove the `caddy` package or change its install reason.
 - The Qdrant rollback stays with the Qdrant runbook.
 - The former wildcard `:8080` service is never re-enabled. The legacy state
   from P0 stays retained until the anchor-release ticket.
