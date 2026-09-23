@@ -123,9 +123,11 @@ rehearsal may run earlier.
    records `restarted: null` and the condition
    `lemonade restart: not detectable from /api/v1/health; the operator's service start times are the record`,
    and `trial` prints a reminder. So the command sequence always reads the
-   Lemonade service's start time just before `trial` and just after it; the
-   two must be equal, and the operator copies both lines into the
-   description of the PR that carries the evidence.
+   Lemonade service's state just before `trial` and just after it. Both
+   reads must show `LoadState=loaded` and `ActiveState=active`, and the same
+   non-empty `ActiveEnterTimestamp`; the operator copies all six lines into
+   the description of the PR that carries the evidence. An empty timestamp
+   means the unit name is wrong.
 8. **No concurrent builds.** The trial runs its units under a capped user
    `builds.slice` (see `--slice`), which package builds share. Hold every
    build on the host for the whole trial: a build that fills the shared cap
@@ -163,7 +165,8 @@ lead-approved override.
 
 Placeholders: `<root>` is the acceptance root (see the prerequisites),
 `<manifest>` the candidate manifest of record, `<receipt-id>` a Lemonade M4
-receipt id, and `<lemonade-unit>` the host's Lemonade system service unit.
+receipt id, and `<lemonade-unit>` the Lemonade system service unit
+(`lemond.service` from the `lemonade-server` package).
 The production placeholders (`<household-origin>`, `<kit-checkout>`, and the
 rest) are defined in the
 [production handoff](open-webui-household-production-install.md).
@@ -180,16 +183,17 @@ args=(--root <root> --manifest <manifest> --slice builds-owui_acc.slice)
 python3 "$kit" preflight "${args[@]}"
 python3 "$kit" stage     "${args[@]}"
 python3 "$kit" up        "${args[@]}"
-systemctl show -p ActiveEnterTimestamp <lemonade-unit>
+systemctl show -p LoadState -p ActiveState -p ActiveEnterTimestamp --timestamp=unix <lemonade-unit>
 python3 "$kit" trial     "${args[@]}" --lemonade-receipt <receipt-id>
-systemctl show -p ActiveEnterTimestamp <lemonade-unit>
+systemctl show -p LoadState -p ActiveState -p ActiveEnterTimestamp --timestamp=unix <lemonade-unit>
 python3 "$kit" down      "${args[@]}"
 python3 "$kit" teardown  "${args[@]}" --keep-anchor
 ```
 
 `preflight` is read-only; `stage` extracts, renders, mints, and initializes;
 `up` starts the kit slice with the route closed; the two read-only
-`systemctl show` lines record Lemonade's start time around the trial; `trial`
+`systemctl show` lines record Lemonade's state and start time around the
+trial; `trial`
 runs the one trial set and writes the evidence; `down` stops the slice. After a 0400-file
 credential fallback, `teardown` also needs `--keep-plaintext-credentials`.
 The command blocks carry no trailing comments, because zsh without
@@ -359,8 +363,10 @@ its packaged value, its acceptance value, and the reason. The table covers:
 - the dropped items: `User`, `Group`, `SupplementaryGroups`,
   `ExecStartPre=+`, `StateDirectory`, `RuntimeDirectory`, the
   `Protect*`/`Private*`/`Restrict*`/`SystemCall*` block, `ReadWritePaths`,
-  and the enforcement of `IPAddressDeny`/`IPAddressAllow` (with the journal
-  warning quoted);
+  and the enforcement of `IPAddressDeny`/`IPAddressAllow`, recorded as not
+  enforced; the user manager's IP-firewall warning is quoted when the Open
+  WebUI unit's current journal holds it, but systemd logs it only once per
+  manager lifetime, so it is often absent;
 - the rewritten items: working directory, `HOME`, the cache and temporary
   directories, and the credential sources;
 - the overlay keys above;
@@ -407,10 +413,15 @@ args=(--root <rehearsal-root> --manifest <manifest> --provider stub --rehearsal 
 python3 "$kit" preflight "${args[@]}"
 python3 "$kit" stage     "${args[@]}"
 python3 "$kit" up        "${args[@]}"
+python3 "$kit" down      "${args[@]}"
+python3 "$kit" up        "${args[@]}"
 python3 "$kit" trial     "${args[@]}"
 python3 "$kit" down      "${args[@]}"
 python3 "$kit" teardown  "${args[@]}"
 ```
+
+The `down` and second `up` before `trial` exercise the repeated-up path the
+real trial may need; the second `up` keeps `first-start.json`.
 
 - It runs against `tools/fixtures/open-webui-household-acceptance/stub_provider.py`,
   a credential-free deterministic provider. The sampler allowlist excludes the
