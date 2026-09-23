@@ -211,10 +211,12 @@ command runs under `sudo`.
    ```
 
    It must time out, and about two minutes (roughly 130 seconds) later
-   `sudo journalctl -u open-webui-tailnet.service` must show the forward to
-   `127.0.0.1:6333` failing. A connection or a quick refusal means the deny
-   is not in effect; stop and roll back. A timeout with no journal line
-   means the tailnet policy blocked the probe; retry from a device it admits.
+   `sudo journalctl -u open-webui-tailnet.service --since=-5min` must show
+   the forward to `127.0.0.1:6333` failing. The time limit keeps a line from
+   an earlier check from counting. A connection or a quick refusal means the
+   deny is not in effect; stop and roll back. A timeout with no forward line
+   means the tailnet policy blocked the probe (the journal may show a `Drop:`
+   line for it instead); retry from a device it admits.
 3. Before the first Open WebUI start, set the canonical origin in
    `/etc/open-webui/open-webui.env`:
 
@@ -320,22 +322,6 @@ system-resolver lookups. The control client has its own DNS fallback, but no
 fallback was found for certificate requests, so the node's HTTPS certificate
 may fail to issue on such a host. That is untested.
 
-A later custom domain is an open choice between two variants. Both use
-`serve --tcp=443`, which cannot share port 443 with the current
-`serve --https=443` route, so either one replaces that route after it is
-turned off:
-
-- TLS passthrough to a local terminator on a Unix socket:
-  `serve --tcp=443 unix:/run/<dir>/<sock>`, run as root like any `unix:`
-  target. It needs no unit change, but it cannot carry the PROXY protocol, so
-  the terminator does not see the client's address.
-- A terminator on `127.0.0.2`, an address outside the deny:
-  `serve --tcp=443 --proxy-protocol=2 tcp://127.0.0.2:<port>`. The PROXY
-  header carries the client's address, but this variant is fragile: it
-  breaks if the deny is ever widened, and the terminator must trust PROXY
-  headers from `127.0.0.1`, which any local process can forge. It is
-  untested.
-
 The deny drops a blocked TCP forward rather than refusing it. The daemon waits
 out the host's TCP SYN timeout, about two minutes, holding one of its
 forwarding slots, and then logs the failure. One source address can hold at
@@ -362,18 +348,36 @@ remove the rule after the check. Plain `nc` on the host is no exception: it
 reaches the node through the host's own `tailscaled`, as another tailnet
 device, and the node filters it like any peer's.
 
-One path may avoid the temporary rule. In the `tailscale` 1.102.2 source, a
-dial from the node to its own tailnet address loops back inside the daemon
-without passing the policy, so the following command, with the node's tailnet
-IPv4 address as `<node-ip>`, should reach the same forward:
+One untested path may avoid the temporary rule. In the `tailscale` 1.102.2
+source, a dial from the node to its own tailnet address loops back inside the
+daemon without passing the policy, so the following command should reach the
+same forward. `<node-ip>` is the node's tailnet IPv4 address, which
+`sudo tailscale --socket=/run/open-webui-tailnet/tailscaled.sock ip -4`
+prints:
 
 ```sh
 sudo tailscale --socket=/run/open-webui-tailnet/tailscaled.sock nc <node-ip> 6333
 ```
 
-That is untested. If you try it, it should hang for about two minutes and then
-fail, with the same journal line as step 2; a connection means the deny is not
-in effect.
+It should hang for about two minutes and then fail, with the same journal line
+as step 2. Anything else, such as a quick failure or a session that stays
+open, means the deny is not in effect.
+
+A later custom domain is an open choice between two variants. Both use
+`serve --tcp=443`, which cannot share port 443 with the current
+`serve --https=443` route, so either one replaces that route after it is
+turned off:
+
+- TLS passthrough to a local terminator on a Unix socket:
+  `serve --tcp=443 unix:/run/<dir>/<sock>`, run as root like any `unix:`
+  target. It needs no unit change, but it cannot carry the PROXY protocol, so
+  the terminator does not see the client's address.
+- A terminator on `127.0.0.2`, an address outside the deny:
+  `serve --tcp=443 --proxy-protocol=2 tcp://127.0.0.2:<port>`. The PROXY
+  header carries the client's address, but this variant is fragile: it
+  breaks if the deny is ever widened, and the terminator must trust PROXY
+  headers from `127.0.0.1`, which any local process can forge. It is
+  untested.
 
 ## Maintenance Baseline
 
@@ -396,8 +400,8 @@ in effect.
     failure boundary, automatic credential delivery, and forward-only session
     epoch as package-owned source and service assets.
   - Ship a disabled, unprivileged userspace `tailscaled` unit for the
-    tailnet route, with log uploads off unless the operator opts in and the
-    host's `127.0.0.1` and `::1` denied to it; its login and serve
+    tailnet route, with the host's `127.0.0.1` and `::1` denied to it and log
+    uploads off unless the operator opts in; its login and serve
     configuration stay runtime state.
 - `update_notes`:
   - Recompute the complete private closure from the immutable release lock and
