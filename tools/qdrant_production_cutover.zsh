@@ -7,7 +7,8 @@ emulate -L zsh
 setopt errexit nounset pipefail extendedglob
 
 script_name=${0:t}
-script_path=$0
+# Absolute, so printed commands work from any directory.
+script_path=${0:A}
 
 # Accepted identities. The byte-identical rebuilds are bound by the accepted
 # G0-G3 evidence under docs/maintainers/evidence/qdrant-1.19.0-1/.
@@ -77,6 +78,14 @@ Options (defaults match the packaged layout):
                              token the current HMAC secret mints
 EOF
 }
+
+# The packaged defaults, so printed commands carry only what this run changed.
+typeset -A default_opt
+default_opt=(
+  --url "$url" --storage-dir "$storage_dir" --config-dir "$config_dir"
+  --repo "$repo" --pkg-cache "$pkg_cache" --rollback-root "$rollback_root"
+  --credstore "$credstore" --disk-quota-percent "$disk_quota_percent"
+)
 
 die() { print -ru2 -- "${script_name}: $*"; exit 2; }
 note() { print -r -- "$*"; }
@@ -229,16 +238,52 @@ credential_matches_secret() {
   [[ "$have" == "$want" ]]
 }
 
+carried_options() {
+  # Every non-default option of this run except --rollback-set, shell-quoted.
+  local -a opts
+  local -A given
+  local opt
+  given=(
+    --url "$url" --storage-dir "$storage_dir" --config-dir "$config_dir"
+    --repo "$repo" --pkg-cache "$pkg_cache" --rollback-root "$rollback_root"
+    --credstore "$credstore" --disk-quota-percent "$disk_quota_percent"
+  )
+  for opt in --url --storage-dir --config-dir --repo --pkg-cache --rollback-root --credstore --disk-quota-percent; do
+    [[ "${given[$opt]}" == "${default_opt[$opt]}" ]] || opts+=("$opt" "${given[$opt]}")
+  done
+  [[ "$sync_db" == "/var/lib/pacman/sync/${repo}.db" ]] || opts+=(--sync-db "$sync_db")
+  (( ! $#opts )) || print -rn -- " ${(j: :)${(@q-)opts}}"
+}
+
+rollback_command() {
+  # rollback_command [dry] -> the rollback command for this run's set
+  local apply_flag=' --apply'
+  [[ "${1:-}" != dry ]] || apply_flag=
+  print -r -- "sudo ${(q-)script_path} rollback${apply_flag} --rollback-set ${rollback_set}$(carried_options)"
+}
+
 reentry_command() {
   # The command that re-enters cutover after a rollback: a fresh rollback set
   # and, when a runtime credential already exists, --reuse-credential.
-  local cmd="sudo ${script_path} cutover --apply --rollback-set ${rollback_set%%-reentry-*}-reentry-$(date -u +%Y%m%dT%H%M%SZ)"
+  local cmd="sudo ${(q-)script_path} cutover --apply --rollback-set ${rollback_set%%-reentry-*}-reentry-$(date -u +%Y%m%dT%H%M%SZ)$(carried_options)"
   [[ ! -e "${credstore}/open-webui.${credential_name}" ]] || cmd+=" --reuse-credential"
   print -r -- "$cmd"
 }
 
+check_consumers() {
+  # check_consumers WHEN -> refuse unless both consumers are stopped
+  local unit state
+  for unit in open-webui.service hayhooks.service; do
+    # Only a stopped unit passes; activating, reloading, and auto-restart
+    # states would still let a consumer reach Qdrant.
+    state=$(systemctl is-active "$unit" 2>/dev/null) || true
+    [[ "$state" == inactive || "$state" == failed ]] \
+      || refuse "consumer ${unit} is ${state:-in an unknown state}; stop it $1"
+  done
+}
+
 do_preflight() {
-  local installed version count established unit state problem
+  local installed version count established unit problem
   local secret="${config_dir}/qdrant.env" cred="${credstore}/open-webui.${credential_name}"
   note "== preflight"
   installed=$(pacman -Q qdrant 2>/dev/null | awk '{print $2}') || true
@@ -249,6 +294,8 @@ do_preflight() {
   done
   config_unmodified \
     || refuse "${config_dir}/config.yaml is modified or unowned; reconcile it before cutover so the packaged config applies"
+  [[ ! -e "${config_dir}/config.yaml.pacnew" ]] \
+    || refuse "${config_dir}/config.yaml.pacnew already exists; reconcile and remove it before cutover"
   check_repo_identity
   check_baseline_archive "${pkg_cache}/${baseline_file}"
   check_disk with-copy
@@ -261,13 +308,7 @@ do_preflight() {
     || refuse "Qdrant holds '${count:-unknown}' collections; this route is only for empty storage (use the runbook's full migration route)"
   established=$(ss -tnH state established '( dport = :6333 or dport = :6334 )' 2>/dev/null | wc -l)
   (( established == 0 )) || refuse "${established} client connection(s) to Qdrant are open; stop those consumers first"
-  for unit in open-webui.service hayhooks.service; do
-    # Only a stopped unit passes; activating, reloading, and auto-restart
-    # states would still let a consumer reach Qdrant.
-    state=$(systemctl is-active "$unit" 2>/dev/null) || true
-    [[ "$state" == inactive || "$state" == failed ]] \
-      || refuse "consumer ${unit} is ${state:-in an unknown state}; stop it and keep it stopped until verify passes"
-  done
+  check_consumers "and keep it stopped until verify and the rollback dry run pass"
   if [[ -e "$secret" || -L "$secret" ]]; then
     problem=$(secret_file_problem "$secret")
     if [[ -n "$problem" ]]; then
@@ -298,8 +339,18 @@ require_root_for_apply() {
 }
 
 private_dir=
-cleanup() { [[ -z "$private_dir" ]] || rm -rf -- "$private_dir"; }
+cleanup() { [[ -z "$private_dir" ]] || rm -rf -- "$private_dir"; private_dir=; }
 trap cleanup EXIT
+
+on_signal() {
+  # Remove the private header directory, then hand back the next commands.
+  # Rollback refuses before touching anything if the set is incomplete.
+  trap - INT TERM HUP
+  cleanup
+  hand_back "qdrant ${command:-run} INTERRUPTED at '${stage:-before any host change}'; private headers removed; if ${rollback_root}/${rollback_set} exists, roll back with: $(rollback_command); once the cause is fixed, re-enter with: $(reentry_command)"
+  exit 130
+}
+trap on_signal INT TERM HUP
 
 make_private_dir() {
   [[ -n "$private_dir" ]] && return
@@ -369,7 +420,7 @@ fail_stage() {
   elif [[ "$stage" == 'save rollback set' ]]; then
     hand_back "qdrant cutover FAILED at '${stage}'; 1.17.1 and its state are untouched: run sudo systemctl start qdrant.service, inspect the partial set ${rollback_root}/${rollback_set}, then re-enter with: $(reentry_command)"
   else
-    hand_back "qdrant cutover FAILED at '${stage}'; roll back with: sudo ${script_path} rollback --apply --rollback-set ${rollback_set}; once the cause is fixed, re-enter with: $(reentry_command)"
+    hand_back "qdrant cutover FAILED at '${stage}'; roll back with: $(rollback_command); once the cause is fixed, re-enter with: $(reentry_command)"
   fi
   exit 1
 }
@@ -530,7 +581,7 @@ do_cutover() {
 
   stage='verify'
   do_verify || fail_stage
-  hand_back "qdrant cutover COMPLETE on 1.19.0-1; rollback set ${set_dir} retained"
+  hand_back "qdrant cutover COMPLETE on 1.19.0-1; rollback set ${set_dir} retained; before Open WebUI writes, prove rollback with: $(rollback_command dry)"
 }
 
 do_verify() {
@@ -633,6 +684,9 @@ verify_rollback() {
     got=$(installed_version "$name")
     [[ "$got" == "$want" ]] || bad+=("${name} is '${got:-absent}', want the pre-cutover '${want:-absent}'")
   done
+  # Preflight admits only empty storage, so the restored server holds none.
+  got=$(http_json /collections 2>/dev/null | jq -r '.result.collections | length' 2>/dev/null) || got=
+  [[ "$got" == 0 ]] || bad+=("restored ${baseline_version%-*} reports '${got:-unknown}' collections, want the pre-cutover 0")
   for got in "${bad[@]}"; do print -ru2 -- "ROLLBACK CHECK FAILED: ${got}"; done
   (( ! $#bad ))
 }
@@ -640,6 +694,7 @@ verify_rollback() {
 do_rollback() {
   local set_dir="${rollback_root}/${rollback_set}" failed_dir name want archive need avail
   note "== rollback"
+  stage=rollback
   [[ -f "${set_dir}/MANIFEST" && -d "${set_dir}/state" && -d "${set_dir}/config" ]] \
     || { refuse "rollback set ${set_dir} is incomplete"; finish_or_refuse rollback; }
   check_baseline_archive "${set_dir}/${baseline_file}"
@@ -666,6 +721,7 @@ do_rollback() {
         || refuse "${name} ${want} was installed before cutover, but ${pkg_cache} has no single ${name}-${want} archive to reinstall"
     fi
   done
+  check_consumers "before rollback"
   finish_or_refuse rollback
   (( apply )) || note "(dry run: pass --apply as root to perform these steps)"
   failed_dir="${storage_dir}.failed-$(date -u +%Y%m%dT%H%M%SZ)"
@@ -674,11 +730,23 @@ do_rollback() {
     hand_back "qdrant rollback FAILED at '$1'; the rollback set ${set_dir} is untouched; failed state (if moved) is at ${failed_dir}"
     exit 1
   }
+  # A leftover 1.18.3 step would still hold the storage; its transient unit
+  # is normally gone already.
+  if [[ "$(systemctl show -P LoadState qdrant-migration-step.service 2>/dev/null)" == loaded ]]; then
+    run systemctl stop qdrant-migration-step.service || rollback_failed 'stop qdrant-migration-step'
+  else
+    note "qdrant-migration-step.service is not loaded; nothing to stop"
+  fi
   run systemctl stop qdrant.service || rollback_failed 'stop qdrant'
   if [[ -e "$storage_dir" ]]; then
     run mv -- "$storage_dir" "$failed_dir" || rollback_failed 'move failed state aside'
   fi
   run cp -a --reflink=auto -- "${set_dir}/state" "$storage_dir" || rollback_failed 'restore state'
+  if (( apply )); then
+    (cd "$storage_dir" && sha256sum --quiet -c "${set_dir}/state.sha256") || rollback_failed 'check restored state'
+  else
+    note "DRY-RUN: check the restored ${storage_dir} against ${set_dir}/state.sha256"
+  fi
   run pacman -U --noconfirm "${set_dir}/${baseline_file}" || rollback_failed "install ${baseline_version}"
   # Return the side packages to the manifest: remove what cutover added,
   # reinstall the recorded version of what was there before.
@@ -754,7 +822,7 @@ case "$command" in
   cutover) do_cutover ;;
   verify)
     do_verify || { hand_back "qdrant verify FAILED (${#refusals} check(s)); consider rollback"; exit 1; }
-    hand_back "qdrant verify PASSED on 1.19.0-1"
+    hand_back "qdrant verify PASSED on 1.19.0-1; before Open WebUI writes, prove rollback with: $(rollback_command dry)"
     ;;
   rollback) do_rollback ;;
 esac

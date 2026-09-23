@@ -90,8 +90,9 @@ sudo tools/qdrant_production_cutover.zsh preflight
 
 It refuses when any of these fails:
 
-- **Installed identity.** `pacman -Q qdrant` is 1.17.1-1, and `pacman -Qii`
-  reports `/etc/qdrant/config.yaml` unmodified.
+- **Installed identity.** `pacman -Q qdrant` is 1.17.1-1, `pacman -Qii`
+  reports `/etc/qdrant/config.yaml` unmodified, and no
+  `/etc/qdrant/config.yaml.pacnew` exists yet.
 - **Repository origin.** `pacman -Si nisavid/<name>` offers the accepted
   versions. The `nisavid` sync database lists each archive's accepted file
   name, size, and SHA-256. This holds only after
@@ -106,7 +107,7 @@ It refuses when any of these fails:
 - **Consumers.** No client connection to 6333 or 6334 is open, and both
   `open-webui.service` and `hayhooks.service` are inactive or failed. Any other
   state, such as activating or reloading, refuses. Keep them stopped until
-  verify passes.
+  verify and the rollback dry run both pass.
 - **HMAC secret.** If `/etc/qdrant/qdrant.env` exists, it already has the form
   that `qdrant-secret-preflight` requires: a regular file, owned by root, group
   `qdrant`, mode 0640, holding exactly one `QDRANT__SERVICE__API_KEY=` line of
@@ -153,8 +154,9 @@ sudo tools/qdrant_production_cutover.zsh cutover --apply
    `payload_m: 16`, and keyword payload indexes on `tenant_id` (tenant),
    `metadata.hash`, and `metadata.file_id`. This matches Open WebUI 0.11's own
    multitenant schema.
-7. Snapshots the still-empty `_memories` collection, restores it by upload,
-   and removes both snapshot files.
+7. Snapshots the still-empty `_memories` collection and restores it by
+   upload. It then tries to delete both snapshot files. A failed delete only
+   prints a warning to remove that file by hand; it does not fail cutover.
 8. Mints the runtime JWT: HS256 over the HMAC secret, with
    `{"access":[{"collection":"open-webui-rag-v1_<suffix>","access":"prw"}, …]}`
    for the five collections and no expiry. It encrypts the JWT with
@@ -175,6 +177,11 @@ sudo tools/qdrant_production_cutover.zsh cutover --apply
 The last output line starts with `HAND-BACK:`. It reports completion, or the
 failing stage and the next commands to run. For a failure after the rollback
 set is saved, it names both the rollback command and the re-entry command.
+An interrupt (INT, TERM, or HUP) removes the private directory that holds the
+admin and runtime headers, then prints a `HAND-BACK:` line that names both
+commands. Every printed command uses the script's absolute path and carries
+every non-default option of the run, such as `--rollback-root`, `--pkg-cache`,
+`--credstore`, `--repo`, and `--url`.
 
 ### Re-entry After a Failed Cutover
 
@@ -188,9 +195,9 @@ is fixed:
 2. Run the re-entry command from either `HAND-BACK:` line. It has this form:
 
    ```bash
-   sudo tools/qdrant_production_cutover.zsh cutover --apply \
+   sudo <checkout>/tools/qdrant_production_cutover.zsh cutover --apply \
      --rollback-set qdrant-1.17.1-1-pre-1.19.0-reentry-<UTC time> \
-     [--reuse-credential]
+     [<non-default options of the failed run>] [--reuse-credential]
    ```
 
 The first rollback set stays in place, and the re-entry saves a fresh one from
@@ -225,7 +232,25 @@ Verify checks that:
   (403) when it tries to create a collection
 - a five-minute read-only (`r`) JWT is refused (403) when it tries to write
 
-Open WebUI may write only after verify prints `HAND-BACK: qdrant verify PASSED`.
+### Rollback Proof Before Writes
+
+After verify passes, and before Open WebUI may write, run a root dry run of
+rollback against the saved set. Verify's `HAND-BACK:` line prints this command
+with the set name and the run's options:
+
+```bash
+sudo tools/qdrant_production_cutover.zsh rollback --rollback-set <set>
+```
+
+It must end with `HAND-BACK: qdrant rollback dry run complete`. The dry run
+runs every rollback pre-check listed in step 1 of [Rollback](#4-rollback):
+the archive digest, `state.sha256`, the configuration digest, free space,
+side-package archives, and stopped consumers. It changes nothing.
+
+This dry run and the G4 rollback drill in
+[Acceptance-deploy the Open WebUI household candidate set](https://github.com/nisavid/arch-pkgs/issues/89)
+together are the production rollback proof. Open WebUI may write only after
+verify prints `HAND-BACK: qdrant verify PASSED` and this dry run passes.
 
 ### 4. Rollback
 
@@ -239,6 +264,10 @@ Roll back if any of these happens:
 
 Never open storage migrated by 1.18.3 or 1.19.0 with 1.17.1. Rollback restores
 the untouched copy.
+
+Stop Open WebUI first, and keep `hayhooks.service` stopped. Rollback refuses
+unless both `open-webui.service` and `hayhooks.service` are inactive or
+failed.
 
 ```bash
 sudo tools/qdrant_production_cutover.zsh rollback          # dry run
@@ -260,11 +289,16 @@ sudo tools/qdrant_production_cutover.zsh rollback --apply
      saved state. Moving the failed state aside frees nothing there.
    - For `qdrant-web-ui` or `qdrant-migration` that the manifest records as
      installed at a different version, the pacman cache holds that version's
-     archive.
-2. Stops `qdrant.service`.
+     archive. The rollback set does not retain side-package archives. This
+     does not apply on the host today, where neither package was installed
+     before cutover.
+   - `open-webui.service` and `hayhooks.service` are inactive or failed.
+2. Stops `qdrant-migration-step.service` if it is still loaded, then stops
+   `qdrant.service`.
 3. Moves `/var/lib/qdrant` aside to `/var/lib/qdrant.failed-<UTC time>`, which
    is kept for inspection.
-4. Copies the saved state back.
+4. Copies the saved state back, and checks the restored tree against
+   `state.sha256` before 1.17.1 starts.
 5. Runs `pacman -U` on the saved 1.17.1-1 archive.
 6. Returns `qdrant-web-ui` and `qdrant-migration` to their manifest state. It
    removes a package that was not installed before, and reinstalls the
@@ -279,6 +313,7 @@ sudo tools/qdrant_production_cutover.zsh rollback --apply
    - The `EnvironmentFiles` and `DropInPaths` of `qdrant.service` equal their
      pre-cutover values in the manifest. On the host, both are empty.
    - `qdrant-web-ui` and `qdrant-migration` match the manifest.
+   - The restored 1.17.1 reports zero collections, the pre-cutover count.
 
 `/etc/qdrant/qdrant.env` and the encrypted Open WebUI credential stay in
 place for re-entry. The 1.17.1 unit does not read them. The final `HAND-BACK:`
@@ -301,7 +336,10 @@ Until [Release retained rollback anchors and clean target-local state](https://g
 separately approves removal, keep:
 
 - the rollback set: the 1.17.1 state and configuration copies, the 1.17.1-1
-  archive, and the manifest
+  archive, and the manifest. A re-entry rollback set also holds a copy of
+  `/etc/qdrant/qdrant.env`, because its configuration copy is taken after the
+  first attempt provisioned the secret. The set directory is root-only (0700).
+  Keep it until anchor release like the rest of the set.
 - the 1.17.1-1 archive in the pacman cache and in the `nisavid` repository
 - the accepted `qdrant-migration`, `qdrant`, and `qdrant-web-ui` archives in
   the candidate store and the repository
