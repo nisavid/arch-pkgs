@@ -95,6 +95,16 @@ def rerank(request: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _between(text: str, start: str, end: str) -> str | None:
+    """The text between the first ``start`` and the next ``end``, in linear time."""
+
+    opened = text.find(start)
+    if opened < 0:
+        return None
+    closed = text.find(end, opened + len(start))
+    return None if closed < 0 else text[opened + len(start):closed]
+
+
 def _sentences(text: str) -> list[str]:
     return [item.strip() for item in re.split(r"(?<=[.!?])\s+|\n+", text) if item.strip()]
 
@@ -116,13 +126,14 @@ def chat_answer(request: dict[str, Any]) -> str:
     if not users:
         raise StubError("messages must include a user message")
     everything = "\n".join(content for _, content in contents)
-    context = re.search(r"<context>(.*?)</context>", everything, re.DOTALL)
-    query = re.search(r"<user_query>(.*?)</user_query>", everything, re.DOTALL)
+    context = _between(everything, "<context>", "</context>")
+    query = _between(everything, "<user_query>", "</user_query>")
     if context is not None:
-        candidates = re.sub(r"<[^>]+>", "\n", context.group(1))
+        # A tag never contains another "<", so the match cannot backtrack.
+        candidates = re.sub(r"<[^<>]*>", "\n", context)
     else:
         candidates = "\n".join(content for content in (c for _, c in contents) if content is not users[-1])
-    question = v1._tokens(query.group(1) if query is not None else users[-1])
+    question = v1._tokens(query if query is not None else users[-1])
     best, best_score = "Synthetic household stub response.", 0
     for sentence in _sentences(candidates):
         score = len(v1._tokens(sentence) & question)

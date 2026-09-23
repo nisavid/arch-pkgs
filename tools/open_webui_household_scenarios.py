@@ -586,6 +586,14 @@ def acceptance_caddy_root_certificate(root: Path) -> Path:
 
 
 def valkey_password_hash(password: str) -> str:
+    """The SHA-256 hex digest that a Valkey ACL ``#<hash>`` entry requires.
+
+    Valkey's ACL format fixes the algorithm. The input is never a human
+    password: the kit and the production handoff both generate it as 32
+    random bytes (``openssl rand -hex 32`` in production), so a fast hash
+    over a 256-bit random value leaves nothing to brute-force.
+    """
+
     if not password:
         raise ValueError("the Valkey password must be nonempty")
     return hashlib.sha256(password.encode()).hexdigest()
@@ -725,6 +733,14 @@ class Response:
         return json.loads(self.body) if self.body else None
 
 
+def tls_context(cacert: Path | None = None) -> ssl.SSLContext:
+    """A verifying client context that refuses anything older than TLS 1.2."""
+
+    context = ssl.create_default_context(cafile=str(cacert) if cacert else None)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    return context
+
+
 class Endpoint:
     """HTTP to Open WebUI over an HTTPS origin or a UNIX socket, or to Lemonade."""
 
@@ -751,11 +767,7 @@ class Endpoint:
             self.host = parsed.hostname
             self.port = parsed.port
             self.base_path = parsed.path.rstrip("/")
-            self.context = (
-                ssl.create_default_context(cafile=str(cacert) if cacert else None)
-                if parsed.scheme == "https"
-                else None
-            )
+            self.context = tls_context(cacert) if parsed.scheme == "https" else None
 
     def _connection(self) -> http.client.HTTPConnection:
         if self.socket_path is not None:
