@@ -136,8 +136,9 @@ failure; do not silently reset it.
 ## Closed-Route Administrator Commissioning
 
 The first start happens while no route is published: no tailnet serve
-configuration and no Caddy route. A temporary
-systemd drop-in supplies `admin-email`, `admin-name`, and
+configuration and no Caddy route. Set the canonical origin before it
+([Tailnet Route](#tailnet-route) step 3). A temporary systemd drop-in
+supplies `admin-email`, `admin-name`, and
 `admin-bootstrap-password` credentials to the launcher. Run
 `/usr/lib/open-webui/open-webui-commission-admin` once through a transient
 systemd unit that supplies `admin-email`, `admin-name`,
@@ -168,12 +169,36 @@ state in that state directory, so a later route (for example TCP passthrough
 to a local TLS terminator) needs no unit change. The route needs the optional
 `tailscale` package.
 
-The commands use the placeholders `<name>` for the node name and `<tailnet>`
-for the tailnet's DNS label; neither belongs in this repository. The LocalAPI
-socket's directory admits only root and the daemon's own user, so every
-`tailscale --socket=...` command runs under `sudo`.
+In userspace-networking mode, `tailscaled` forwards a tailnet connection on
+any port it does not serve to that port on the host's `127.0.0.1`, which
+would expose services that listen only on localhost to the tailnet. The unit
+therefore denies the daemon `127.0.0.1` and `::1` (`IPAddressDeny=`), so the
+serve route is the only way in.
 
-1. Before the first Open WebUI start, set the canonical origin in
+These are production cutover steps. Run them only under the accepted
+deployment task, never directly from this package directory (see
+[Package Verification](#package-verification)). The commands use the
+placeholders `<name>` for the node name and `<tailnet>` for the tailnet's DNS
+label; neither belongs in this repository. The LocalAPI socket's directory
+admits only root and the daemon's own user, so every `tailscale --socket=...`
+command runs under `sudo`.
+
+1. Start the node and log it in once, interactively:
+
+   ```sh
+   sudo systemctl enable open-webui-tailnet.service
+   sudo systemctl start open-webui-tailnet.service
+   sudo tailscale --socket=/run/open-webui-tailnet/tailscaled.sock up --hostname=<name>
+   ```
+
+   Then confirm the node's name with
+   `sudo tailscale --socket=/run/open-webui-tailnet/tailscaled.sock status --peers=false`.
+   If `<name>` was taken, Tailscale adds a suffix; use the name it shows
+   as `<name>` from here on.
+2. In the Tailscale admin console, disable key expiry for the new node, and
+   make sure MagicDNS and HTTPS certificates are enabled for the tailnet;
+   `serve --https=443` needs them to obtain the node's certificate.
+3. Before the first Open WebUI start, set the canonical origin in
    `/etc/open-webui/open-webui.env`:
 
    ```text
@@ -190,17 +215,6 @@ socket's directory admits only root and the daemon's own user, so every
    `CORS_ALLOW_ORIGIN` is read at every start. A later origin change signs
    every user out and strands their saved passwords, bookmarks, and
    installed web apps, which browsers tie to the old origin.
-2. Start the node and log it in once, interactively:
-
-   ```sh
-   sudo systemctl enable open-webui-tailnet.service
-   sudo systemctl start open-webui-tailnet.service
-   sudo tailscale --socket=/run/open-webui-tailnet/tailscaled.sock up --hostname=<name>
-   ```
-
-3. In the Tailscale admin console, disable key expiry for the new node, and
-   make sure MagicDNS and HTTPS certificates are enabled for the tailnet;
-   `serve --https=443` needs them to obtain the node's certificate.
 4. Only after closed-route commissioning succeeds, publish the route:
 
    ```sh
@@ -210,14 +224,16 @@ socket's directory admits only root and the daemon's own user, so every
    Run it exactly as written, as root through `sudo`; do not move it to an
    unprivileged operator account. Since Tailscale 1.98.9
    ([TS-2026-005](https://tailscale.com/security-bulletins#ts-2026-005)),
-   `tailscaled` accepts a Unix-socket serve target only from a local admin,
-   which on Linux means root or a configured operator who can also run
-   `sudo tailscale`.
+   `tailscaled` accepts a Unix-socket serve target only from a local admin:
+   root, or a user who passes the daemon's `sudo --list tailscale` check
+   (the configured operator, if one is set). That check cannot pass inside
+   this unit's sandbox, so root is the only admin here.
 
 Verify with
 `sudo tailscale --socket=/run/open-webui-tailnet/tailscaled.sock serve status`,
 then open `https://<name>.<tailnet>.ts.net/` from another tailnet device and
-sign in.
+sign in. From that device, a connection to the node on the port of a
+service that listens only on the host's `127.0.0.1` must fail.
 
 Log uploads are off by default. Upstream `tailscaled` uploads its daemon logs
 to Tailscale's log service; the unit sets `TS_NO_LOGS_NO_SUPPORT=true`, so the
@@ -231,12 +247,15 @@ and a tailnet with network flow logs enabled takes a node without them offline
 UnsetEnvironment=TS_NO_LOGS_NO_SUPPORT
 ```
 
-then run `sudo systemctl restart open-webui-tailnet.service`. To undo the
-opt-in, remove the drop-in with
+then run `sudo systemctl restart open-webui-tailnet.service`. If flow logs
+had already taken the node offline, also run
+`sudo tailscale --socket=/run/open-webui-tailnet/tailscaled.sock up` to bring
+it back. To undo the opt-in, remove the drop-in with
 `sudo systemctl revert open-webui-tailnet.service` and restart the service.
 
-Roll back in reverse order. Step 4 prints the same `serve --https=443 off`
-command for removing its route:
+Roll back in reverse order. After step 4, `tailscale serve` suggests
+`tailscale serve --https=443 off`; run it only in the form below, with `sudo`
+and `--socket`, or it reaches the system `tailscaled` instead:
 
 ```sh
 sudo tailscale --socket=/run/open-webui-tailnet/tailscaled.sock serve --https=443 off
@@ -266,8 +285,9 @@ sudo systemctl stop open-webui-tailnet.service
     failure boundary, automatic credential delivery, and forward-only session
     epoch as package-owned source and service assets.
   - Ship a disabled, unprivileged userspace `tailscaled` unit for the
-    tailnet route, with log uploads off unless the operator opts in; its
-    login and serve configuration stay runtime state.
+    tailnet route, with log uploads off unless the operator opts in and no
+    access to the host's loopback address; its login and serve configuration
+    stay runtime state.
 - `update_notes`:
   - Recompute the complete private closure from the immutable release lock and
     selected optional runtime backends; a digest without the full lock is not a
