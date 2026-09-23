@@ -113,6 +113,15 @@ It refuses when any of these fails:
   `qdrant`, mode 0640, holding exactly one `QDRANT__SERVICE__API_KEY=` line of
   at least 64 lowercase hex characters. Cutover keeps a valid file. It
   provisions one only when the file is absent.
+- **Credential mode.** As root, a `systemd-creds` probe encrypts and decrypts
+  again, first in the default (`auto`) mode, then with `--with-key=host`.
+  Preflight prints the first mode that passes, and cutover encrypts the
+  runtime credential in that mode. `--creds-key auto` or `--creds-key host`
+  tests only that mode. If no mode passes, preflight refuses before anything
+  is written. On a host where TPM2 unsealing fails, only the host-key mode
+  passes. Host-key credentials are not bound to the TPM: they are sealed with
+  `/var/lib/systemd/credential.secret`, and systemd warns when that file is
+  not on encrypted media.
 - **Fresh names.** The rollback set does not exist yet. The runtime credential
   does not exist yet either, unless `--reuse-credential` is passed and the
   credential matches the HMAC secret (see [Re-entry](#re-entry-after-a-failed-cutover)).
@@ -160,8 +169,8 @@ sudo tools/qdrant_production_cutover.zsh cutover --apply
 8. Mints the runtime JWT: HS256 over the HMAC secret, with
    `{"access":[{"collection":"open-webui-rag-v1_<suffix>","access":"prw"}, …]}`
    for the five collections and no expiry. It encrypts the JWT with
-   `systemd-creds encrypt --name=qdrant-runtime-api-key` to a temporary file
-   and renames it to
+   `systemd-creds encrypt --name=qdrant-runtime-api-key`, in the credential
+   mode that preflight chose, to a temporary file and renames it to
    `/etc/credstore.encrypted/open-webui.qdrant-runtime-api-key`. Under
    `--reuse-credential`, it keeps the existing file that preflight matched
    instead. That is where
