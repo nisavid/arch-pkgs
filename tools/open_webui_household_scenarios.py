@@ -1472,9 +1472,9 @@ def _resmoke(args: argparse.Namespace) -> int:
                 chat_model=chat_model, audio=args.audio, unit=args.unit, whisper_model=args.whisper_model,
             )
             results = run_scenarios(ctx, args.scenario)
-    except Exception as error:
-        # An unexpected error still leaves a FAIL receipt; the detail names
-        # only the error type so the receipt stays public-safe.
+    except BaseException as error:
+        # An unexpected error or an interrupt still leaves a FAIL receipt; the
+        # detail names only the error type so the receipt stays public-safe.
         results.append(ScenarioResult("open-webui.resmoke.run", FAIL, type(error).__name__, 0.0))
         raise
     finally:
