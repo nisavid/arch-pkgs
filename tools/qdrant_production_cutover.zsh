@@ -1,7 +1,8 @@
 #!/usr/bin/env zsh
 # Operator handoff for the production Qdrant cutover described in
-# docs/maintainers/qdrant-production-cutover.md. Dry-run by default; nothing
-# on the host changes without --apply, and --apply requires root.
+# docs/maintainers/qdrant-production-cutover.md. Dry-run by default: without
+# --apply, the only possible host change is systemd creating its credential
+# host key during the credential-mode probe. --apply requires root.
 
 emulate -L zsh
 setopt errexit nounset pipefail extendedglob
@@ -247,7 +248,9 @@ credential_matches_secret() {
 
 creds_probe() {
   # creds_probe [ENCRYPT-ARGS...] -> succeed when a probe encrypted with those
-  # arguments decrypts again on this host. Nothing is written to disk.
+  # arguments decrypts again on this host. It writes no credential, but if
+  # /var/lib/systemd/credential.secret does not exist yet, systemd-creds
+  # creates it here, as any host-key encrypt would.
   [[ "$(print -rn -- probe | systemd-creds encrypt "$@" --name=probe - - 2>/dev/null \
     | systemd-creds decrypt --name=probe - - 2>/dev/null)" == probe ]]
 }
