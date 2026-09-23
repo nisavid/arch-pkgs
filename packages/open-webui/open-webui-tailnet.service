@@ -38,6 +38,10 @@ ProtectProc=invisible
 LockPersonality=yes
 MemoryDenyWriteExecute=yes
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+# In userspace-networking mode, tailscaled forwards a tailnet connection on any
+# port it does not serve to that port on the host's loopback. Deny that path so
+# the serve route is the only way in.
+IPAddressDeny=127.0.0.1 ::1
 RestrictNamespaces=yes
 RestrictRealtime=yes
 RestrictSUIDSGID=yes
