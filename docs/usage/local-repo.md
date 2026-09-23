@@ -74,9 +74,10 @@ removes destination files that are absent from it.
 For a lifecycle-managed terminal accepted-only publication, first follow the
 [`package refresh lifecycle`](../policies/package-refresh-lifecycle.md).
 Reconstruct staging from empty against the explicit accepted-artifact manifest
-and reconcile every staged entry before running the publisher. The updater and
-publisher preserve and promote repository contents; they do not decide whether
-an artifact passed its lane's acceptance and promotion gates.
+with `tools/stage_accepted_repo.py` (see
+[Accepted-Only Staging](#accepted-only-staging)) before running the publisher.
+The updater and publisher preserve and promote repository contents; they do not
+decide whether an artifact passed its lane's acceptance and promotion gates.
 
 The former ChatGPT fallback lane is retired. Do not reconstruct it through the
 ordinary updater. To withdraw a retained ChatGPT producer from a complete
@@ -147,6 +148,82 @@ for atomic-exchange support before promotion. By default it permits at most two
 retained previous repositories. Set `ARCH_PKGS_PUBLISH_RETENTION` to another
 positive bound when needed; reaching the bound fails closed and never deletes a
 rollback copy automatically.
+
+## Accepted-Only Staging
+
+`tools/stage_accepted_repo.py` builds terminal staging from an accepted
+manifest. It never runs `makepkg`, never writes to the published repository,
+and needs no privileges.
+
+```bash
+tools/stage_accepted_repo.py stage --manifest MANIFEST \
+  --store-root CANDIDATE_STORE --repo-dir STAGING
+tools/stage_accepted_repo.py verify --manifest MANIFEST --repo-dir STAGING
+tools/publish_pacman_repo.zsh --repo-dir STAGING --publish-dir PUBLISHED
+tools/stage_accepted_repo.py verify --manifest MANIFEST --repo-dir PUBLISHED
+tools/stage_accepted_repo.py receipt --manifest MANIFEST \
+  --staging-manifest-sha SHA --live-dir PUBLISHED --previous-dir PREVIOUS \
+  --output receipt.json
+```
+
+`stage` refuses a nonempty `--repo-dir` and holds `STAGING.writer.lock`. For
+each record it copies `CANDIDATE_STORE/source/filename` only when its size and
+SHA-256 match, never hard-links it, and checks the `.PKGINFO` `pkgname`,
+`pkgver`, and `arch`. It runs `repo-add` once, requires the database records to
+equal the manifest, and prints the repository-manifest SHA-256 that the
+publisher reports as `Verified repository-manifest SHA-256`.
+
+`verify` is read-only and runs against staging or the published directory. The
+database and files indexes must both hold exactly the manifest's (name,
+version, arch, filename, `CSIZE`, `SHA256SUM`) records. Every indexed archive
+must match those bytes, and the directory may hold nothing else except the
+repository symlinks. A `.gitignore` is refused like any other extra file. On
+publish, a `.gitignore` in the old live repository moves to the previous copy
+with the rest of its contents.
+
+`receipt` verifies the published directory again and requires its
+repository-manifest SHA-256 to equal the publisher-verified value. It writes a
+JSON receipt with the accepted manifest's SHA-256, the database and files index
+SHA-256s, the published records, the previous copy's directory name, manifest
+SHA-256, and records, and the manifest's identity dispositions. It records no
+filesystem paths.
+
+The manifest is JSON:
+
+```json
+{
+  "schema": "arch-pkgs-accepted-publication/v1",
+  "repository": {"name": "nisavid", "arch": "x86_64"},
+  "catalog_commit": "<optional 40-character commit>",
+  "archives": [
+    {
+      "package": "qdrant",
+      "version": "1.19.0-1",
+      "arch": "x86_64",
+      "filename": "qdrant-1.19.0-1-x86_64.pkg.tar.zst",
+      "size": 28018464,
+      "sha256": "<64 hex digits>",
+      "source": "<candidate-store subdirectory, relative>",
+      "source_commit": "<optional 40-character commit>",
+      "promotion": {"<optional promotion record reference>": "..."}
+    }
+  ],
+  "dispositions": [
+    {"identity": "hayhooks 1.18.0-1", "disposition": "knowingly-foreign", "note": "..."}
+  ]
+}
+```
+
+- Duplicate JSON keys in any object are refused.
+- Each record's `arch` must equal `repository.arch` or be `any`.
+- Unknown keys, duplicate packages or file names, `.sig` names, and the retired
+  ChatGPT producers `chatgpt`, `codex-app`, and `codex-desktop` are refused.
+- `filename` must start with `package-version-arch.pkg.tar.`.
+- `source` selects one store subdirectory, because the candidate store can hold
+  same-named archives with different bytes.
+- `disposition` is `kept-eligible`, `knowingly-foreign`, or `dropped`.
+  `kept-eligible` identities (`"<package> <version>"`) must also be archive
+  records, and archive records can have no other disposition.
 
 ## Enable The Repo In Pacman
 
@@ -233,7 +310,7 @@ archives, and require their own configured verify-and-regenerate workflow.
 - In the development workflow, `repo/x86_64/` is disposable staging output and
   may be rebuilt from package directories. Terminal lifecycle staging is
   reconstructed from empty using only digest-bound promoted archives in the
-  explicit manifest. Stop and open an implementation ticket when current
+  explicit manifest, with `tools/stage_accepted_repo.py`. Stop and open an implementation ticket when current
   tooling cannot stage those exact identities without rebuilding.
 - The repo uses `SigLevel = Optional TrustedOnly` to accept unsigned local
   packages while requiring any present signature to come from a fully trusted
