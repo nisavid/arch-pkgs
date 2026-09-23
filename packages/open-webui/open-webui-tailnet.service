@@ -38,9 +38,13 @@ ProtectProc=invisible
 LockPersonality=yes
 MemoryDenyWriteExecute=yes
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
-# In userspace-networking mode, tailscaled forwards a tailnet connection on any
-# port it does not serve to that port on the host's loopback. Deny that path so
-# tailnet peers reach only what the node itself serves.
+# In userspace-networking mode, tailscaled forwards tailnet TCP and UDP on any
+# port it does not serve to that port on 127.0.0.1, for IPv4 and IPv6 tailnet
+# addresses alike. Deny that path so tailnet peers reach only what the node
+# itself serves; ::1 is a guard. Unix sockets are not filtered. Keep exactly
+# these addresses: `localhost` or RestrictNetworkInterfaces=~lo would also
+# block the 127.0.0.53 resolver stub, and IPAddressAllow= would undo the deny.
+# See "Loopback deny" in the package README.
 IPAddressDeny=127.0.0.1 ::1
 RestrictNamespaces=yes
 RestrictRealtime=yes
