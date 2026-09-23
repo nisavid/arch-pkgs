@@ -13,10 +13,11 @@ remains in
 
 ## Packaged Boundary
 
-- Open WebUI serves only on `/run/open-webui/open-webui.sock`. Caddy can reach
-  the socket through the dedicated `open-webui-proxy` group once an accepted
-  route is installed and restarted; Caddy does not join the Open WebUI data
-  group.
+- Open WebUI serves only on `/run/open-webui/open-webui.sock`. Members of the
+  dedicated `open-webui-proxy` group can reach the socket: the tailnet sidecar
+  (`open-webui-tailnet.service`) for the tailnet-only production route, and
+  Caddy for a possible later route through a local TLS terminator. Neither
+  joins the Open WebUI data group.
 - The package builds the exact 0.11.0 source archive, seeds and verifies the 60
   release-authored Pyodide files from the exact release wheel, runs `npm ci`
   from a verified 1,233-tarball npm cache, and installs a hash-locked
@@ -134,7 +135,8 @@ failure; do not silently reset it.
 
 ## Closed-Route Administrator Commissioning
 
-The first start happens while Caddy cannot reach the new socket. A temporary
+The first start happens while no route is published: no tailnet serve
+configuration and no Caddy route. A temporary
 systemd drop-in supplies `admin-email`, `admin-name`, and
 `admin-bootstrap-password` credentials to the launcher. Run
 `/usr/lib/open-webui/open-webui-commission-admin` once through a transient
@@ -149,8 +151,8 @@ the exact 0.11 API, proves the bootstrap password no longer works, proves the
 final password works, verifies the sole administrator again, and verifies
 signup is false. After it succeeds, consume and remove every bootstrap input
 and temporary drop-in, restart `open-webui.service` normally, repeat the
-postconditions, and only then make Caddy routing eligible for a later accepted
-deployment task.
+postconditions, and only then publish the tailnet route
+([Tailnet Route](#tailnet-route) step 4).
 
 ## Tailnet Route
 
@@ -190,7 +192,9 @@ socket's directory admits only root and the daemon's own user, so every
    sudo tailscale --socket=/run/open-webui-tailnet/tailscaled.sock up --hostname=<name>
    ```
 
-3. In the Tailscale admin console, disable key expiry for the new node.
+3. In the Tailscale admin console, disable key expiry for the new node, and
+   make sure MagicDNS and HTTPS certificates are enabled for the tailnet;
+   `serve --https=443` needs them to obtain the node's certificate.
 4. Only after closed-route commissioning succeeds, publish the route:
 
    ```sh
@@ -201,6 +205,20 @@ Verify with
 `sudo tailscale --socket=/run/open-webui-tailnet/tailscaled.sock serve status`,
 then open `https://<name>.<tailnet>.ts.net/` from another tailnet device and
 sign in.
+
+Like upstream `tailscaled`, the sidecar uploads its daemon logs to
+Tailscale's log service by default. To opt out, add a drop-in with
+`sudo systemctl edit open-webui-tailnet.service`:
+
+```ini
+[Service]
+Environment=TS_NO_LOGS_NO_SUPPORT=true
+```
+
+then run `sudo systemctl restart open-webui-tailnet.service`. Opting out also
+gives up Tailscale technical support for this node. To reverse it, remove the
+drop-in with `sudo systemctl revert open-webui-tailnet.service` and restart the
+service.
 
 Roll back in reverse order:
 
