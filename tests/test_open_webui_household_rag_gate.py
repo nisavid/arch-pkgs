@@ -586,7 +586,7 @@ class OpenWebUIHouseholdRAGGateTests(unittest.TestCase):
                     reranker = external.ExternalReranker(
                         api_key="fixture-key",
                         url="http://127.0.0.1:9000/v1/rerank",
-                        model="zerank-2-GGUF-Q8_0",
+                        model="zerank-2-GGUF",
                         timeout=12.0,
                     )
                     reranker.qualify()

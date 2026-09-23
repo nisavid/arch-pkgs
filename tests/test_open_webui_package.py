@@ -123,7 +123,7 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
             text=True,
         ).stdout
 
-        self.assertIn("pkgrel=4", recipe)
+        self.assertIn("pkgrel=5", recipe)
         for asset, digest in (
             (
                 "open-webui-npm-offline-closure-0.11.0.tar.zst",
@@ -398,7 +398,11 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
             "QDRANT_COLLECTION_PREFIX=open-webui-rag-v1",
             "ENABLE_QDRANT_MULTITENANCY_MODE=true",
             "RAG_RERANKING_ENGINE=external",
+            "RAG_RERANKING_MODEL=zerank-2-GGUF",
             "ENABLE_RAG_HYBRID_SEARCH=true",
+            "ENABLE_OLLAMA_API=false",
+            "OPENAI_API_BASE_URLS=http://127.0.0.1:13305/api/v1",
+            "OPENAI_API_KEYS=",
             "RAG_OPENAI_API_BASE_URL=http://127.0.0.1:13305/api/v1",
             "RAG_EXTERNAL_RERANKER_URL=http://127.0.0.1:13305/api/v1/rerank",
             "RAG_EXTERNAL_RERANKER_TIMEOUT=30",

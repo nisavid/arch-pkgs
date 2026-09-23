@@ -2,7 +2,7 @@
 
 pkgname=open-webui
 pkgver=0.11.0
-pkgrel=4
+pkgrel=5
 pkgdesc="Self-hosted AI web interface for Ollama and OpenAI-compatible APIs"
 arch=('x86_64')
 url="https://github.com/open-webui/open-webui"
@@ -111,7 +111,7 @@ sha256sums=('e28c4fa997bf0a678caa7a0db6441da2e0c33b9a4120677f959ec3e45fccf9e9'
             '6ec9842298a39f2113d7f248e39eea6eb08c27a745dd33414b2d3299c6e7399c'
             'a45a76bc4d81fafeae69c61a3de2e1dc471e103069f43a03709f474167beedc7'
             'c21fd557c23ed844fc673920add5d17116bce6a9d5f91f8e0461fd2de53bda09'
-            'e255f8e0f0f19ba575330c7f343e3cf3a4ea91a31d05ac21abde1b1144dc78ba'
+            '8fc3ab02ddf480a9fa48150a8861beb66585ab632b933cf7de5db9e2834fc7a2'
             '7670c25ee9a046fc862ee5464b704dc2c40c4ba89764067e632d715c29177b86'
             '8e110af7e0d813a9d72639cf64dfd0e8892f8917d632524ad17a593d73a46c1c'
             '3f458a27a1adb60214a0ea86254099c70a49f8873aed2254aef2ce7978133b9b'
