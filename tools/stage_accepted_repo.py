@@ -18,8 +18,9 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+from collections.abc import Callable
 from pathlib import Path, PurePosixPath
-from typing import NoReturn
+from typing import NoReturn, TypeVar
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -36,6 +37,7 @@ DISPOSITIONS = {"kept-eligible", "knowingly-foreign", "dropped"}
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 COMMIT = re.compile(r"^[0-9a-f]{40}$")
 NAME = re.compile(r"^[a-z0-9@._+][a-z0-9@._+:-]*$")
+T = TypeVar("T")
 
 
 def fail(message: str) -> NoReturn:
@@ -302,10 +304,23 @@ def verify_repository(manifest: dict, repo_dir: Path, repo_name: str) -> list[st
     return errors
 
 
-def manifest_sha256(directory: Path) -> str:
+def document_sha256(document: dict) -> str:
     # Matches `tools/repository_manifest.py DIR | sha256sum` and the publisher.
-    text = json.dumps(repository_manifest(directory), indent=2, sort_keys=True) + "\n"
+    text = json.dumps(document, indent=2, sort_keys=True) + "\n"
     return hashlib.sha256(text.encode()).hexdigest()
+
+
+def manifest_sha256(directory: Path) -> str:
+    return document_sha256(repository_manifest(directory))
+
+
+def read_stable(directory: Path, label: str, read: Callable[[], T]) -> tuple[dict, T]:
+    # The publisher swaps repositories atomically, so bind a read to one snapshot.
+    before = repository_manifest(directory)
+    result = read()
+    if repository_manifest(directory) != before:
+        fail(f"{label} changed while the receipt was being written: {directory.name}")
+    return before, result
 
 
 def pkginfo_identity(path: Path) -> tuple[str, str, str]:
@@ -430,10 +445,18 @@ def receipt(args: argparse.Namespace) -> int:
     repo_name = resolve_repo_name(manifest, args.repo_name)
     if not SHA256.match(args.staging_manifest_sha):
         fail("--staging-manifest-sha must be 64 lowercase hex digits")
-    errors = verify_repository(manifest, args.live_dir, repo_name)
+    if not args.live_dir.is_dir() or args.live_dir.is_symlink():
+        fail(f"--live-dir must be a real directory: {args.live_dir}")
+    # Every live field comes from this one manifest; nothing rereads the directory.
+    live_manifest, errors = read_stable(
+        args.live_dir,
+        "live repository",
+        lambda: verify_repository(manifest, args.live_dir, repo_name),
+    )
     if errors:
         fail("live repository does not match the manifest:\n  " + "\n  ".join(errors))
-    live_manifest_sha = manifest_sha256(args.live_dir)
+    live_manifest_sha = document_sha256(live_manifest)
+    live_entries = {entry["name"]: entry for entry in live_manifest["entries"]}
     if live_manifest_sha != args.staging_manifest_sha:
         fail(
             "live repository-manifest SHA-256 does not match the publisher-verified "
@@ -449,17 +472,22 @@ def receipt(args: argparse.Namespace) -> int:
         if not args.previous_dir.is_dir() or args.previous_dir.is_symlink():
             fail(f"--previous-dir must be a real directory: {args.previous_dir}")
         previous_database = args.previous_dir / f"{repo_name}.db.tar.zst"
-        previous_records: set[tuple] = set()
-        # A previous copy without a database held no pacman repository.
-        if os.path.lexists(previous_database):
-            previous_records, previous_errors = database_records(
-                previous_database, require_files=False
-            )
+
+        def read_previous_records() -> set[tuple]:
+            # A previous copy without a database held no pacman repository.
+            if not os.path.lexists(previous_database):
+                return set()
+            records, previous_errors = database_records(previous_database, require_files=False)
             if previous_errors:
                 fail("previous repository index is unreadable:\n  " + "\n  ".join(previous_errors))
+            return records
+
+        previous_manifest, previous_records = read_stable(
+            args.previous_dir, "previous copy", read_previous_records
+        )
         previous_copy = {
             "name": args.previous_dir.name,
-            "repository_manifest_sha256": manifest_sha256(args.previous_dir),
+            "repository_manifest_sha256": document_sha256(previous_manifest),
             "records": [record_json(record) for record in sorted(previous_records)],
         }
 
@@ -468,9 +496,7 @@ def receipt(args: argparse.Namespace) -> int:
         "repository": manifest["repository"],
         "accepted_manifest_sha256": hashlib.sha256(raw).hexdigest(),
         "database": {
-            f"{repo_name}.{suffix}.tar.zst": sha256_file(
-                args.live_dir / f"{repo_name}.{suffix}.tar.zst"
-            )
+            f"{repo_name}.{suffix}.tar.zst": live_entries[f"{repo_name}.{suffix}.tar.zst"]["sha256"]
             for suffix in ("db", "files")
         },
         "published_records": [record_json(record) for record in sorted(expected_records(manifest))],
