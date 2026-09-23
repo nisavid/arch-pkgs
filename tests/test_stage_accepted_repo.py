@@ -1,4 +1,6 @@
+import errno
 import hashlib
+import importlib.util
 import io
 import json
 import shutil
@@ -9,6 +11,7 @@ import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -120,10 +123,11 @@ class StageAcceptedRepoTests(unittest.TestCase):
         self.manifest_path.write_text(json.dumps(document, indent=2) + "\n")
         return self.manifest_path
 
-    def _run(self, *args: str) -> subprocess.CompletedProcess[str]:
+    def _run(self, *args: str, input: str | None = None) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             [sys.executable, str(STAGER), *args],
             cwd=REPO_ROOT,
+            input=input,
             text=True,
             capture_output=True,
             check=False,
@@ -146,6 +150,19 @@ class StageAcceptedRepoTests(unittest.TestCase):
         return self._run(
             "verify", "--manifest", str(self.manifest_path), "--repo-dir", str(repo_dir)
         )
+
+    def _receipt(self, live: Path, *extra: str) -> dict:
+        output = self.root / "receipt.json"
+        result = self._run(
+            "receipt",
+            "--manifest", str(self.manifest_path),
+            "--staging-manifest-sha", self._manifest_sha(live),
+            "--live-dir", str(live),
+            "--output", str(output),
+            *extra,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return json.loads(output.read_text())
 
     def _staged(self) -> Path:
         result = self._stage()
@@ -197,6 +214,46 @@ class StageAcceptedRepoTests(unittest.TestCase):
             f"Repository-manifest SHA-256: {self._manifest_sha(self.staging)}",
             result.stdout,
         )
+
+    def test_prints_the_sha_of_the_manifest_bytes_it_validated(self):
+        text = self._write_manifest().read_text()
+        self.manifest_path.unlink()
+
+        result = self._run(
+            "stage",
+            "--manifest", "/dev/stdin",
+            "--store-root", str(self.store),
+            "--repo-dir", str(self.staging),
+            input=text,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(
+            f"Accepted manifest SHA-256: {hashlib.sha256(text.encode()).hexdigest()}",
+            result.stdout,
+        )
+
+    def test_releases_writer_lock_when_work_directory_creation_fails(self):
+        spec = importlib.util.spec_from_file_location("stage_accepted_repo", STAGER)
+        stager = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(stager)
+        manifest = self._write_manifest()
+        full = OSError(errno.ENOSPC, "No space left on device")
+
+        with (
+            mock.patch.object(stager.tempfile, "mkdtemp", side_effect=full),
+            self.assertRaises(OSError),
+        ):
+            stager.main(
+                [
+                    "stage",
+                    "--manifest", str(manifest),
+                    "--store-root", str(self.store),
+                    "--repo-dir", str(self.staging),
+                ]
+            )
+
+        self.assertEqual(list(self.staging.parent.iterdir()), [])
 
     def test_refuses_size_mismatch(self):
         archives = [dict(self.archives[0], size=self.archives[0]["size"] + 1), self.archives[1]]
@@ -352,6 +409,45 @@ class StageAcceptedRepoTests(unittest.TestCase):
         data[-1] ^= 0xFF
         target.write_bytes(bytes(data))
         self._assert_refused(self._verify(live), "archive bytes do not match the manifest")
+
+    def test_verify_refuses_index_whose_size_and_sha_describe_other_bytes(self):
+        live = self._staged()
+        accepted = live / self.archives[0]["filename"]
+        accepted_bytes = accepted.read_bytes()
+        shutil.copyfile(self.store / "lane-a" / "decoy" / accepted.name, accepted)
+        subprocess.run(
+            ["repo-add", "-q", str(live / "nisavid.db.tar.zst"), str(accepted)],
+            capture_output=True,
+            check=True,
+        )
+        for path in live.glob("*.old"):
+            path.unlink()
+        accepted.write_bytes(accepted_bytes)
+
+        self._assert_refused(
+            self._verify(live), f"manifest archive is not indexed: {accepted.name}"
+        )
+
+    def test_receipt_records_no_previous_copy_when_none_was_retained(self):
+        live = self._staged()
+
+        self.assertIsNone(self._receipt(live)["previous_copy"])
+
+    def test_receipt_records_an_empty_previous_copy_without_a_database(self):
+        live = self._staged()
+        previous = self.root / "published" / "x86_64.previous.20260922T000000Z.1234"
+        previous.mkdir(parents=True)
+
+        receipt = self._receipt(live, "--previous-dir", str(previous))
+
+        self.assertEqual(
+            receipt["previous_copy"],
+            {
+                "name": previous.name,
+                "repository_manifest_sha256": self._manifest_sha(previous),
+                "records": [],
+            },
+        )
 
     def test_receipt_records_public_identities_without_private_paths(self):
         live = self._staged()

@@ -333,7 +333,7 @@ def resolve_repo_name(manifest: dict, requested: str | None) -> str:
 
 
 def stage(args: argparse.Namespace) -> int:
-    manifest = load_manifest(args.manifest)[0]
+    manifest, raw = load_manifest(args.manifest)
     repo_name = resolve_repo_name(manifest, args.repo_name)
     store_root = args.store_root.resolve(strict=True)
     repo_dir = args.repo_dir.absolute()
@@ -348,8 +348,9 @@ def stage(args: argparse.Namespace) -> int:
         writer_lock.mkdir()
     except FileExistsError:
         fail(f"repository writer lock is held: {writer_lock}")
-    work = Path(tempfile.mkdtemp(prefix=f".{repo_dir.name}.stage.", dir=repo_dir.parent))
+    work: Path | None = None
     try:
+        work = Path(tempfile.mkdtemp(prefix=f".{repo_dir.name}.stage.", dir=repo_dir.parent))
         umask = os.umask(0)
         os.umask(umask)
         work.chmod(0o777 & ~umask)
@@ -389,6 +390,8 @@ def stage(args: argparse.Namespace) -> int:
         errors = verify_repository(manifest, work, repo_name)
         if errors:
             fail("staged repository does not match the manifest:\n  " + "\n  ".join(errors))
+        # The manifest covers only the entries, so the rename cannot change it.
+        repository_manifest_sha = manifest_sha256(work)
         try:
             os.rename(work, repo_dir)
         except OSError as error:
@@ -396,13 +399,13 @@ def stage(args: argparse.Namespace) -> int:
                 fail(f"--repo-dir became nonempty during staging: {repo_dir}")
             raise
     finally:
-        if work.exists():
+        if work is not None and work.exists():
             shutil.rmtree(work)
         writer_lock.rmdir()
     print(f"Staged accepted repository: {repo_dir}")
     print(f"Archives: {len(manifest['archives'])}")
-    print(f"Accepted manifest SHA-256: {sha256_file(args.manifest)}")
-    print(f"Repository-manifest SHA-256: {manifest_sha256(repo_dir)}")
+    print(f"Accepted manifest SHA-256: {hashlib.sha256(raw).hexdigest()}")
+    print(f"Repository-manifest SHA-256: {repository_manifest_sha}")
     return 0
 
 
@@ -436,17 +439,29 @@ def receipt(args: argparse.Namespace) -> int:
             "live repository-manifest SHA-256 does not match the publisher-verified "
             f"staging manifest: {live_manifest_sha}"
         )
-    if not args.previous_dir.is_dir() or args.previous_dir.is_symlink():
-        fail(f"--previous-dir must be a real directory: {args.previous_dir}")
-    previous_records, previous_errors = database_records(
-        args.previous_dir / f"{repo_name}.db.tar.zst", require_files=False
-    )
-    if previous_errors:
-        fail("previous repository index is unreadable:\n  " + "\n  ".join(previous_errors))
 
     def record_json(record: tuple) -> dict:
         keys = ("package", "version", "arch", "filename", "size", "sha256")
         return dict(zip(keys, record))
+
+    previous_copy = None
+    if args.previous_dir is not None:
+        if not args.previous_dir.is_dir() or args.previous_dir.is_symlink():
+            fail(f"--previous-dir must be a real directory: {args.previous_dir}")
+        previous_database = args.previous_dir / f"{repo_name}.db.tar.zst"
+        previous_records: set[tuple] = set()
+        # A previous copy without a database held no pacman repository.
+        if os.path.lexists(previous_database):
+            previous_records, previous_errors = database_records(
+                previous_database, require_files=False
+            )
+            if previous_errors:
+                fail("previous repository index is unreadable:\n  " + "\n  ".join(previous_errors))
+        previous_copy = {
+            "name": args.previous_dir.name,
+            "repository_manifest_sha256": manifest_sha256(args.previous_dir),
+            "records": [record_json(record) for record in sorted(previous_records)],
+        }
 
     document = {
         "schema": RECEIPT_SCHEMA,
@@ -461,11 +476,7 @@ def receipt(args: argparse.Namespace) -> int:
         "published_records": [record_json(record) for record in sorted(expected_records(manifest))],
         "publisher_verified_manifest_sha256": args.staging_manifest_sha,
         "live_repository_manifest_sha256": live_manifest_sha,
-        "previous_copy": {
-            "name": args.previous_dir.name,
-            "repository_manifest_sha256": manifest_sha256(args.previous_dir),
-            "records": [record_json(record) for record in sorted(previous_records)],
-        },
+        "previous_copy": previous_copy,
         "identity_dispositions": manifest.get("dispositions", []),
     }
     if "catalog_commit" in manifest:
@@ -499,7 +510,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     receipt_parser.add_argument("--manifest", type=Path, required=True)
     receipt_parser.add_argument("--staging-manifest-sha", required=True)
     receipt_parser.add_argument("--live-dir", type=Path, required=True)
-    receipt_parser.add_argument("--previous-dir", type=Path, required=True)
+    receipt_parser.add_argument(
+        "--previous-dir",
+        type=Path,
+        help="the copy the publisher printed as 'Retained previous pacman repo'; "
+        "omit it when the publisher retained none",
+    )
     receipt_parser.add_argument("--repo-name")
     receipt_parser.add_argument("--output", type=Path)
     receipt_parser.set_defaults(handler=receipt)
