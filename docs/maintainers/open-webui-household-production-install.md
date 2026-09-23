@@ -111,12 +111,14 @@ kept until
   sudo sh -c 'if [ -d /var/lib/open-webui ]; then find /var/lib/open-webui -depth -type d -empty -delete; fi'
   sudo mv -T /var/lib/open-webui.legacy-0.11.0-1 /var/lib/open-webui
   sudo sh -c 'test -f /var/lib/open-webui/webui.db || test -f /var/lib/open-webui/data/webui.db' && echo restored && sudo systemctl enable --now open-webui.service
+  timeout 180 sh -c 'until curl -sf http://127.0.0.1:8080/health >/dev/null; do systemctl -q is-failed open-webui.service && exit 1; [ "$(systemctl show -P SubState open-webui.service)" = auto-restart ] && exit 1; sleep 2; done' && echo up
   ```
 
-  It must print `restored`, and then `systemctl is-active open-webui.service`
-  must print `active`. If it does not print `restored`, stop: the legacy
-  state is still at `/var/lib/open-webui.legacy-0.11.0-1` or already in
-  place, and the lead decides the next step.
+  It must print `restored` and then `up`, which waits until the old service
+  answers on `:8080` and stops early if it fails or starts restarting. If it
+  does not print `restored`, stop: the legacy state is still at
+  `/var/lib/open-webui.legacy-0.11.0-1` or already in place, and the lead
+  decides the next step.
 
 - HAND-BACK: `HAND-BACK: open-webui P0 legacy stopped and retained`
 - Agent: `systemctl is-active open-webui.service` is inactive, and
