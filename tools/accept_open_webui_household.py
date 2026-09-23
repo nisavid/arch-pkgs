@@ -1601,7 +1601,8 @@ def legacy_service_state() -> dict[str, str]:
 
     out = run(["systemctl", "show", "open-webui.service", "--property=ActiveState",
                "--property=UnitFileState", "--property=ActiveEnterTimestampMonotonic"], check=False).stdout
-    return dict(line.partition("=")[::2] for line in out.decode().splitlines() if "=" in line)
+    pairs = (line.partition("=") for line in out.decode().splitlines() if "=" in line)
+    return {key: value for key, _, value in pairs}
 
 
 def acceptance_listeners_on(port: int, kit: Kit) -> bool:
@@ -2336,13 +2337,17 @@ _GATE_DETAIL: str | None = None
 
 def _rag_unavailable_detail() -> str:
     global _GATE_DETAIL
-    if _GATE_DETAIL is None:
-        source = sc.RAG_GATE.read_text(encoding="utf-8")
-        match = re.search(r"^RAG_UNAVAILABLE_DETAIL = (\(.*?\n\))$", source, re.MULTILINE | re.DOTALL)
-        if match is None:
-            raise RuntimeError("the packaged RAG gate no longer defines RAG_UNAVAILABLE_DETAIL")
-        _GATE_DETAIL = ast.literal_eval(match.group(1))
-    return _GATE_DETAIL
+    if _GATE_DETAIL is not None:
+        return _GATE_DETAIL
+    source = sc.RAG_GATE.read_text(encoding="utf-8")
+    match = re.search(r"^RAG_UNAVAILABLE_DETAIL = (\(.*?\n\))$", source, re.MULTILINE | re.DOTALL)
+    if match is None:
+        raise RuntimeError("the packaged RAG gate no longer defines RAG_UNAVAILABLE_DETAIL")
+    detail = ast.literal_eval(match.group(1))
+    if not isinstance(detail, str):
+        raise RuntimeError("the packaged RAG gate's RAG_UNAVAILABLE_DETAIL is not a string")
+    _GATE_DETAIL = detail
+    return detail
 
 
 def cache_inventory(kit: Kit) -> list[str]:
@@ -2435,6 +2440,7 @@ def preflight_facts(kit: Kit, *, probe_only: bool) -> tuple[dict[str, Any], list
         refusals.append(f"ports in use: {', '.join(map(str, busy))}")
     if kit.whisper_model not in WHISPER_PINS:
         refusals.append(f"NEEDS LEAD: no pinned revision for Whisper model {kit.whisper_model}")
+    packaged: dict[str, str] | None = None
     if kit.manifest_path is None:
         refusals.append("--manifest is required")
     else:
@@ -2443,14 +2449,14 @@ def preflight_facts(kit: Kit, *, probe_only: bool) -> tuple[dict[str, Any], list
             report["manifest_source_commit"] = manifest["source_commit"]
             located = {}
             for record in manifest["deployed"]:
-                path = locate_archive(kit, record["name"])
+                path = locate_archive(kit, record)
                 if path is None:
                     refusals.append(f"missing pinned archive {record['name']}")
                     continue
                 verify_archive(path, record)
                 located[record["name"]] = "ok"
             report["archives"] = located
-            packaged = packaged_env_from_archive(locate_archive(kit, manifest["deployed"][0]["name"]))
+            packaged = packaged_env_from_archive(locate_archive(kit, manifest["deployed"][0]))
             report["packaged_models"] = [packaged["RAG_EMBEDDING_MODEL"], packaged["RAG_RERANKING_MODEL"]]
             mismatch = provider_mismatch(kit, packaged)
             if mismatch:
@@ -2487,15 +2493,29 @@ def preflight_facts(kit: Kit, *, probe_only: bool) -> tuple[dict[str, Any], list
     return report, refusals
 
 
-def locate_archive(kit: Kit, name: str) -> Path | None:
+def locate_archive(kit: Kit, record: Mapping[str, Any]) -> Path | None:
+    """Find one manifest archive: the staged input, else the store file with its bytes.
+
+    The candidate store keeps superseded builds under the same file name, so
+    a store match must equal the record's size and SHA-256.  When none does,
+    the first name match is returned and ``verify_archive`` reports why.
+    """
+
+    name = record["name"]
     staged = kit.path("inputs", name)
     if staged.is_file():
         return staged
-    if kit.candidate_store.is_dir():
-        for candidate in sorted(kit.candidate_store.rglob(name)):
-            if candidate.is_file() and not candidate.is_symlink():
-                return candidate
-    return None
+    if not kit.candidate_store.is_dir():
+        return None
+    matches = [
+        candidate
+        for candidate in sorted(kit.candidate_store.rglob(name))
+        if candidate.is_file() and not candidate.is_symlink()
+    ]
+    for candidate in matches:
+        if candidate.stat().st_size == record["size"] and sha256_file(candidate) == record["sha256"]:
+            return candidate
+    return matches[0] if matches else None
 
 
 def packaged_env_from_archive(archive: Path | None) -> dict[str, str]:
@@ -2628,7 +2648,7 @@ def cmd_stage(kit: Kit, args: argparse.Namespace) -> int:
     manifest = load_manifest(kit.manifest_path)
     archives = []
     for record in manifest["deployed"]:
-        source = locate_archive(kit, record["name"])
+        source = locate_archive(kit, record)
         assert source is not None
         target = kit.path("inputs", record["name"])
         if source != target:

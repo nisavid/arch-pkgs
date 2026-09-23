@@ -52,6 +52,14 @@ rehearsal may run earlier.
    its tree-id equality check or by rebuilding. The kit reads that manifest
    (`--manifest`); it never reads a directory listing. Because only one trial
    set is allowed, running it on non-record bytes would waste it.
+   The current pre-merge candidate is `open-webui-0.11.0-5-x86_64.pkg.tar.zst`
+   (240005632 bytes, SHA-256
+   `258fbec247ce17c670256efd8f9cadeda542142233105b04261879fe0dc477fa`), built
+   from `dd9a307` and kept in the candidate store's `open-webui/dd9a307/`
+   directory. Its `python-rapidocr` archive stays the `f25fd53` build, because
+   that package tree is unchanged. The store also keeps superseded archives
+   under the same names, so the kit picks the store file whose size and
+   SHA-256 match the manifest record, never the first name match.
 3. **The build root.** A user-owned directory on a filesystem below 80% use.
    The preferred root is `/srv/build/arch-pkgs-owui-acceptance`, once the
    owner has created `/srv/build`. Any other filesystem needs lead or owner
@@ -92,7 +100,7 @@ committed; the evidence records each value used.
 | `--root DIR` | `/srv/build/arch-pkgs-owui-acceptance` | Disposable acceptance root. It holds a `.owui-acceptance` marker, and teardown deletes only a marked root. |
 | `--manifest FILE` | none; required | The candidate manifest of record from the build ticket (name, size, SHA-256, source commit). |
 | `--lemond-url URL` | `http://127.0.0.1:13305` | Lemonade base URL. Only `GET /api/v1/health`, `GET /api/v1/models`, and inference requests are sent. In record mode it must be the provider origin of the packaged `open-webui.env` (`RAG_OPENAI_API_BASE_URL` and `RAG_EXTERNAL_RERANKER_URL`); otherwise preflight and every re-entry exit 75. |
-| `--chat-model ID` | none; the lead designates it | The resident chat model used for ordinary chat and the cited answer. |
+| `--chat-model ID` | none; the lead designates it | The resident chat model used for ordinary chat and the cited answer. The proposed value, awaiting owner confirmation, is `Qwen3.6-35B-A3B-MTP-GGUF-UD-Q4_K_XL`. |
 | `--embedding-model ID` | the packaged env's `RAG_EMBEDDING_MODEL` | zembed id that must be served and loaded. |
 | `--reranking-model ID` | the packaged env's `RAG_RERANKING_MODEL` | zerank id that must be served and loaded. |
 | `--whisper-model NAME` | `tiny` | Whisper size; the pinned revision and `model.bin` SHA-256 are recorded. |
@@ -218,10 +226,12 @@ its key set to:
 - `RAG_EXTERNAL_RERANKER_URL` pointing at the reranker relay on port 13306,
   which forwards bytes unchanged to the provider and lets the trial stop the
   reranker without touching Lemonade;
-- the connection seed, exactly three keys: `ENABLE_OLLAMA_API=false`,
-  `OPENAI_API_BASE_URLS=<lemond-url>/api/v1`, and `OPENAI_API_KEYS=` (empty).
-  The seed becomes a package default in a later package revision; the kit
-  works with either revision because it reads the manifest.
+- any connection-seed key whose packaged value differs from the kit's seed
+  (`ENABLE_OLLAMA_API=false`, `OPENAI_API_BASE_URLS=<lemond-url>/api/v1`, and
+  an empty `OPENAI_API_KEYS`). Open WebUI 0.11.0-5 packages that seed for the
+  default Lemonade origin, so the record overlay carries none of these keys and
+  the rehearsal overlay carries only `OPENAI_API_BASE_URLS` for the stub. An
+  older package without the seed gets all three.
 
 The local Whisper settings are not overlay keys. The derived unit sets
 `WHISPER_MODEL=<whisper-model>` and `HF_HUB_OFFLINE=1` as `Environment=`

@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import measure_open_webui_household as v1  # noqa: E402
 
 EMBEDDING_MODEL = "zembed-1-Q4_K_M-GGUF-Q4_K_M"
-RERANKING_MODEL = "zerank-2-GGUF-Q8_0"
+RERANKING_MODEL = "zerank-2-GGUF"
 CHAT_MODEL = "household-chat-stub-v1"
 MODELS = (EMBEDDING_MODEL, RERANKING_MODEL, CHAT_MODEL)
 QUERY_HEAD = "<|im_start|>system\nquery<|im_end|>\n<|im_start|>user\n"
@@ -264,7 +264,7 @@ class StubRequestHandler(BaseHTTPRequestHandler):
             self._json(error.status, {"error": {"message": str(error)}})
             self._log_request(error.status, extra)
 
-    def log_message(self, _format: str, *_args: Any) -> None:
+    def log_message(self, format: str, *args: Any) -> None:
         return
 
 

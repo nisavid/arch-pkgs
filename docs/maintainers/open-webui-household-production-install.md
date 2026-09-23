@@ -3,7 +3,7 @@
 This is the owner handoff for
 [Deploy the accepted Open WebUI household stack](https://github.com/nisavid/arch-pkgs/issues/59).
 It replaces the host's out-of-band `open-webui` 0.11.0-1 with the published
-0.11.0-4 identity behind a Caddy HTTPS route to the service's Unix socket. The
+0.11.0-5 identity behind a Caddy HTTPS route to the service's Unix socket. The
 former state is retained, never migrated.
 
 Every privileged step belongs to the owner. Each phase lists its exact
@@ -15,11 +15,11 @@ helpers and the Qdrant cutover route from
 
 Placeholders: `<kit-checkout>` is a root-readable checkout of this repository
 at the kit commit recorded in the acceptance evidence; `<root>` is the kept
-acceptance root; `<chat-model>` and `<whisper-model>` are the lead's choices;
-`<whisper-revision>` is the Whisper revision pinned in the acceptance evidence;
-`<provider-base-url>` is the `RAG_OPENAI_API_BASE_URL` value in the installed
-`/etc/open-webui/open-webui.env`; `<household-origin>` is the owner's HTTPS
-origin.
+acceptance root; `<chat-model>` and `<whisper-model>` are the lead's choices
+(the proposed `<chat-model>`, awaiting owner confirmation, is
+`Qwen3.6-35B-A3B-MTP-GGUF-UD-Q4_K_XL`); `<whisper-revision>` is the Whisper
+revision pinned in the acceptance evidence; `<household-origin>` is the
+owner's HTTPS origin.
 
 ## Preconditions
 
@@ -32,7 +32,7 @@ The agent checks these read-only before the window opens:
   promoted the stack.
 - [Publish the accepted-only package repository](https://github.com/nisavid/arch-pkgs/issues/57)
   is done: `pacman -Si nisavid/open-webui nisavid/python-rapidocr nisavid/python-faster-whisper`
-  shows 0.11.0-4, 3.9.2-1, and 1.2.1-1, and the sync-database SHA-256 values
+  shows 0.11.0-5, 3.9.2-1, and 1.2.1-1, and the sync-database SHA-256 values
   equal the candidate manifest.
 - The Qdrant cutover route has merged:
   [feat(qdrant): add production cutover route and rebind accepted candidates](https://github.com/nisavid/arch-pkgs/pull/93).
@@ -120,11 +120,11 @@ and reinstall `python-rapidocr-onnxruntime` with `sudo pacman -U` only if its
 archive is still in the package cache. The service stays closed; the former
 package is not a rollback target.
 
-- HAND-BACK: `HAND-BACK: open-webui P2 installed 0.11.0-4`
+- HAND-BACK: `HAND-BACK: open-webui P2 installed 0.11.0-5`
 - Agent:
   - `pacman -Q open-webui python-rapidocr python-faster-whisper` shows the
     published versions;
-  - `sha256sum /var/cache/pacman/pkg/{open-webui-0.11.0-4-x86_64,python-rapidocr-3.9.2-1-any,python-faster-whisper-1.2.1-1-any}.pkg.tar.zst`
+  - `sha256sum /var/cache/pacman/pkg/{open-webui-0.11.0-5-x86_64,python-rapidocr-3.9.2-1-any,python-faster-whisper-1.2.1-1-any}.pkg.tar.zst`
     equals the promotion record;
   - `pacman -Q python-rapidocr-onnxruntime` fails;
   - `pacman -Qi caddy python-omegaconf python-antlr4` succeeds;
@@ -218,37 +218,29 @@ sudo test -s /etc/credstore.encrypted/open-webui.qdrant-runtime-api-key && echo 
 
 ### P3.4 Connection seed and speech settings
 
-Install this before the first start. The connection seed is exactly three
-keys: `ENABLE_OLLAMA_API=false`, `OPENAI_API_BASE_URLS`, and an empty
-`OPENAI_API_KEYS`. In Open WebUI 0.11 they are persistent-config seeds: they
-apply on first start, and later edits need an admin re-save. The drop-in adds
-a second environment file, which wins over the packaged one.
+The packaged `open-webui.env` carries the chat connection seed from 0.11.0-5
+on: exactly `ENABLE_OLLAMA_API=false`,
+`OPENAI_API_BASE_URLS=http://127.0.0.1:13305/api/v1`, and an empty
+`OPENAI_API_KEYS`. No seed file is installed. In Open WebUI 0.11 these are
+persistent-config seeds: they apply on first start, and later edits need an
+admin re-save.
 
-The drop-in also sets the two local Whisper settings the acceptance unit
+The drop-in sets only the two local Whisper settings the acceptance unit
 carried: `WHISPER_MODEL` and `HF_HUB_OFFLINE=1`, so a Whisper load failure can
 never fall back to the network. They are not part of the seed.
 
-First check what the installed env already sets (a later package revision
-makes the seed a default). An environment file overrides `Environment=`, so if
-it sets `WHISPER_MODEL` or `HF_HUB_OFFLINE` to another value, stop and ask the
-lead:
+Install this before the first start. First confirm the installed env: it must
+print the three seed lines above and nothing for `WHISPER_MODEL` or
+`HF_HUB_OFFLINE`. An environment file overrides `Environment=`, so if it sets
+either Whisper key, or a seed value differs, stop and ask the lead:
 
 ```bash
 sudo grep -E '^(ENABLE_OLLAMA_API|OPENAI_API_BASE_URLS|OPENAI_API_KEYS|WHISPER_MODEL|HF_HUB_OFFLINE)=' /etc/open-webui/open-webui.env
 ```
 
-Write only the seed keys it does not already set:
-
 ```bash
-sudo install -m 0600 /dev/stdin /etc/open-webui/open-webui.connections.env <<'EOF'
-ENABLE_OLLAMA_API=false
-OPENAI_API_BASE_URLS=<provider-base-url>
-OPENAI_API_KEYS=
-EOF
-
-sudo install -D -m 0644 /dev/stdin /etc/systemd/system/open-webui.service.d/20-connections.conf <<'EOF'
+sudo install -D -m 0644 /dev/stdin /etc/systemd/system/open-webui.service.d/20-speech.conf <<'EOF'
 [Service]
-EnvironmentFile=/etc/open-webui/open-webui.connections.env
 Environment=WHISPER_MODEL=<whisper-model>
 Environment=HF_HUB_OFFLINE=1
 EOF
@@ -256,7 +248,7 @@ sudo systemctl daemon-reload
 ```
 
 - Rollback (before P4 only):
-  `sudo rm /etc/open-webui/open-webui.connections.env /etc/systemd/system/open-webui.service.d/20-connections.conf && sudo systemctl daemon-reload`
+  `sudo rm /etc/systemd/system/open-webui.service.d/20-speech.conf && sudo systemctl daemon-reload`
 
 ### P3.5 Session epoch
 
@@ -293,7 +285,7 @@ evidence.
 
 - HAND-BACK: `HAND-BACK: open-webui P3 credentials, valkey, epoch ready`
 - Agent: `systemctl show open-webui.service -p DropInPaths` lists
-  `20-connections.conf`, and the P3.2 Valkey checks pass.
+  `20-speech.conf`, and the P3.2 Valkey checks pass.
 
 ## P4: closed-route commissioning
 
@@ -416,14 +408,14 @@ Close the route and quiesce writers, copy the state tuple, then reopen.
 Valkey saves its RDB when it stops.
 
 ```bash
-a=/var/lib/arch-pkgs-anchors/open-webui-0.11.0-4-$(date -u +%Y%m%dT%H%M%SZ)
+a=/var/lib/arch-pkgs-anchors/open-webui-0.11.0-5-$(date -u +%Y%m%dT%H%M%SZ)
 sudo install -d -m 0700 "$a" "$a/credstore" "$a/archives" "$a/qdrant"
 sudo systemctl stop caddy.service open-webui.service valkey.service
 sudo cp -a /var/lib/open-webui/data "$a/open-webui-data"
 sudo cp -a /var/lib/valkey/open-webui/dump.rdb "$a/"
 sudo sh -c 'cp -a /etc/credstore.encrypted/open-webui.* "$1/credstore/"' sh "$a"
 sudo /usr/lib/open-webui/open-webui-session-epoch-ledger current | sudo tee "$a/epoch-bound"
-sudo cp -a /var/cache/pacman/pkg/{open-webui-0.11.0-4-x86_64,python-rapidocr-3.9.2-1-any,python-faster-whisper-1.2.1-1-any}.pkg.tar.zst "$a/archives/"
+sudo cp -a /var/cache/pacman/pkg/{open-webui-0.11.0-5-x86_64,python-rapidocr-3.9.2-1-any,python-faster-whisper-1.2.1-1-any}.pkg.tar.zst "$a/archives/"
 ```
 
 With Open WebUI stopped, take the five collection snapshots with the Qdrant
@@ -469,7 +461,7 @@ Then, signed in as the admin:
 3. Restore the packaged reranker URL and save. Retrieval health returns 200,
    and a cited answer carries a finite score.
 
-- HAND-BACK: `HAND-BACK: open-webui verify PASSED on 0.11.0-4`
+- HAND-BACK: `HAND-BACK: open-webui verify PASSED on 0.11.0-5`
 
 ## Agent post-verification
 
@@ -498,7 +490,7 @@ The acceptance trial values are the baseline.
   sudo systemctl stop open-webui.service
   sudo /usr/lib/open-webui/open-webui-session-epoch-ledger reserve
   sudo sh -c 'cd "$1" && sha256sum -c SHA256SUMS' sh <anchor>
-  sudo pacman -U <anchor>/archives/{open-webui-0.11.0-4-x86_64,python-rapidocr-3.9.2-1-any,python-faster-whisper-1.2.1-1-any}.pkg.tar.zst
+  sudo pacman -U <anchor>/archives/{open-webui-0.11.0-5-x86_64,python-rapidocr-3.9.2-1-any,python-faster-whisper-1.2.1-1-any}.pkg.tar.zst
   ```
 
   Then restore the tuple: stop Valkey and replace its `dump.rdb`, replace
