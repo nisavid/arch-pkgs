@@ -178,8 +178,9 @@ The last output line starts with `HAND-BACK:`. It reports completion, or the
 failing stage and the next commands to run. For a failure after the rollback
 set is saved, it names both the rollback command and the re-entry command.
 An interrupt (INT, TERM, or HUP) removes the private directory that holds the
-admin and runtime headers, then prints a `HAND-BACK:` line that names both
-commands. Every printed command uses the script's absolute path and carries
+admin and runtime headers, then prints a `HAND-BACK:` line. During
+`stop 1.17.1` or `save rollback set`, that line gives the same restart
+guidance as a failure in that stage. Later, it names both commands. Every printed command uses the script's absolute path and carries
 every non-default option of the run, such as `--rollback-root`, `--pkg-cache`,
 `--credstore`, `--repo`, and `--url`.
 
