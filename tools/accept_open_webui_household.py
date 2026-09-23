@@ -2462,6 +2462,24 @@ def cache_inventory(kit: Kit) -> list[str]:
     return sorted(files)
 
 
+CREDENTIAL_FALLBACK_CONDITION = "credentials: 0400-file fallback; systemd-creds --user unavailable"
+
+
+def trial_conditions(kit: Kit) -> list[str]:
+    """Host conditions the trial ran under; recorded, never a failure."""
+
+    return [] if kit.credential_route() == "systemd-creds" else [CREDENTIAL_FALLBACK_CONDITION]
+
+
+def private_credstore(path: Path) -> None:
+    """Hold 0400 credential files in a 0700 directory owned by the operator."""
+
+    os.chmod(path, 0o700)
+    for item in path.iterdir():
+        if item.is_file():
+            os.chmod(item, 0o400)
+
+
 def build_evidence(kit: Kit, trial: Trial, exit_code: int, lemond_restarted_: bool) -> dict[str, Any]:
     disposition = (
         "void: Lemonade restarted during the trial"
@@ -2492,6 +2510,7 @@ def build_evidence(kit: Kit, trial: Trial, exit_code: int, lemond_restarted_: bo
         "canonical_citation": sc.CANONICAL_CITATION,
         "limits": dict(LIMITS),
         "credential_route": kit.credential_route(),
+        "conditions": trial_conditions(kit),
         "production_expectation": production_expectation_for(kit),
         "steps": [dataclasses.asdict(step) for step in trial.steps],
     }
@@ -2854,6 +2873,8 @@ def revive_from_anchor(kit: Kit) -> None:
     restage_trees(kit, anchor["archives"])
     remove_tree(kit.credstore)
     shutil.copytree(kit.anchor / "credstore", kit.credstore)
+    if kit.credential_route() != "systemd-creds":
+        private_credstore(kit.credstore)
     create_state_directories(kit)
     place_whisper(kit)
     render_etc(kit)
@@ -2918,8 +2939,10 @@ def cmd_teardown(kit: Kit, args: argparse.Namespace) -> int:
     if keep and state.get("mode") == "rehearsal":
         print("teardown: a rehearsal root is never kept as an anchor; ignoring --keep-anchor")
         keep = False
-    if keep and state.get("credential_route") != "systemd-creds":
-        raise sc.Blocked("--keep-anchor refuses to keep plaintext credential files")
+    plaintext = state.get("credential_route") != "systemd-creds"
+    if keep and plaintext and not args.keep_plaintext_credentials:
+        raise sc.Blocked("--keep-anchor refuses to keep plaintext credential files; "
+                         "pass --keep-plaintext-credentials to keep the test-only 0400 files")
     if keep and not kit.anchor.is_dir():
         raise sc.Blocked("there is no anchor to keep")
     systemctl("stop", kit.slice, check=False)
@@ -2937,6 +2960,9 @@ def cmd_teardown(kit: Kit, args: argparse.Namespace) -> int:
             shutil.copy2(item, args.evidence_out / item.name)
             print(f"evidence copied: {item.name}")
     if keep:
+        if plaintext and (kit.anchor / "credstore").is_dir():
+            private_credstore(kit.anchor / "credstore")
+            print("teardown: kept the test-only 0400 credential files in backups/anchor/credstore")
         kept = {MARKER, KIT_STATE, "inputs", "backups", "ledger"}
         for item in kit.root.iterdir():
             if item.name not in kept:
@@ -2982,8 +3008,19 @@ def _default_candidate_store() -> Path:
 
 
 def slice_name(value: str) -> str:
+    """A plain slice name with a leaf of its own under a parent slice.
+
+    ``down`` and ``teardown`` stop the whole slice, so a top-level slice such
+    as ``builds.slice`` (shared by other lanes' builds) is refused.
+    """
+
     if len(value) > 255 or not _SLICE_NAME.fullmatch(value):
         raise argparse.ArgumentTypeError(f"{value!r} is not a plain systemd slice unit name ending in .slice")
+    if "-" not in value:
+        raise argparse.ArgumentTypeError(
+            f"{value!r} is a top-level slice that other units may share; name a dedicated child "
+            "such as builds-owui_acc.slice, because down and teardown stop the whole slice"
+        )
     return value
 
 
@@ -3020,6 +3057,9 @@ def parser() -> argparse.ArgumentParser:
     resmoke.add_argument("--receipt", type=Path, help="receipt path (default under <root>/evidence/)")
     teardown = commands.add_parser("teardown", parents=[common], help="stop, remove units, remove the marked root")
     teardown.add_argument("--keep-anchor", action="store_true", help="keep backups/anchor and inputs for a later re-smoke")
+    teardown.add_argument("--keep-plaintext-credentials", action="store_true",
+                          help="with --keep-anchor in record mode: keep the test-only 0400 credential files "
+                               "that stage used because systemd-creds --user was unavailable")
     teardown.add_argument("--evidence-out", type=Path, default=REPO_ROOT / "docs" / "maintainers" / "evidence",
                           help="where record-mode public evidence is copied")
     commands.add_parser("_sample", parents=[common], help=argparse.SUPPRESS)
@@ -3029,6 +3069,8 @@ def parser() -> argparse.ArgumentParser:
 def kit_from_args(args: argparse.Namespace) -> Kit:
     if (args.provider == "stub") != args.rehearsal:
         raise ValueError("--provider stub and --rehearsal go together")
+    if getattr(args, "keep_plaintext_credentials", False) and not args.keep_anchor:
+        raise ValueError("--keep-plaintext-credentials is valid only with --keep-anchor")
     runtime = os.environ.get("XDG_RUNTIME_DIR")
     if not runtime:
         raise sc.Blocked("XDG_RUNTIME_DIR is unset; the kit needs a user manager session")
@@ -3048,6 +3090,10 @@ def kit_from_args(args: argparse.Namespace) -> Kit:
     )
     whisper_model = args.whisper_model or staged.get("whisper_model") or sc.DEFAULT_WHISPER_MODEL
     slice_unit = args.slice or staged.get("slice") or SLICE
+    try:
+        slice_name(slice_unit)
+    except argparse.ArgumentTypeError as error:
+        raise ValueError(str(error)) from None
     return Kit(
         root=root,
         manifest_path=args.manifest,
