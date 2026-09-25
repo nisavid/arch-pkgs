@@ -215,6 +215,7 @@ API = MappingProxyType(
         "rag_health": "/api/v1/retrieval/health",
         "rag_config": "/api/v1/retrieval/config",
         "rag_config_update": "/api/v1/retrieval/config/update",
+        "retrieval_query_collection": "/api/v1/retrieval/query/collection",
         "files": "/api/v1/files/",
         "file": "/api/v1/files/{id}",
         "file_status": "/api/v1/files/{id}/process/status",
