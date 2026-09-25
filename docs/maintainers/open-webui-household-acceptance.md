@@ -63,18 +63,21 @@ rehearsal may run earlier.
 
    | Archive | Size (bytes) | SHA-256 |
    | --- | --- | --- |
-   | `open-webui-0.11.0-5-x86_64.pkg.tar.zst` | 240005573 | `bd273be8c33287f7ac3c44592c91005034da8ada886fbd8a480f3dbf7a7e2fc8` |
+   | `open-webui-0.11.0-7-x86_64.pkg.tar.zst` | **pending** | **pending** |
    | `python-rapidocr-3.9.2-1-any.pkg.tar.zst` | 27198440 | `0e70fb599a535f9bb1c0c0b3a2f88abe9993f7632eba8e2c618826c7f01bf99b` |
 
-   The 0.11.0-6 candidate, which adds the `open-webui-tailnet.service`
-   sidecar for the tailnet-only production route, replaces the 0.11.0-5 row
-   as the candidate of record once it is built, merged, and tree-equal. Its
-   size and SHA-256 are **pending** until that build; `python-rapidocr` is
-   unchanged.
+   Open WebUI 0.11.0-7 is the trial candidate. It carries the 0.11.0-6
+   `open-webui-tailnet.service` sidecar for the tailnet-only production route
+   and adds patch 0008, which pages Open WebUI's Qdrant scroll reads at no
+   more than 1000 points per page. Qdrant's strict-mode `max_query_limit`
+   stays at 1000 (owner decision), and an Open WebUI build without 0008 fails
+   the first handbook upload against it. The 0.11.0-7 size and SHA-256 stay
+   **pending** until the candidate is built, merged, and tree-equal;
+   `python-rapidocr` is unchanged.
 
-   The candidate store also keeps superseded archives under the same names
-   (an earlier `open-webui-0.11.0-5` build differs in size and digest), so
-   the kit picks the store file whose size and SHA-256 match the manifest
+   The candidate store also keeps superseded archives, some under the same
+   names (an earlier `open-webui-0.11.0-5` build differs in size and digest),
+   so the kit picks the store file whose size and SHA-256 match the manifest
    record, never the first name match.
 3. **The build root.** A user-owned directory on a filesystem below 80% use.
    The preferred root is `/srv/build/arch-pkgs-owui-acceptance`. Any other
@@ -343,10 +346,10 @@ its key set to:
   reranker without touching Lemonade;
 - any connection-seed key whose packaged value differs from the kit's seed
   (`ENABLE_OLLAMA_API=false`, `OPENAI_API_BASE_URLS=<lemond-url>/api/v1`, and
-  an empty `OPENAI_API_KEYS`). Open WebUI 0.11.0-5 packages that seed for the
-  default Lemonade origin, so the record overlay carries none of these keys and
-  the rehearsal overlay carries only `OPENAI_API_BASE_URLS` for the stub. An
-  older package without the seed gets all three.
+  an empty `OPENAI_API_KEYS`). From 0.11.0-5 on, the Open WebUI package carries
+  that seed for the default Lemonade origin, so the record overlay carries none
+  of these keys and the rehearsal overlay carries only `OPENAI_API_BASE_URLS`
+  for the stub. An older package without the seed gets all three.
 
 The local Whisper settings are not overlay keys. The derived unit sets
 `WHISPER_MODEL=<whisper-model>` and `HF_HUB_OFFLINE=1` as `Environment=`

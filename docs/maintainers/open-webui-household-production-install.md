@@ -3,7 +3,7 @@
 This is the owner handoff for
 [Deploy the accepted Open WebUI household stack](https://github.com/nisavid/arch-pkgs/issues/59).
 It replaces the host's out-of-band `open-webui` 0.11.0-1 with the published
-0.11.0-6 identity, served on the tailnet only: the package's
+0.11.0-7 identity, served on the tailnet only: the package's
 `open-webui-tailnet.service` sidecar runs Tailscale Serve and proxies straight
 to the service's Unix socket. The former state is retained, never migrated.
 
@@ -43,13 +43,14 @@ The agent checks these read-only before the window opens:
   promoted the stack.
 - [Publish the accepted-only package repository](https://github.com/nisavid/arch-pkgs/issues/57)
   is done: `pacman -Si nisavid/open-webui nisavid/python-rapidocr nisavid/python-faster-whisper`
-  shows 0.11.0-6, 3.9.2-1, and 1.2.1-1, and the sync-database SHA-256 values
+  shows 0.11.0-7, 3.9.2-1, and 1.2.1-1, and the sync-database SHA-256 values
   equal the candidate manifest.
-- The 0.11.0-6 candidate, which adds the tailnet sidecar, replaces 0.11.0-5
-  as the candidate of record once it is built, merged, and tree-equal. Its
-  archive is `open-webui-0.11.0-6-x86_64.pkg.tar.zst`, size
-  **`<pending>`** bytes, SHA-256 **`<pending>`**; both are recorded when the
-  candidate is built.
+- The candidate of record is 0.11.0-7. It carries the 0.11.0-6 tailnet
+  sidecar and adds patch 0008, which pages Open WebUI's Qdrant scroll reads
+  under Qdrant's unchanged strict-mode `max_query_limit` of 1000. Its archive
+  is `open-webui-0.11.0-7-x86_64.pkg.tar.zst`, size **`<pending>`** bytes,
+  SHA-256 **`<pending>`**; both are recorded when the candidate is built,
+  merged, and tree-equal.
 - `<kit-checkout>` carries the Qdrant cutover route,
   `tools/qdrant_production_cutover.zsh`, and its
   [runbook](qdrant-production-cutover.md), both on `main` since
@@ -242,18 +243,18 @@ and reinstall `python-rapidocr-onnxruntime` with `sudo pacman -U` only if its
 archive is still in the package cache. The service stays closed; the former
 package is not a rollback target.
 
-- HAND-BACK: `HAND-BACK: open-webui P2 installed 0.11.0-6`
+- HAND-BACK: `HAND-BACK: open-webui P2 installed 0.11.0-7`
 - Agent:
   - `pacman -Q open-webui python-rapidocr python-faster-whisper` shows the
     published versions;
-  - `sha256sum /var/cache/pacman/pkg/{open-webui-0.11.0-6-x86_64,python-rapidocr-3.9.2-1-any,python-faster-whisper-1.2.1-1-any}.pkg.tar.zst`
+  - `sha256sum /var/cache/pacman/pkg/{open-webui-0.11.0-7-x86_64,python-rapidocr-3.9.2-1-any,python-faster-whisper-1.2.1-1-any}.pkg.tar.zst`
     equals the promotion record;
   - `pacman -Q python-rapidocr-onnxruntime` fails;
   - `pacman -Qi caddy python-omegaconf python-antlr4 tailscale` succeeds;
   - `systemctl is-enabled open-webui.service open-webui-tailnet.service`
     shows both disabled;
   - `sha256sum /usr/lib/systemd/system/open-webui-tailnet.service` equals
-    **`<pending>`**, the unit digest recorded by the 0.11.0-6 reference build;
+    **`<pending>`**, the unit digest recorded by the 0.11.0-7 reference build;
   - `/etc/open-webui/open-webui.env.pacnew` does not exist.
 
 ### Optional: remove hayhooks
@@ -394,7 +395,7 @@ Install both before the first start. First confirm the installed env is the
 packaged file, byte for byte; this must print `identical`:
 
 ```bash
-bsdtar -xOf /var/cache/pacman/pkg/open-webui-0.11.0-6-x86_64.pkg.tar.zst etc/open-webui/open-webui.env \
+bsdtar -xOf /var/cache/pacman/pkg/open-webui-0.11.0-7-x86_64.pkg.tar.zst etc/open-webui/open-webui.env \
   | sudo cmp - /etc/open-webui/open-webui.env && echo identical
 ```
 
@@ -568,7 +569,7 @@ reach the socket.
 ## P5: open the tailnet route
 
 The route is tailnet-only. The `open-webui-tailnet.service` sidecar that
-0.11.0-6 ships runs a second, untagged `tailscaled` owned by the owner's
+0.11.0-7 ships runs a second, untagged `tailscaled` owned by the owner's
 tailnet account, in userspace-networking mode, and its Tailscale Serve proxies
 HTTPS on 443 straight to `/run/open-webui/open-webui.sock`. The package
 README's [Tailnet Route](../../packages/open-webui/README.md#tailnet-route)
@@ -723,14 +724,14 @@ Quiesce writers, copy the state tuple, then restart. With Open WebUI stopped,
 the `:443` route fails closed. Valkey saves its RDB when it stops.
 
 ```bash
-a=/var/lib/arch-pkgs-anchors/open-webui-0.11.0-6-$(date -u +%Y%m%dT%H%M%SZ)
+a=/var/lib/arch-pkgs-anchors/open-webui-0.11.0-7-$(date -u +%Y%m%dT%H%M%SZ)
 sudo install -d -m 0700 "$a" "$a/credstore" "$a/archives" "$a/qdrant" \
   && sudo systemctl stop open-webui.service valkey.service \
   && sudo cp -a /var/lib/open-webui/data "$a/open-webui-data" \
   && sudo cp -a /var/lib/valkey/open-webui/dump.rdb "$a/" \
   && sudo sh -c 'cp -a /etc/credstore.encrypted/open-webui.* "$1/credstore/"' sh "$a" \
   && sudo sh -c '/usr/lib/open-webui/open-webui-session-epoch-ledger current >"$1/epoch-bound"' sh "$a" \
-  && sudo cp -a /var/cache/pacman/pkg/{open-webui-0.11.0-6-x86_64,python-rapidocr-3.9.2-1-any,python-faster-whisper-1.2.1-1-any}.pkg.tar.zst "$a/archives/" \
+  && sudo cp -a /var/cache/pacman/pkg/{open-webui-0.11.0-7-x86_64,python-rapidocr-3.9.2-1-any,python-faster-whisper-1.2.1-1-any}.pkg.tar.zst "$a/archives/" \
   && echo copied
 ```
 
@@ -772,7 +773,7 @@ sudo sh -c '
   for n in webui-secret-key oauth-client-info-encryption-key oauth-session-token-encryption-key valkey-url qdrant-runtime-api-key admin-email admin-name admin-final-password; do
     test -s "$1/credstore/open-webui.$n"
   done
-  for n in open-webui-0.11.0-6-x86_64 python-rapidocr-3.9.2-1-any python-faster-whisper-1.2.1-1-any; do
+  for n in open-webui-0.11.0-7-x86_64 python-rapidocr-3.9.2-1-any python-faster-whisper-1.2.1-1-any; do
     test -s "$1/archives/$n.pkg.tar.zst"
   done
   for s in memories knowledge files web-search hash-based; do
@@ -828,14 +829,14 @@ Then, signed in as the admin:
 3. Restore the packaged reranker URL and save. Retrieval health returns 200,
    and a cited answer carries a finite score.
 
-- HAND-BACK: `HAND-BACK: open-webui verify PASSED on 0.11.0-6`
+- HAND-BACK: `HAND-BACK: open-webui verify PASSED on 0.11.0-7`
 
 ## Agent post-verification
 
 Unprivileged, after P7:
 
 - the pacman identities and cached-archive SHA-256 values;
-- `cmp <(bsdtar -xOf /var/cache/pacman/pkg/open-webui-0.11.0-6-x86_64.pkg.tar.zst usr/lib/systemd/system/open-webui.service) /usr/lib/systemd/system/open-webui.service`
+- `cmp <(bsdtar -xOf /var/cache/pacman/pkg/open-webui-0.11.0-7-x86_64.pkg.tar.zst usr/lib/systemd/system/open-webui.service) /usr/lib/systemd/system/open-webui.service`
   succeeds, and
   `systemctl show open-webui.service -p User,IPAddressDeny,IPAddressAllow,NRestarts,Result,DropInPaths`
   shows the packaged user and address policy, no restarts, and no drop-ins
@@ -864,7 +865,7 @@ The acceptance trial values are the baseline.
   sudo systemctl stop open-webui.service
   sudo /usr/lib/open-webui/open-webui-session-epoch-ledger reserve
   sudo sh -c 'cd "$1" && sha256sum --quiet -c SHA256SUMS' sh <anchor> && echo verified \
-    && sudo pacman -U <anchor>/archives/{open-webui-0.11.0-6-x86_64,python-rapidocr-3.9.2-1-any,python-faster-whisper-1.2.1-1-any}.pkg.tar.zst
+    && sudo pacman -U <anchor>/archives/{open-webui-0.11.0-7-x86_64,python-rapidocr-3.9.2-1-any,python-faster-whisper-1.2.1-1-any}.pkg.tar.zst
   ```
 
   The anchor check must print `verified`; `pacman -U` runs only then.
