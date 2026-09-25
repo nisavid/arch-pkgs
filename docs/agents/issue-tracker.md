@@ -31,16 +31,18 @@ PRs as feature requests; `/triage` reads this flag.)_
 When set to `yes`, PRs run through the same labels and states as issues, using
 the `gh pr` equivalents:
 
-- **Read a PR**: `gh pr view <number> --comments` and `gh pr diff <number>` for
-  the diff.
+- **Read a PR**:
+  `gh pr view <number> --json number,title,body,labels,comments` and
+  `gh pr diff <number>` for the diff.
 - **List external PRs for triage**:
   `gh search prs --repo <owner>/<repo> --state open --limit 1000 --json number,title,body,labels,author,authorAssociation,commentsCount`
   then keep only `authorAssociation` of `CONTRIBUTOR`, `FIRST_TIME_CONTRIBUTOR`,
-  or `NONE` (drop `OWNER`/`MEMBER`/`COLLABORATOR`). `gh pr list` has no
-  `authorAssociation` field; read a PR's comments with
+  `FIRST_TIMER`, or `NONE` (drop `OWNER`/`MEMBER`/`COLLABORATOR`).
+  `gh pr list` has no `authorAssociation` field; read a PR's comments with
   `gh pr view <number> --json comments`.
-- **Comment / label / close**: `gh pr comment`,
-  `gh pr edit --add-label`/`--remove-label`, `gh pr close`.
+- **Comment / label / close**: `gh pr comment <number> --body "..."`,
+  `gh pr edit <number> --add-label "..."`/`--remove-label "..."`,
+  `gh pr close <number> --comment "..."`.
 
 GitHub shares one number space across issues and PRs, so a bare `#42` may be
 either: resolve with `gh pr view 42` and fall back to `gh issue view 42`.
@@ -59,7 +61,8 @@ Used by `/wayfinder`. The **map** is a single issue with **child** issues as
 tickets.
 
 - **Map**: a single issue labelled `wayfinder:map`, holding the Notes /
-  Decisions-so-far / Fog body. `gh issue create --label wayfinder:map`.
+  Decisions-so-far / Fog body.
+  `gh issue create --title "..." --body "..." --label wayfinder:map`.
 - **Child ticket**: an issue linked to the map as a GitHub sub-issue (`gh api`
   on the sub-issues endpoint). Where sub-issues aren't enabled, add the child to
   a task list in the map body and put `Part of #<map>` at the top of the child
