@@ -1258,15 +1258,18 @@ class CredentialTests(unittest.TestCase):
 
 
 class HandbookTests(unittest.TestCase):
-    def test_a_failed_handbook_reports_the_error_open_webui_stored(self):
+    def test_a_failed_handbook_reports_the_error_open_webui_stored_and_is_deleted(self):
         stored = "Unexpected Response: 400 (Bad Request) Limit exceeded 999999999 > 1000 for \"limit\""
         responses = {
             ("POST", sc.API["files"]): {"id": "f1"},
             ("GET", sc.API["file_status"].format(id="f1")): {"status": "failed"},
             ("GET", sc.API["file"].format(id="f1")): {"id": "f1", "data": {"status": "failed", "error": stored}},
+            ("DELETE", sc.API["file"].format(id="f1")): {},
         }
+        requested = []
 
         def request(method, path, **_kw):
+            requested.append((method, path))
             return sc.Response(200, "application/json", json.dumps(responses[(method, path)]).encode())
 
         webui = mock.Mock(request=mock.Mock(side_effect=request))
@@ -1274,6 +1277,9 @@ class HandbookTests(unittest.TestCase):
             kit_module.upload_handbook(webui, "t")
         self.assertIn("handbook processing failed", str(raised.exception))
         self.assertIn(stored, str(raised.exception))
+        # The error is read before the file goes.
+        self.assertEqual(requested[-2:], [("GET", sc.API["file"].format(id="f1")),
+                                          ("DELETE", sc.API["file"].format(id="f1"))])
 
 
 class QdrantPagingTests(unittest.TestCase):
@@ -1293,6 +1299,11 @@ class QdrantPagingTests(unittest.TestCase):
         for word in ("copper", "lantern", "hang", "north", "greenhouse", "door", "where"):
             self.assertNotRegex(filler, rf"\b{word}")
         self.assertLess(len(corpus), 1024 * 1024)
+        # Each section's page number is a whitespace token no other section
+        # holds, so BM25 alone ranks that section first for it.
+        for number, section in enumerate(sections, 1):
+            self.assertIn(f"{number:04d}", section.split())
+        self.assertEqual([number for number, section in enumerate(sections, 1) if "0417" in section.split()], [417])
 
     def test_a_tenant_count_is_one_exact_read_only_count_request(self):
         qdrant = kit_module.Qdrant(16333, "admin-key")
@@ -1313,16 +1324,23 @@ class QdrantPagingTests(unittest.TestCase):
     PLANTED_CHUNK = "## Ledger page 1050\nThe copper lantern hangs above the north greenhouse door. Ledger page 1050 row 1"
     PLANTED_SOURCES = [{"source": {"type": "collection", "id": "k1"}, "document": [PLANTED_CHUNK],
                         "metadata": [{"name": "household-paging-corpus.md"}], "distances": [0.91]}]
+    # The knowledge tenant's first point after one scroll page, in point-id order.
+    PAST_PAGE_CHUNK = "## Ledger page 0417\nLedger page 0417 row 1 lists amber basalt birch cedar cobalt and delta."
 
     class FakeOpenWebUI:
         """Open WebUI as the paging check sees it; ``tenants`` is what Qdrant then holds."""
 
         json = sc.Endpoint.json
 
-        def __init__(self, *, file_points=1100, knowledge_points=1100, sources=None, hybrid=True, delete_status=200):
+        def __init__(self, *, file_points=1100, knowledge_points=1100, sources=None, hybrid=True, delete_status=200,
+                     file_status="completed", trailing=None, bm25_documents=None):
             self.file_points, self.knowledge_points = file_points, knowledge_points
             self.sources = QdrantPagingTests.PLANTED_SOURCES if sources is None else sources
-            self.hybrid, self.delete_status = hybrid, delete_status
+            self.bm25_documents = [QdrantPagingTests.PAST_PAGE_CHUNK] if bm25_documents is None else bm25_documents
+            self.queries = []
+            self.hybrid, self.delete_status, self.file_status = hybrid, delete_status, file_status
+            # Counts Qdrant reports for a tenant before it has applied every point.
+            self.trailing = {tenant: list(counts) for tenant, counts in (trailing or {}).items()}
             self.tenants, self.chats, self.deleted = {}, [], []
 
         def request(self, method, path, *, payload=None, body=None, content_type=None, token=None):
@@ -1336,7 +1354,9 @@ class QdrantPagingTests(unittest.TestCase):
                 self.tenants["file-f1"] = self.file_points
                 return reply({"id": "f1"})
             if (method, path) == ("GET", sc.API["file_status"].format(id="f1")):
-                return reply({"status": "completed"})
+                return reply({"status": self.file_status})
+            if (method, path) == ("GET", sc.API["file"].format(id="f1")):
+                return reply({"id": "f1", "data": {"status": self.file_status, "error": "embedding failed"}})
             if (method, path) == ("POST", sc.API["knowledge_create"]):
                 return reply({"id": "k1"})
             if (method, path) == ("POST", sc.API["knowledge_file_add"].format(id="k1")):
@@ -1347,6 +1367,11 @@ class QdrantPagingTests(unittest.TestCase):
                 events = [{"sources": self.sources}, {"choices": [{"delta": {"content": "An answer."}}]}]
                 stream = "".join(f"data: {json.dumps(event)}\n\n" for event in events) + "data: [DONE]\n\n"
                 return reply(stream.encode(), kind="text/event-stream")
+            if (method, path) == ("POST", sc.API["retrieval_query_collection"]):
+                self.queries.append(payload)
+                documents = self.bm25_documents
+                return reply({"distances": [[0.5] * len(documents)], "documents": [documents],
+                              "metadatas": [[{"name": "household-paging-corpus.md"}] * len(documents)]})
             if (method, path) == ("DELETE", sc.API["knowledge_delete"].format(id="k1")):
                 self.deleted.append("knowledge k1")
                 return reply({}, self.delete_status)
@@ -1355,15 +1380,28 @@ class QdrantPagingTests(unittest.TestCase):
                 return reply({})
             raise AssertionError(f"unexpected request {method} {path}")
 
-    def check(self, webui):
+    def check(self, webui, settle_s=0.0, scrolls=None):
         qdrant = kit_module.Qdrant(16333, "admin-key")
 
         def count(method, path, *, payload, **_kw):
             tenant = payload["filter"]["must"][0]["match"]["value"]
-            return sc.Response(200, "application/json", json.dumps({"result": {"count": webui.tenants.get(tenant, 0)}}).encode())
+            if path.endswith("/points/scroll"):
+                if scrolls is not None:
+                    scrolls.append((method, path, payload))
+                if "offset" not in payload:
+                    result = {"points": [{"id": "p0001"}, {"id": "p1000"}], "next_page_offset": "p1001"}
+                else:
+                    result = {"points": [{"id": "p1001", "payload": {"text": self.PAST_PAGE_CHUNK}}],
+                              "next_page_offset": "p1002"}
+                return sc.Response(200, "application/json", json.dumps({"result": result}).encode())
+            trailing = webui.trailing.get(tenant)
+            points = trailing.pop(0) if trailing else webui.tenants.get(tenant, 0)
+            return sc.Response(200, "application/json", json.dumps({"result": {"count": points}}).encode())
 
         qdrant.endpoint = mock.Mock(request=mock.Mock(side_effect=count))
-        with mock.patch.object(kit_module, "PAGING_POLL_S", 0):
+        timeouts = {**kit_module.PAGING_TIMEOUTS, "settle_s": settle_s}
+        with mock.patch.object(kit_module, "PAGING_POLL_S", 0), \
+                mock.patch.object(kit_module, "PAGING_TIMEOUTS", timeouts):
             return kit_module.paging_check(webui, qdrant, "t", "chat")
 
     def test_a_knowledge_base_past_one_scroll_page_passes_and_records_both_counts(self):
@@ -1375,14 +1413,40 @@ class QdrantPagingTests(unittest.TestCase):
         self.assertEqual([chat["files"] for chat in webui.chats], [[{"type": "collection", "id": "k1"}]])
         self.assertEqual(webui.deleted, ["knowledge k1", "file f1"])
 
+    def test_bm25_alone_retrieves_the_first_knowledge_point_past_one_scroll_page(self):
+        # A read that stops after one page drops that point from BM25's
+        # corpus, and a BM25-only query has no dense branch to find it.
+        webui, scrolls = self.FakeOpenWebUI(), []
+        outcome = self.check(webui, scrolls=scrolls)
+        tenant = {"must": [{"key": "tenant_id", "match": {"value": "k1"}}]}
+        scroll = "/collections/open-webui-rag-v1_knowledge/points/scroll"
+        self.assertEqual(scrolls, [
+            ("POST", scroll, {"filter": tenant, "limit": 1000, "with_payload": False, "with_vector": False}),
+            ("POST", scroll, {"filter": tenant, "offset": "p1001", "limit": 1, "with_payload": ["text"],
+                              "with_vector": False}),
+        ])
+        self.assertEqual(webui.queries, [{"collection_names": ["k1"], "query": "0417", "k": 3, "k_reranker": 3,
+                                          "hybrid": True, "hybrid_bm25_weight": 1.0}])
+        self.assertEqual(outcome.values["bm25"], {"section": 417, "query": "0417", "documents": 1, "found": True})
+
+    def test_counts_that_trail_the_upload_settle_only_at_the_corpus_size(self):
+        # Two equal reads can still be partial while Qdrant applies points.
+        webui = self.FakeOpenWebUI(trailing={"file-f1": [1001, 1001], "k1": [1000, 1000]})
+        outcome = self.check(webui, settle_s=300.0)
+        self.assertEqual(outcome.values["points"], {"file": 1100, "knowledge": 1100})
+
     def test_each_missed_paging_assertion_fails_and_still_cleans_up(self):
         unplanted = [{**self.PLANTED_SOURCES[0], "document": ["## Ledger page 0007\nLedger page 0007 row 1"]}]
         cases = {
             # A one-page scroll copies exactly one page into the knowledge base.
             "one scroll page copied": {"knowledge_points": 1000},
             "no tenant past the cap": {"file_points": 1000, "knowledge_points": 1000},
+            # The corpus contract is one chunk per section.
+            "a section split in two": {"file_points": 1101, "knowledge_points": 1101},
             "empty sources": {"sources": []},
             "planted sentence not retrieved": {"sources": unplanted},
+            # Dense retrieval may still return the planted sentence.
+            "BM25 misses the point past one page": {"bm25_documents": [self.PLANTED_CHUNK]},
         }
         for name, overrides in cases.items():
             with self.subTest(name):
@@ -1390,6 +1454,21 @@ class QdrantPagingTests(unittest.TestCase):
                 with self.assertRaises(sc.ScenarioFailure):
                     self.check(webui)
                 self.assertEqual(webui.deleted, ["knowledge k1", "file f1"])
+
+    def test_a_paging_file_that_fails_or_times_out_in_processing_is_deleted(self):
+        # The upload returns an id, but processing never completes, so the
+        # check never reaches its own cleanup.
+        no_wait = {**kit_module.PAGING_TIMEOUTS, "index_s": 0.0}
+        for status, message in (("failed", "paging corpus processing failed: embedding failed"),
+                                ("pending", "timed out waiting for paging corpus processing")):
+            with self.subTest(status):
+                webui = self.FakeOpenWebUI(file_status=status)
+                with mock.patch.object(kit_module, "PAGING_TIMEOUTS", no_wait), \
+                        mock.patch.object(kit_module.time, "sleep"), \
+                        self.assertRaises(sc.ScenarioFailure) as raised:
+                    self.check(webui)
+                self.assertEqual(str(raised.exception), message)
+                self.assertEqual(webui.deleted, ["file f1"])
 
     def test_hybrid_search_off_fails_before_anything_is_uploaded(self):
         webui = self.FakeOpenWebUI(hybrid=False)

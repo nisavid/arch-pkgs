@@ -285,7 +285,7 @@ only.
 | `open-webui.acceptance.privacy` (A-P1..P3, A-E2) | A-P1 recorded; peer samples only within the allowed set; the five telemetry values; Haystack absent from the acceptance environment. | pass/fail (A-P1 record) |
 | `open-webui.acceptance.drill.restore` (A-D1, A-D3) | One restore, clock from epoch reservation to ready plus the cited fact. | ceiling 40 s |
 | `open-webui.acceptance.drill.rollback` (A-D2, A-D3) | Archives match the anchor manifest; state restore timed; total window recorded; never `:8080`: the host's own `open-webui.service` state is unchanged across the drill and no acceptance process listens on `:8080`. | ceiling 40 s state; window recorded |
-| `open-webui.acceptance.qdrant.paging` | The generated paging corpus indexes with packaged hybrid search on: its file tenant holds more than 1000 points, a knowledge base built from it holds exactly as many, and a knowledge-scoped chat returns non-empty sources that include the sentence planted in section 1,050. The step detail records both measured point counts. The knowledge base and file are deleted afterwards, and a failed delete fails the step. See [Qdrant paging](#qdrant-paging). | counts exact; timings recorded |
+| `open-webui.acceptance.qdrant.paging` | The generated paging corpus indexes with packaged hybrid search on: its file tenant and a knowledge base built from it each hold exactly 1,100 points, a knowledge-scoped chat returns non-empty sources that include the sentence planted in section 1,050, and a BM25-only query finds the knowledge tenant's first point past one scroll page. The step detail records both measured point counts. The knowledge base and file are deleted afterwards, and a failed delete fails the step; an upload whose processing fails or times out is deleted before the step fails. See [Qdrant paging](#qdrant-paging). | counts exact; timings recorded |
 | `open-webui.acceptance.resources` (A-RES1..3) | `memory.events` `oom_kill` 0 for every unit and for the kit slice, whose count is hierarchical and so still covers a unit whose cgroup is gone; an active unit whose count cannot be read fails the gate as unobserved; and `NRestarts` 0 in every snapshot for every unit (systemd resets it on each planned start, and a snapshot precedes each one); peak memory, CPU, Qdrant sizes, snapshot and backup sizes, and the cache inventory recorded. | gates: no OOM, no unplanned restart |
 | `open-webui.acceptance.evidence` (A-E1, A-E3) | Public-safe evidence with `trial_set_count=1`, the restore and rollback drills counted from the steps that actually ran (a critical failure that stops the trial first records 0 and fails this step), and no generation fields. | pass/fail |
 
@@ -349,48 +349,65 @@ from its BM25 corpus.
 drills' anchor, snapshots, and timings never carry its points. It:
 
 1. reads the retrieval config, requires `ENABLE_RAG_HYBRID_SEARCH` to be true
-   as packaged, and records the chunking settings;
+   as packaged, and records the chunking and ranking settings;
 2. uploads `household-paging-corpus.md`, which `paging_corpus()` in the kit
    generates on each run: 1,100 Markdown sections of about 650 to 700
    characters (about 0.7 MB), with
    `The copper lantern hangs above the north greenhouse door.` planted in
    section 1,050, and no filler word shared with that sentence or its
-   question; the evidence records the corpus size and SHA-256;
-3. counts the file's tenant in `open-webui-rag-v1_files`, which must hold more
-   than 1000 points;
+   question; the evidence records the corpus size and SHA-256. If processing
+   fails or times out, the step deletes the file and fails;
+3. counts the file's tenant in `open-webui-rag-v1_files`, which must hold
+   exactly 1,100 points, one per section;
 4. creates a knowledge base and adds the file. Open WebUI copies the file's
    chunks into the knowledge tenant through one scroll read, so the knowledge
-   tenant must hold exactly as many points as the file's; a one-page read
-   copies exactly 1000;
+   tenant must also hold exactly 1,100 points; a one-page read copies exactly
+   1000;
 5. runs a knowledge-scoped chat, whose sources must be non-empty and include
    the planted sentence;
-6. deletes the knowledge base and the file.
+6. reads the knowledge tenant's first point after one 1000-point scroll page,
+   with two read-only scrolls, and takes that section's four-digit page
+   number, a whitespace token that no other section holds;
+7. queries `/api/v1/retrieval/query/collection` for that token with
+   `hybrid_bm25_weight` 1, so Open WebUI ranks with BM25 alone, and with `k`
+   and `k_reranker` both 3, so the reranker only reorders BM25's results.
+   The results must include that section;
+8. deletes the knowledge base and the file.
 
 Both counts are exact, read-only Qdrant counts made with the kit's admin
-key, taken once two reads in a row agree, because Open WebUI stores points
-without waiting for Qdrant to apply them. The step detail records both
-counts.
+key. Open WebUI stores points without waiting for Qdrant to apply them, so
+two equal reads can both be partial: the step polls each count until it
+reaches 1,100, and a count still short after 300 s fails the step. The step
+detail records both counts, and the evidence records the BM25 query and its
+result.
 
 The corpus assumes Open WebUI 0.11's chunking defaults, which the packaged env
 does not override: the character splitter, `CHUNK_SIZE` 1000, `CHUNK_OVERLAP`
 100, Markdown header splitting on, and `CHUNK_MIN_SIZE_TARGET` 0. Each
 section fits in one chunk and no two fit together, so the corpus indexes
 as one chunk per section, 1,100 points, with or without header splitting. A
-setting that merges sections shows up as a count at or below 1000 and fails
-the step.
+setting that merges or splits sections changes the count and fails the step.
 
-The counts, not the planted sentence's position, prove that every page was
-read. Qdrant scrolls in point-id order, and Open WebUI gives each chunk a
-random UUID, so section 1,050 is not reliably on a later page. The planted
-sentence proves that hybrid retrieval returns a fact from deep in a tenant
-that crosses the cap.
+The counts, not the planted sentence's position, prove that the knowledge
+copy read every page. Qdrant scrolls in point-id order, and Open WebUI gives
+each chunk a random UUID, so section 1,050 is not reliably on a later page.
+The chat proves that hybrid retrieval over a tenant past the cap returns
+sources, because a failed collection read returns none. It cannot prove that
+BM25 read past the first page: Open WebUI 0.11 has no native hybrid search
+for Qdrant, so it fuses BM25 with a dense search that queries Qdrant
+directly, and the dense branch can return the planted sentence on its own.
+The sources do not say which branch found a chunk. The BM25-only query
+closes that gap. Its corpus is a separate full read of the knowledge tenant,
+and the first point past one scroll page is exactly the point that a read
+stopping after one page drops, so BM25 finds it only when that read reaches
+the second page.
 
 Runtime and memory: Open WebUI embeds one chunk per request, one request at a
 time (`RAG_EMBEDDING_BATCH_SIZE=1`), and it embeds the corpus twice, once for
 the file and once for the knowledge base: 2,200 embedding requests. The
 expected runtime is about a minute against the stub and a few minutes against
 zembed. The hard bounds are 1,200 s for indexing, 1,200 s per request, and
-300 s for a count to settle. The points add about 22 MB of 2,560-dimension
+300 s for a count to reach 1,100. The points add about 22 MB of 2,560-dimension
 vectors to Qdrant until the step deletes them, and the corpus stays under
 1 MB in the kit. The end-of-trial resource snapshot includes this load.
 
