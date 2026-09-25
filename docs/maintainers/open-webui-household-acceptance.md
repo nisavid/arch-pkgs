@@ -588,8 +588,10 @@ The scenario module uses only the Python standard library, so it runs with
 ### Production target
 
 After the production install, S6 runs unprivileged through the household HTTPS
-origin with a dedicated non-admin smoke account, if the lead and owner approve
-one. Its credentials take one of two paths, picked by a probe that encrypts a
+origin as the dedicated non-admin smoke account that the owner creates in the
+production runbook's
+[P5.4](open-webui-household-production-install.md#p54-the-smoke-account).
+Its credentials take one of two paths, picked by a probe that encrypts a
 value with `systemd-creds --user` and loads it the way the re-smoke does:
 
 ```bash
