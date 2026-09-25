@@ -1,7 +1,7 @@
 # qdrant-migration
 
 Retained Qdrant `1.18.3` binary for the mandatory consecutive-minor migration
-between an observed `1.17.1` deployment and the maintained `1.19.0` service.
+between an observed `1.17.1` deployment and the maintained `1.19.1` service.
 This package is a preservation tool, not a second active Qdrant producer.
 
 ## Maintenance Baseline
@@ -18,7 +18,7 @@ This package is a preservation tool, not a second active Qdrant producer.
   its license. It deliberately ships no service, configuration, state
   directories, or `/usr/bin/qdrant`.
 - `update_notes`: this identity is immutable while the `1.17.1 -> 1.18.3 ->
-  1.19.0` recovery route remains supported. Verify the pinned tag, commit, and
+  1.19.1` recovery route remains supported. Verify the pinned tag, commit, and
   archive hash; regenerate `.SRCINFO`; clean-build and inspect the artifact;
   then rerun the disposable migration, corruption-rejection, restore, and
   rollback gates before replacing or retiring it.
@@ -66,12 +66,12 @@ executable, service, configuration, secret, or state path.
 ## Use And Retention Boundary
 
 Never run this binary concurrently with another Qdrant binary against the same
-storage. Never use it to open storage already migrated by `1.19.0`. Rollback
+storage. Never use it to open storage already migrated by `1.19.1`. Rollback
 pairs a retained binary and configuration with its matching untouched state,
 cold copy, or compatible snapshot; binary downgrade alone is not rollback.
 
 Before any live use, freeze every writer and follow the repository's Qdrant
-migration runbook. Retain the `1.17.1`, `1.18.3`, and `1.19.0` artifacts plus
+migration runbook. Retain the `1.17.1`, `1.18.3`, and `1.19.1` artifacts plus
 their matching recovery evidence until a post-cutover `1.19` snapshot restores
 successfully and the deployment has run cleanly for seven days. Removing those
 anchors requires separate explicit approval.

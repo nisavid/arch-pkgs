@@ -22,7 +22,7 @@ readonly QDRANT_1_17_PACKAGE_SIZE=25531392
 readonly QDRANT_1_17_BINARY_SHA256='1d9e300802fe1588c6b6aef5167c32f8d215b5d79c07eaf6699ea1a80d92bf72'
 readonly QDRANT_1_17_CONFIG_SHA256='23f9b7628f8886edf1d6dbd45216a3755eb28bcf00c1e38d391087de58c81bde'
 readonly QDRANT_1_18_BINARY_SHA256='97c16f4582cc0b9f86c7b451d88f7ea8ca56a1e45582168241de7487d31546a7'
-readonly QDRANT_1_19_BINARY_SHA256='bf24efd92208fab1a8f4769a56158280b458b7a42850095ac875824571005f8c'
+readonly QDRANT_1_19_BINARY_SHA256='70099d4d48aa749f8ced02a89f34ac1e308268a580e8125e5be0caac5611ad35'
 readonly ISOLATED_MEMORY_MAX_BYTES=536870912
 readonly ISOLATED_MEMORY_HIGH_BYTES=503316480
 readonly TRANSIENT_RUNTIME_MAX_SEC=900
@@ -150,7 +150,7 @@ usage() {
     --qdrant-1.17.1-package PATH \
     --qdrant-1.17.1 PATH \
     --qdrant-1.18.3 PATH \
-    --qdrant-1.19.0 PATH
+    --qdrant-1.19.1 PATH
 
   validate_qdrant_migration.zsh --execute \
     --work-root /tmp/FRESH-DIRECTORY \
@@ -161,7 +161,7 @@ usage() {
     --qdrant-1.17.1-package PATH \
     --qdrant-1.17.1 PATH \
     --qdrant-1.18.3 PATH \
-    --qdrant-1.19.0 PATH
+    --qdrant-1.19.1 PATH
 
   validate_qdrant_migration.zsh --probe-interrupt INT|TERM \
     --receipt /tmp/qdrant-migration-interrupt-INT-or-TERM.json \
@@ -169,7 +169,7 @@ usage() {
     --qdrant-1.17.1-package PATH \
     --qdrant-1.17.1 PATH \
     --qdrant-1.18.3 PATH \
-    --qdrant-1.19.0 PATH
+    --qdrant-1.19.1 PATH
 
 Modes:
   --plan                 Validate the three binary inputs and print the
@@ -199,7 +199,7 @@ Artifact inputs:
                          Exact retained qdrant 1.17.1-1 x86_64 package archive.
   --qdrant-1.17.1 PATH   Installed baseline binary.
   --qdrant-1.18.3 PATH   Retained consecutive-minor migration binary.
-  --qdrant-1.19.0 PATH   Final candidate binary.
+  --qdrant-1.19.1 PATH   Final candidate binary.
 
 Execution never opens the system service, configuration, or storage. It does
 not install packages and never uses --force_snapshot, priority=no_sync, or a
@@ -217,7 +217,7 @@ print_plan() {
 empty-state route
   1. Preserve a pristine 1.17.1 rollback anchor and prove 1.18.3 starts and
      stops against its own matching empty state.
-  2. Start qdrant 1.19.0 against fresh empty storage with loopback-only HTTP
+  2. Start qdrant 1.19.1 against fresh empty storage with loopback-only HTTP
      and gRPC plus fail-closed authentication.
   3. Prove stable ID writes, dense/sparse/hybrid query equivalence, restart
      persistence, snapshot creation, and restore into a separate target.
@@ -234,10 +234,10 @@ retained-data route
      1.17.1 -> 1.18.3 boundary, followed by valid same-target retries.
   6. Open only a copied 1.17.1 tree with qdrant 1.18.3, verify it, and preserve
      a new immutable cold copy plus collection and full-storage snapshots.
-  7. Restore the 1.18.3 collection snapshot with both 1.18.3 and 1.19.0, then
+  7. Restore the 1.18.3 collection snapshot with both 1.18.3 and 1.19.1, then
      repeat both corruption rejections and recoverable retries.
-  8. Restore the 1.18.3 full-storage snapshot into a separate 1.19.0 target.
-  9. Open only the 1.18.3 cold copy with qdrant 1.19.0; verify restart persistence,
+  8. Restore the 1.18.3 full-storage snapshot into a separate 1.19.1 target.
+  9. Open only the 1.18.3 cold copy with qdrant 1.19.1; verify restart persistence,
      four-stage disk and memory fingerprints, rejected-write absence, and cleanup.
 
 Each full-storage restore verifies the complete fixture and a clean restart.
@@ -412,7 +412,7 @@ validate_binary_inputs() {
   [[ -n $qdrant_1_18 && -f $qdrant_1_18 && -x $qdrant_1_18 ]] ||
     invalid_inputs+=("qdrant 1.18.3 binary is not an executable regular file: ${qdrant_1_18:-<missing>}")
   [[ -n $qdrant_1_19 && -f $qdrant_1_19 && -x $qdrant_1_19 ]] ||
-    invalid_inputs+=("qdrant 1.19.0 binary is not an executable regular file: ${qdrant_1_19:-<missing>}")
+    invalid_inputs+=("qdrant 1.19.1 binary is not an executable regular file: ${qdrant_1_19:-<missing>}")
 
   if (( ${#invalid_inputs} )); then
     local diagnostic
@@ -2553,7 +2553,7 @@ exercise_disk_pressure() {
   emulate -L zsh
   setopt ERR_EXIT NO_UNSET PIPE_FAIL
   local binary=$1
-  local instance=$MIGRATION_WORK_ROOT/pressure-disk-1.19.0
+  local instance=$MIGRATION_WORK_ROOT/pressure-disk-1.19.1
   local mount_root=$instance/limited-filesystem
   local config=''
   local below_percent=''
@@ -2571,7 +2571,7 @@ exercise_disk_pressure() {
   mount -t tmpfs -o size=209715200,nosuid,nodev,noexec tmpfs "$mount_root" ||
     fail 'resource-pressure isolation could not mount its size-limited tmpfs'
   config=$(write_pressure_config "$instance" "$mount_root/storage")
-  start_server "$binary" 1.19.0 "$instance" "$config"
+  start_server "$binary" 1.19.1 "$instance" "$config"
   api_json PUT '/collections/pressure-disk' \
     '{"vectors":{"size":4,"distance":"Cosine"},"wal_config":{"wal_capacity_mb":1}}' >/dev/null
 
@@ -2637,7 +2637,7 @@ exercise_disk_pressure() {
       retry_succeeded:true,retried_id:2,post_release_retry:$fingerprint}')"
 
   stop_server
-  start_server "$binary" 1.19.0 "$instance" "$config"
+  start_server "$binary" 1.19.1 "$instance" "$config"
   post_restart=$(pressure_collection_fingerprint pressure-disk)
   record_pressure_integrity disk disk_integrity_after_pressure 2 \
     "$pre_pressure" "$post_rejection" "$post_release_retry" "$post_restart"
@@ -2649,7 +2649,7 @@ exercise_memory_pressure() {
   emulate -L zsh
   setopt ERR_EXIT NO_UNSET PIPE_FAIL
   local binary=$1
-  local instance=$MIGRATION_WORK_ROOT/pressure-memory-1.19.0
+  local instance=$MIGRATION_WORK_ROOT/pressure-memory-1.19.1
   local config=''
   local load_request_file=$instance/memory-load-batch.json
   local retry_request_file=$instance/rejected-write.json
@@ -2678,7 +2678,7 @@ exercise_memory_pressure() {
   integer load_batch_rejected=0
 
   config=$(write_pressure_config "$instance" "$instance/storage")
-  start_server "$binary" 1.19.0 "$instance" "$config"
+  start_server "$binary" 1.19.1 "$instance" "$config"
   api_json PUT '/collections/pressure-anchor' \
     '{"vectors":{"size":4,"distance":"Cosine"}}' >/dev/null
   api_json PUT '/collections/pressure-anchor/points?wait=true' \
@@ -2782,7 +2782,7 @@ exercise_memory_pressure() {
 
   api_json DELETE '/collections/pressure-memory-load' >/dev/null
   stop_server
-  start_server "$binary" 1.19.0 "$instance" "$config"
+  start_server "$binary" 1.19.1 "$instance" "$config"
   for batch in {1..60}; do
     quota_response=$(api_json GET '/quotas')
     quota_percent=$(print -r -- "$quota_response" | jq -er '.result.usage.resident_memory_percent')
@@ -2809,7 +2809,7 @@ exercise_memory_pressure() {
       cgroup_current_bytes:$cgroup_current_bytes,cgroup_limit_bytes:$cgroup_limit_bytes,
       retry_succeeded:true,retried_id:2,post_release_retry:$fingerprint}')"
   stop_server
-  start_server "$binary" 1.19.0 "$instance" "$config"
+  start_server "$binary" 1.19.1 "$instance" "$config"
   post_restart=$(pressure_collection_fingerprint pressure-anchor)
   record_pressure_integrity memory memory_integrity_after_pressure 2 \
     "$pre_pressure" "$post_rejection" "$post_release_retry" "$post_restart"
@@ -3011,7 +3011,7 @@ write_runtime_evidence_candidate() {
   required_json=$(printf '%s\n' $required_g3_obligations | jq -Rsc 'split("\n")[:-1]')
   events_json=$(jq -s '.' "$MIGRATION_EVENTS_FILE")
   configs_json=$(jq -s '.' "$config_ledger")
-  invocation="tools/validate_qdrant_migration.zsh --execute --work-root /tmp/<fresh-work-root> --http-port $MIGRATION_HTTP_PORT --grpc-port $MIGRATION_GRPC_PORT --qdrant-1.17.1-package /run/qdrant-inputs/qdrant-1.17.1-1-x86_64.pkg.tar.zst --qdrant-1.17.1 /run/qdrant-inputs/qdrant-1.17.1 --qdrant-1.18.3 /run/qdrant-inputs/qdrant-1.18.3 --qdrant-1.19.0 /run/qdrant-inputs/qdrant-1.19.0"
+  invocation="tools/validate_qdrant_migration.zsh --execute --work-root /tmp/<fresh-work-root> --http-port $MIGRATION_HTTP_PORT --grpc-port $MIGRATION_GRPC_PORT --qdrant-1.17.1-package /run/qdrant-inputs/qdrant-1.17.1-1-x86_64.pkg.tar.zst --qdrant-1.17.1 /run/qdrant-inputs/qdrant-1.17.1 --qdrant-1.18.3 /run/qdrant-inputs/qdrant-1.18.3 --qdrant-1.19.1 /run/qdrant-inputs/qdrant-1.19.1"
   runtime_json=$(jq -nc --arg kernel "$(uname -srmo)" \
     --arg filesystem "$(findmnt -n -o FSTYPE --target "$MIGRATION_WORK_ROOT")" \
     --arg completed_at "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
@@ -3027,7 +3027,7 @@ write_runtime_evidence_candidate() {
     --arg qdrant_1_19 "$(command_version_line "$qdrant_1_19" --version)" \
     '{kernel:$kernel,work_root_filesystem:$filesystem,completed_at:$completed_at,
       invocation:{mode:"--execute",command:$invocation,work_root:"/tmp/<fresh-work-root>",binary_root:"/run/qdrant-inputs"},
-      tool_versions:{zsh:$zsh,bwrap:$bwrap,systemd:$systemd,curl:$curl,jq:$jq,openssl:$openssl,qdrant_1_17_1:$qdrant_1_17,qdrant_1_18_3:$qdrant_1_18,qdrant_1_19_0:$qdrant_1_19}}')
+      tool_versions:{zsh:$zsh,bwrap:$bwrap,systemd:$systemd,curl:$curl,jq:$jq,openssl:$openssl,qdrant_1_17_1:$qdrant_1_17,qdrant_1_18_3:$qdrant_1_18,qdrant_1_19_1:$qdrant_1_19}}')
 
   candidate_json=$(jq -n \
     --arg schema "$EVIDENCE_SCHEMA" \
@@ -3062,7 +3062,7 @@ write_runtime_evidence_candidate() {
       binaries:[
         {version:"1.17.1",name:$q17_name,path:$q17_path,binary_sha256:$q17_sha},
         {version:"1.18.3",name:$q18_name,path:$q18_path,binary_sha256:$q18_sha},
-        {version:"1.19.0",name:$q19_name,path:$q19_path,binary_sha256:$q19_sha}
+        {version:"1.19.1",name:$q19_name,path:$q19_path,binary_sha256:$q19_sha}
       ],
       inputs:{
         retained_baseline:{
@@ -3303,11 +3303,11 @@ write_runtime_evidence_candidate() {
     and .runtime.invocation.work_root == "/tmp/<fresh-work-root>"
     and .runtime.invocation.binary_root == "/run/qdrant-inputs"
     and (.runtime.invocation.command | contains("tools/validate_qdrant_migration.zsh --execute"))
-    and (.runtime.tool_versions | keys | sort == ["bwrap","curl","jq","openssl","qdrant_1_17_1","qdrant_1_18_3","qdrant_1_19_0","systemd","zsh"])
+    and (.runtime.tool_versions | keys | sort == ["bwrap","curl","jq","openssl","qdrant_1_17_1","qdrant_1_18_3","qdrant_1_19_1","systemd","zsh"])
     and (all(.runtime.tool_versions[]; type == "string" and length > 0))
     and .runtime.tool_versions.qdrant_1_17_1 == "qdrant 1.17.1"
     and .runtime.tool_versions.qdrant_1_18_3 == "qdrant 1.18.3"
-    and .runtime.tool_versions.qdrant_1_19_0 == "qdrant 1.19.0"
+    and .runtime.tool_versions.qdrant_1_19_1 == "qdrant 1.19.1"
     and (.required_g3_obligations | sort == ($required | sort))
     and (.obligation_results | length == ($required | length))
     and (all(.obligation_results[]; .status == "pass"))
@@ -3428,7 +3428,7 @@ execute_acceptance() {
   local collection_17_snapshot=$MIGRATION_WORK_ROOT/evidence/collection-1.17.1.snapshot
   local full_17_snapshot=$MIGRATION_WORK_ROOT/evidence/full-storage-1.17.1.snapshot
   local collection_18_snapshot=$MIGRATION_WORK_ROOT/evidence/collection-1.18.3.snapshot
-  local empty_19_snapshot=$MIGRATION_WORK_ROOT/evidence/collection-empty-1.19.0.snapshot
+  local empty_19_snapshot=$MIGRATION_WORK_ROOT/evidence/collection-empty-1.19.1.snapshot
   local full_18_snapshot=$MIGRATION_WORK_ROOT/evidence/full-storage-1.18.3.snapshot
   local collection_snapshot_before=''
   local unexpected_entry=''
@@ -3563,48 +3563,48 @@ execute_acceptance() {
   restore_collection_snapshot "$qdrant_1_18" 1.18.3 "$collection_18_snapshot" \
     "$MIGRATION_WORK_ROOT/restore-1.18.3-same" migration-18-same migration-18-same-current \
     restore_1_18_same_1_18
-  restore_collection_snapshot "$qdrant_1_19" 1.19.0 "$collection_18_snapshot" \
-    "$MIGRATION_WORK_ROOT/restore-1.18.3-next-1.19.0" migration-18-next migration-18-next-current \
+  restore_collection_snapshot "$qdrant_1_19" 1.19.1 "$collection_18_snapshot" \
+    "$MIGRATION_WORK_ROOT/restore-1.18.3-next-1.19.1" migration-18-next migration-18-next-current \
     restore_1_18_next_1_19
-  prove_truncated_rejection_and_retry "$qdrant_1_19" 1.19.0 1.18.3 \
-    "$collection_18_snapshot" "$MIGRATION_WORK_ROOT/reject-1.18.3-truncated-1.19.0" \
+  prove_truncated_rejection_and_retry "$qdrant_1_19" 1.19.1 1.18.3 \
+    "$collection_18_snapshot" "$MIGRATION_WORK_ROOT/reject-1.18.3-truncated-1.19.1" \
     reject_1_18_to_1_19_truncated retry_1_18_to_1_19_truncated
-  prove_checksum_rejection_and_retry "$qdrant_1_19" 1.19.0 1.18.3 \
-    "$collection_18_snapshot" "$MIGRATION_WORK_ROOT/reject-1.18.3-checksum-1.19.0" \
+  prove_checksum_rejection_and_retry "$qdrant_1_19" 1.19.1 1.18.3 \
+    "$collection_18_snapshot" "$MIGRATION_WORK_ROOT/reject-1.18.3-checksum-1.19.1" \
     reject_1_18_to_1_19_checksum retry_1_18_to_1_19_checksum
 
-  print -r -- 'retained-data: opening only the 1.18.3 cold copy with 1.19.0'
-  mkdir -p -- "$MIGRATION_WORK_ROOT/retained-1.19.0"
+  print -r -- 'retained-data: opening only the 1.18.3 cold copy with 1.19.1'
+  mkdir -p -- "$MIGRATION_WORK_ROOT/retained-1.19.1"
   copy_storage "$MIGRATION_WORK_ROOT/evidence/cold-1.18.3" \
-    "$MIGRATION_WORK_ROOT/retained-1.19.0/storage"
-  make_storage_writable "$MIGRATION_WORK_ROOT/retained-1.19.0/storage"
-  config_19=$(write_config "$MIGRATION_WORK_ROOT/retained-1.19.0")
-  start_server "$qdrant_1_19" 1.19.0 "$MIGRATION_WORK_ROOT/retained-1.19.0" "$config_19"
+    "$MIGRATION_WORK_ROOT/retained-1.19.1/storage"
+  make_storage_writable "$MIGRATION_WORK_ROOT/retained-1.19.1/storage"
+  config_19=$(write_config "$MIGRATION_WORK_ROOT/retained-1.19.1")
+  start_server "$qdrant_1_19" 1.19.1 "$MIGRATION_WORK_ROOT/retained-1.19.1" "$config_19"
   verify_fixture
-  restart_and_verify "$qdrant_1_19" 1.19.0 \
-    "$MIGRATION_WORK_ROOT/retained-1.19.0" "$config_19"
+  restart_and_verify "$qdrant_1_19" 1.19.1 \
+    "$MIGRATION_WORK_ROOT/retained-1.19.1" "$config_19"
   stop_server
-  record_cold_migration cold_migration_1_18_to_1_19_verified 1.18.3 1.19.0 \
+  record_cold_migration cold_migration_1_18_to_1_19_verified 1.18.3 1.19.1 \
     "$MIGRATION_WORK_ROOT/evidence/cold-1.18.3"
 
-  print -r -- 'retained-data: restoring the 1.18.3 full-storage snapshot with 1.19.0'
-  restore_full_storage_snapshot "$qdrant_1_19" 1.19.0 1.18.3 "$full_18_snapshot" \
-    "$MIGRATION_WORK_ROOT/full-restore-1.19.0" restore_full_1_18_next_1_19
+  print -r -- 'retained-data: restoring the 1.18.3 full-storage snapshot with 1.19.1'
+  restore_full_storage_snapshot "$qdrant_1_19" 1.19.1 1.18.3 "$full_18_snapshot" \
+    "$MIGRATION_WORK_ROOT/full-restore-1.19.1" restore_full_1_18_next_1_19
 
-  print -r -- 'empty-state: creating and restarting a fresh 1.19.0 fixture'
-  config_empty_19=$(write_config "$MIGRATION_WORK_ROOT/empty-1.19.0")
-  start_server "$qdrant_1_19" 1.19.0 "$MIGRATION_WORK_ROOT/empty-1.19.0" "$config_empty_19"
+  print -r -- 'empty-state: creating and restarting a fresh 1.19.1 fixture'
+  config_empty_19=$(write_config "$MIGRATION_WORK_ROOT/empty-1.19.1")
+  start_server "$qdrant_1_19" 1.19.1 "$MIGRATION_WORK_ROOT/empty-1.19.1" "$config_empty_19"
   create_fixture
-  restart_and_verify "$qdrant_1_19" 1.19.0 \
-    "$MIGRATION_WORK_ROOT/empty-1.19.0" "$config_empty_19"
+  restart_and_verify "$qdrant_1_19" 1.19.1 \
+    "$MIGRATION_WORK_ROOT/empty-1.19.1" "$config_empty_19"
   create_collection_snapshot "$FIXTURE_COLLECTION" "$empty_19_snapshot"
-  record_snapshot snapshot_collection_1_19 1.19.0 collection "$empty_19_snapshot"
+  record_snapshot snapshot_collection_1_19 1.19.1 collection "$empty_19_snapshot"
   stop_server
-  restore_collection_snapshot "$qdrant_1_19" 1.19.0 "$empty_19_snapshot" \
-    "$MIGRATION_WORK_ROOT/empty-restore-1.19.0" migration-empty-restored migration-empty-current \
+  restore_collection_snapshot "$qdrant_1_19" 1.19.1 "$empty_19_snapshot" \
+    "$MIGRATION_WORK_ROOT/empty-restore-1.19.1" migration-empty-restored migration-empty-current \
     restore_1_19_same_1_19
   record_event empty_1_19_fixture_verified empty_state \
-    '{"version":"1.19.0","fresh_storage":true,"stable_ids_verified":true,"dense_sparse_hybrid_equivalent":true,"restart_verified":true,"same_minor_restore_verified":true}'
+    '{"version":"1.19.1","fresh_storage":true,"stable_ids_verified":true,"dense_sparse_hybrid_equivalent":true,"restart_verified":true,"same_minor_restore_verified":true}'
 
   print -r -- 'resource-pressure: exercising disk threshold, rejection, and recovery'
   exercise_disk_pressure "$qdrant_1_19"
@@ -3631,7 +3631,7 @@ launch_isolated_execution() {
   local isolated_qdrant_1_17=/run/qdrant-inputs/qdrant-1.17.1
   local isolated_qdrant_1_17_package=/run/qdrant-inputs/qdrant-1.17.1-1-x86_64.pkg.tar.zst
   local isolated_qdrant_1_18=/run/qdrant-inputs/qdrant-1.18.3
-  local isolated_qdrant_1_19=/run/qdrant-inputs/qdrant-1.19.0
+  local isolated_qdrant_1_19=/run/qdrant-inputs/qdrant-1.19.1
   local isolated_script=/run/qdrant-inputs/validate_qdrant_migration.zsh
   local isolated_int_receipt=/run/qdrant-inputs/interrupt-INT.json
   local isolated_term_receipt=/run/qdrant-inputs/interrupt-TERM.json
@@ -3720,7 +3720,7 @@ launch_isolated_execution() {
         --qdrant-1.17.1-package "$isolated_qdrant_1_17_package" \
         --qdrant-1.17.1 "$isolated_qdrant_1_17" \
         --qdrant-1.18.3 "$isolated_qdrant_1_18" \
-        --qdrant-1.19.0 "$isolated_qdrant_1_19" \
+        --qdrant-1.19.1 "$isolated_qdrant_1_19" \
         $receipt_args \
       < "$keepalive_fifo" {MIGRATION_TRANSIENT_KEEPALIVE_FD}>&- &
   MIGRATION_TRANSIENT_CLIENT_PID=$!
@@ -3851,7 +3851,7 @@ main() {
         qdrant_1_18=$2
         shift 2
         ;;
-      --qdrant-1.19.0)
+      --qdrant-1.19.1)
         (( $# >= 2 )) || fail "$1 requires PATH"
         qdrant_1_19=$2
         shift 2
@@ -3897,7 +3897,7 @@ main() {
   require_command grep
   validate_exact_candidate_binary "$qdrant_1_18" 1.18.3 "$QDRANT_1_18_BINARY_SHA256"
   MIGRATION_QDRANT_1_18_BINARY_SHA256=$REPLY
-  validate_exact_candidate_binary "$qdrant_1_19" 1.19.0 "$QDRANT_1_19_BINARY_SHA256"
+  validate_exact_candidate_binary "$qdrant_1_19" 1.19.1 "$QDRANT_1_19_BINARY_SHA256"
   MIGRATION_QDRANT_1_19_BINARY_SHA256=$REPLY
   validate_qdrant_1_17_package "$qdrant_1_17_package" "$qdrant_1_17"
   MIGRATION_TOOL_SHA256=$(file_sha256 "$MIGRATION_SCRIPT_PATH")

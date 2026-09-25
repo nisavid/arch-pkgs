@@ -15,7 +15,7 @@ bootstrap. Qdrant serves the read-only files from
   [`publish-dist-packages.yml`](https://github.com/qdrant/qdrant-web-ui/blob/6f8536529934672a0d2631cfaa0d0779967922bc/.github/workflows/publish-dist-packages.yml),
   the AUR [`qdrant`](https://aur.archlinux.org/packages/qdrant) server recipe,
   and Qdrant's
-  [Web UI integration](https://github.com/qdrant/qdrant/blob/v1.19.0/src/actix/web_ui.rs).
+  [Web UI integration](https://github.com/qdrant/qdrant/blob/v1.19.1/src/actix/web_ui.rs).
 - `divergence_notes`: install the official prebuilt dashboard instead of
   rebuilding it with Node; package it separately as architecture-independent,
   root-owned read-only data; replace automatic external Web UI information and

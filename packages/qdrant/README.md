@@ -92,7 +92,7 @@ strict-mode `max_resident_memory_percent` setting is not preserved; use
 authenticated quota response and threshold/release tests. Qdrant 1.19
 snapshot-recovery changes are accepted only through the collection and
 full-storage, corruption-rejection, retry, and restart matrix; URL snapshot
-recovery remains disabled and snapshot storage remains local. Web UI 0.2.16
+recovery remains disabled and snapshot storage remains local. Web UI 0.2.18
 Usage Quotas is accepted as a read-only view of authenticated global quota
 state; it does not relax API authentication or grant users direct dashboard or
 API access.
@@ -114,7 +114,7 @@ It hard-depends on `qdrant-web-ui`, whose root-owned, read-only files live at
 its existing loopback listener. The active package no longer creates
 `/var/lib/qdrant/static`; upgrades do not delete a pre-existing directory.
 The pacman dependency is deliberately unversioned for independent update
-cadence. This refresh's accepted artifact manifest binds Web UI `0.2.16`; every
+cadence. This refresh's accepted artifact manifest binds Web UI `0.2.18`; every
 later UI revision must pass G0 through G2 independently before entering an
 accepted manifest.
 
@@ -150,7 +150,7 @@ This makes the absent external-inference address, local snapshot storage, and
 loopback binds defense in depth rather than the only egress controls.
 
 Upstream leaves one narrow unauthenticated loopback banner: `GET /` returns
-only `{"title":"qdrant - vector search engine","version":"1.19.0"}`.
+only `{"title":"qdrant - vector search engine","version":"1.19.1"}`.
 Management and data endpoints are not public; for example, unauthenticated
 `GET /collections` and `GET /quotas` are rejected.
 
@@ -210,9 +210,9 @@ Build the active package from this directory:
 ```bash
 makepkg --verifysource
 makepkg --nodeps -f
-bsdtar -xOf qdrant-1.19.0-1-x86_64.pkg.tar.zst \
+bsdtar -xOf qdrant-1.19.1-1-x86_64.pkg.tar.zst \
   usr/share/qdrant/qdrant.spdx.json | jq -e \
-  '.spdxVersion == "SPDX-2.3" and any(.packages[]; .name == "qdrant" and .versionInfo == "1.19.0")'
+  '.spdxVersion == "SPDX-2.3" and any(.packages[]; .name == "qdrant" and .versionInfo == "1.19.1")'
 ```
 
 `--nodeps` is appropriate only for the isolated compilation gate when the
@@ -252,22 +252,22 @@ artifacts and install them through pacman. See
 ## Migration And Rollback Boundary
 
 The only supported retained-data upgrade route from the observed deployment is
-`1.17.1 -> 1.18.3 -> 1.19.0`. The `qdrant-migration` binary exists solely to
+`1.17.1 -> 1.18.3 -> 1.19.1`. The `qdrant-migration` binary exists solely to
 make the intermediate step reproducible after the active recipe moves ahead.
 
 Never run two Qdrant binaries against the same storage concurrently. Never
-open storage migrated by `1.19.0` with `1.18.3` or `1.17.1`; a binary downgrade
+open storage migrated by `1.19.1` with `1.18.3` or `1.17.1`; a binary downgrade
 is not rollback. Pair every retained binary and configuration with an untouched
 matching state tree, cold copy, or version-compatible snapshot.
 
 Before a live cutover, perform the separately authorized metadata-only
-preflight. If the service is empty, start `1.19.0` on fresh empty storage and
+preflight. If the service is empty, start `1.19.1` on fresh empty storage and
 retain the untouched `1.17.1` tree. If data exists, freeze writers and exercise
 the full consecutive-minor route with verified cold copies and snapshot
 restores. The disposable acceptance fixture must prove both paths regardless
 of the live result.
 
-Retain the old `1.17.1` state and package plus the tested `1.18.3` and `1.19.0`
+Retain the old `1.17.1` state and package plus the tested `1.18.3` and `1.19.1`
 artifacts until a post-cutover `1.19` snapshot has restored successfully and
 the deployment has run cleanly for seven days. Removing those anchors requires
 separate explicit approval.
