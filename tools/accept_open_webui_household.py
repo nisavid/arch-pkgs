@@ -2161,8 +2161,9 @@ class Trial:
             value.split(":", 1)[0] for _, key, value in owui_lines
             if key in {"LoadCredential", "LoadCredentialEncrypted"}
         )
+        # Open WebUI 0.11 keeps one config row per dotted key, with the value as JSON.
         with sqlite3.connect(f"file:{data_dir(kit) / 'webui.db'}?mode=ro", uri=True) as connection:
-            rows = [json.loads(row[0]) for row in connection.execute("SELECT data FROM config")]
+            rows = [{key: json.loads(value) for key, value in connection.execute("SELECT key, value FROM config")}]
         uds = kit.uds()
         exports = [uds.json("GET", sc.API["rag_config"], token=self.token),
                    uds.json("GET", sc.API["openai_config"], token=self.token)]

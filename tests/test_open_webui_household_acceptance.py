@@ -4,6 +4,7 @@ import io
 import json
 import os
 import re
+import sqlite3
 import sys
 import subprocess
 import tempfile
@@ -1151,19 +1152,69 @@ class CredentialTests(unittest.TestCase):
         self.assertEqual(signature, expected)
         self.assertEqual(kit_module.jwt_claims(kit_module.mint_jwt("k", "r", 300, now=1000))["exp"], 1300)
 
-    def test_no_credential_check_ignores_toggles_and_flags_key_material(self):
+    def test_no_credential_check_ignores_toggles_and_flags_key_material_in_admin_exports(self):
         env = packaged_env()
         self.assertEqual(kit_module.nonempty_key_paths(env, {"OPENAI_API_KEYS": ""}), [])
-        config = {
-            "openai": {"api_keys": [""], "enable": True},
-            "rag": {"openai": {"api_key": ""}, "external_reranker_api_key": ""},
-            "auth": {"api_key": {"enable": False}},
-        }
-        self.assertEqual(kit_module.nonempty_key_paths(config), [])
+        # The nested shapes of Open WebUI 0.11's GET /openai/config and /api/v1/retrieval/config.
+        openai = {"ENABLE_OPENAI_API": True, "OPENAI_API_KEYS": [""], "OPENAI_API_CONFIGS": {"0": {}}}
+        rag = {"status": True, "ENABLE_RAG_HYBRID_SEARCH": True, "MINERU_API_KEY": "",
+               "web": {"ENABLE_WEB_SEARCH": False, "TAVILY_API_KEY": ""}}
+        self.assertEqual(kit_module.nonempty_key_paths(openai, rag), [])
         self.assertEqual(
-            kit_module.nonempty_key_paths({"rag": {"openai": {"api_key": "sk-x"}}, "openai": {"api_keys": ["", "k"]}}),
-            ["openai.api_keys", "rag.openai.api_key"],
+            kit_module.nonempty_key_paths({**rag, "web": {"TAVILY_API_KEY": "tvly-x"}},
+                                          {**openai, "OPENAI_API_KEYS": ["", "k"]}),
+            ["OPENAI_API_KEYS", "web.TAVILY_API_KEY"],
         )
+
+    def no_credential(self, directory, config):
+        """Run the no-credential check on an Open WebUI 0.11 database holding ``config``.
+
+        Migration 3ff2c63645b8 renames the old ``config(id, data)`` blob table to
+        ``config_old`` and creates one ``config`` row per dotted key, the
+        ``value`` column holding that key's JSON.
+        """
+
+        kit = make_kit(directory)
+        env = kit.path("tree", "open-webui", "etc", "open-webui", "open-webui.env")
+        env.parent.mkdir(parents=True)
+        env.write_text(PACKAGED_ENV.read_text())
+        kit.unit_dir.mkdir(parents=True)
+        unit, _ = kit_module.open_webui_unit(kit, OPEN_WEBUI_UNIT.read_text())
+        (kit.unit_dir / kit_module.UNITS["open-webui"]).write_text(unit)
+        data = kit_module.data_dir(kit)
+        data.mkdir(parents=True)
+        with contextlib.closing(sqlite3.connect(data / "webui.db")) as db:
+            db.execute("CREATE TABLE config_old (id INTEGER PRIMARY KEY, data JSON NOT NULL, version INTEGER NOT NULL, "
+                       "created_at DATETIME NOT NULL, updated_at DATETIME)")
+            db.execute("CREATE TABLE config (key TEXT PRIMARY KEY, value JSON NOT NULL, updated_at BIGINT)")
+            db.executemany("INSERT INTO config VALUES (?, ?, 0)",
+                           [(key, json.dumps(value)) for key, value in config.items()])
+            db.commit()
+        trial = kit_module.Trial(kit)
+        with mock.patch.object(kit_module.Kit, "uds") as uds:
+            uds.return_value.json.return_value = {"status": True}
+            return trial.no_credential()
+
+    def test_no_credential_check_passes_on_empty_per_key_config_rows(self):
+        config = {
+            "openai.enable": True,
+            "openai.api_base_urls": [sc.DEFAULT_LEMOND_URL + "/api/v1"],
+            "openai.api_keys": [""],
+            "openai.api_configs": {"0": {}},
+            "rag.openai.api_key": "",
+            "rag.external_reranker_api_key": "",
+            "auth.enable_api_keys": False,
+            "auth.api_key.endpoint_restrictions": False,
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            values = self.no_credential(directory, config)
+        self.assertEqual(values["nonempty_key_fields"], [])
+
+    def test_no_credential_check_flags_a_credential_in_a_per_key_config_row(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(sc.ScenarioFailure) as raised:
+                self.no_credential(directory, {"rag.openai.api_key": "sk-x", "openai.api_keys": [""]})
+        self.assertEqual(json.loads(str(raised.exception))["nonempty_key_fields"], ["rag.openai.api_key"])
 
     def test_user_credentials_need_the_units_to_load_them_too(self):
         def fake_run(command, **_kwargs):
