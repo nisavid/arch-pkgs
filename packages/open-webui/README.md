@@ -1,6 +1,6 @@
 # open-webui
 
-Disposable Arch package candidate for Open WebUI 0.11.0 and the fresh household
+Disposable Arch package candidate for Open WebUI 0.11.4 and the fresh household
 native-RAG boundary.
 
 This candidate is not approved for production activation or publication. A
@@ -18,10 +18,10 @@ remains in
   (`open-webui-tailnet.service`) for the tailnet-only production route, and
   Caddy for a possible later route through a local TLS terminator. Neither
   joins the Open WebUI data group.
-- The package builds the exact 0.11.0 source archive, seeds and verifies the 60
+- The package builds the exact 0.11.4 source archive, seeds and verifies the 63
   release-authored Pyodide files from the exact release wheel, runs `npm ci`
-  from a verified 1,233-tarball npm cache, and installs a hash-locked
-  222-wheel private server closure. Both closure archives are immutable
+  from a verified npm cache, and installs a hash-locked private server
+  closure. Both closure archives are immutable
   `makepkg` sources and both installers run in offline mode.
 - The ML and native scientific stack remains pacman-owned. The package verifies
   that none of the 21 externalized provider distributions or their top-level
@@ -106,7 +106,7 @@ double-quoted string that spans lines, which systemd reads with its newlines
 intact. `RAG_EMBEDDING_PREFIX_FIELD_NAME` stays unset, so Open WebUI sends no
 `input_type` request field.
 
-Open WebUI 0.11.0 joins a prefix directly to the text. Settings can only
+Open WebUI 0.11.4 joins a prefix directly to the text. Settings can only
 prefix, so the wrapper's closing `<|im_end|>` and newline are not sent. The
 zembed semantic canary in
 [Acceptance-deploy the Open WebUI household candidate set](https://github.com/nisavid/arch-pkgs/issues/89)
@@ -427,12 +427,15 @@ points per request.
 
 ## Maintenance Baseline
 
-- `authoritative_reference`: exact-version AUR `open-webui` recipe at commit
-  `6a65fb1cc4583d1ab9a1215a9cdf74054b36655b`
-- `advisory_references`: upstream `open-webui/open-webui` 0.11.0 PyPI source
+- `authoritative_reference`: same-lane AUR `open-webui` recipe at commit
+  `713042bd9585b692ce0ecd02e5e9482d4daee6c2` (0.11.3-1); no 0.11.4 recipe
+  exists in Arch, CachyOS, or the AUR
+- `advisory_references`: upstream `open-webui/open-webui` 0.11.4 PyPI source
   archive and build metadata at tag commit
-  `f9590b8017199e56d5e953657e6498e3cef1d246`, source SHA-256
-  `e28c4fa997bf0a678caa7a0db6441da2e0c33b9a4120677f959ec3e45fccf9e9`,
+  `8bd8b4fac5e059578ac0c74b3c18d11139f88b7d`, source SHA-256
+  `1f1a31668a0dee733953c29d6183d78dd78984e696aa8eb0f2083f5796497be0`;
+  the AUR 0.11.0-1 recipe at `6a65fb1cc4583d1ab9a1215a9cdf74054b36655b`,
+  which differs from 0.11.3-1 only in its version strings;
   and repository issues
   [#63](https://github.com/nisavid/arch-pkgs/issues/63),
   [#66](https://github.com/nisavid/arch-pkgs/issues/66), and

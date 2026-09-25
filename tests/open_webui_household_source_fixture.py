@@ -9,10 +9,10 @@ SOURCE_BUNDLE = (
     / "tools"
     / "fixtures"
     / "open-webui-household"
-    / "open-webui-0.11.0-pristine-patch-preimages.tar.gz"
+    / "open-webui-0.11.4-pristine-patch-preimages.tar.gz"
 )
 SOURCE_BUNDLE_SHA256 = (
-    "9f68e34b2c809eb4b4d0cd3f00aa8a22689ff05a8ac37f48e3a04f99a88cecc9"
+    "f7b572c9bc2fa33c580f3a9b96d7adb19d8b9bf386527f5c70975695c1488960"
 )
 EXPECTED_SOURCE_FILES = frozenset(
     {

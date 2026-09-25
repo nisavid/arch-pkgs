@@ -2,11 +2,11 @@ From 8b2317f26dc9101499b87473f4a827265589a9db Mon Sep 17 00:00:00 2001
 From: Ivan D Vasin <ivan@nisavid.io>
 Date: Tue, 18 Aug 2026 18:00:00 -0400
 Subject: [PATCH] Enforce a non-restored session epoch
-X-Open-WebUI-Commit: f9590b8017199e56d5e953657e6498e3cef1d246
-X-Open-WebUI-Sdist-SHA256: e28c4fa997bf0a678caa7a0db6441da2e0c33b9a4120677f959ec3e45fccf9e9
-X-Open-WebUI-Init-SHA256: 11cd2fad929db12c687795239ab3b6af1b5ea6f3ad7363deedfabf9651dd22d4
-X-Open-WebUI-Auth-SHA256: d78b5f3fc2249d0b1719d0d280eb9aeef83922ef7b55c87cd843eedbd2e25c34
-X-Open-WebUI-Auth-Router-SHA256: 32bf3812b9a44face4bfa7efe4a0770577dc8608127bcbb41f25ea15a6085945
+X-Open-WebUI-Commit: 8bd8b4fac5e059578ac0c74b3c18d11139f88b7d
+X-Open-WebUI-Sdist-SHA256: 1f1a31668a0dee733953c29d6183d78dd78984e696aa8eb0f2083f5796497be0
+X-Open-WebUI-Init-SHA256: efaa6278ec425396d95e7537d454781b126bf178cdbfb8f91ab1e699ace027f1
+X-Open-WebUI-Auth-SHA256: 92f420f90be1fec49eababf9d1b9771fc94ab94a8d0fb003b4fb6148d6402559
+X-Open-WebUI-Auth-Router-SHA256: 4be0ed8e69bba85c0392fdddf006efe5592c322a4973c669120a0a0c3c2424c7
 
 Require the root-controlled current epoch before the service imports the app or
 binds its listener. Stamp every Open WebUI session JWT at the single minting
@@ -26,9 +26,9 @@ and revocation calls reuse decode_token, so a stale epoch remains unattributed
 and causes no revocation write.
 ---
  open_webui/__init__.py            |   3 +
- open_webui/utils/auth.py          |  30 +++++------
+ open_webui/utils/auth.py          |  31 +++++-------
  open_webui/utils/session_epoch.py | 100 +++++++++++++++++++++++++++++++++++++
- 3 files changed, 116 insertions(+), 17 deletions(-)
+ 3 files changed, 116 insertions(+), 18 deletions(-)
  create mode 100644 open_webui/utils/session_epoch.py
 
 diff --git a/open_webui/__init__.py b/open_webui/__init__.py
@@ -44,19 +44,19 @@ diff --git a/open_webui/__init__.py b/open_webui/__init__.py
 diff --git a/open_webui/utils/auth.py b/open_webui/utils/auth.py
 --- a/open_webui/utils/auth.py
 +++ b/open_webui/utils/auth.py
-@@ -40,13 +40,19 @@ from open_webui.models.auths import Auths
- from open_webui.models.config import Config
- from open_webui.models.users import Users
+@@ -43,6 +43,11 @@ from open_webui.models.users import Users
  from open_webui.utils.access_control import has_permission
+ from open_webui.utils.json_codec import JSONCodec
+ from open_webui.utils.misc import parse_duration
 +from open_webui.utils.session_epoch import (
 +    read_current_session_epoch,
 +    token_epoch_is_current,
 +    with_current_session_epoch,
 +)
  from pytz import UTC
+ from redis.exceptions import RedisError
  
- log = logging.getLogger(__name__)
- 
+@@ -51,6 +56,7 @@ log = logging.getLogger(__name__)
  SESSION_SECRET = WEBUI_SECRET_KEY
  ALGORITHM = 'HS256'
  PASSWORD_BCRYPT_MAX_BYTES = 72
@@ -64,7 +64,7 @@ diff --git a/open_webui/utils/auth.py b/open_webui/utils/auth.py
  
  ##############
  # Auth Utils
-@@ -220,7 +226,7 @@ async def verify_password(plain_password: str, hashed_password: str) -> bool:
+@@ -230,7 +236,7 @@ async def verify_password(plain_password: str, hashed_password: str) -> bool:
  # and may the claims therein honor the creator long after
  # the session has closed.
  def create_token(data: dict, expires_delta: Union[timedelta, None] = None) -> str:
@@ -73,7 +73,7 @@ diff --git a/open_webui/utils/auth.py b/open_webui/utils/auth.py
  
      if expires_delta:
          expire = datetime.now(UTC) + expires_delta
-@@ -236,6 +242,8 @@ def create_token(data: dict, expires_delta: Union[timedelta, None] = None) -> str:
+@@ -246,6 +252,8 @@ def create_token(data: dict, expires_delta: Union[timedelta, None] = None) -> st
  def decode_token(token: str) -> dict | None:
      try:
          decoded = jwt.decode(token, SESSION_SECRET, algorithms=[ALGORITHM])
@@ -82,7 +82,7 @@ diff --git a/open_webui/utils/auth.py b/open_webui/utils/auth.py
          return decoded
      except Exception:
          return None
-@@ -343,22 +351,10 @@ async def get_current_user(
+@@ -417,23 +425,10 @@ async def get_current_user(
  
      # auth by api key
      if token.startswith('sk-'):
@@ -101,6 +101,7 @@ diff --git a/open_webui/utils/auth.py b/open_webui/utils/auth.py
 -
 -        # Scope-backed, so outer middleware (audit) can reuse the resolved user
 -        request.state.user = user
+-        request.state.auth_type = 'api_key'
 -        return user
 +        raise HTTPException(
 +            status_code=status.HTTP_403_FORBIDDEN,
