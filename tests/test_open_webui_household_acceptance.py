@@ -1257,6 +1257,25 @@ class CredentialTests(unittest.TestCase):
             self.assertTrue(kit_module.probe_systemd_creds(kit_module.SLICE))
 
 
+class HandbookTests(unittest.TestCase):
+    def test_a_failed_handbook_reports_the_error_open_webui_stored(self):
+        stored = "Unexpected Response: 400 (Bad Request) Limit exceeded 999999999 > 1000 for \"limit\""
+        responses = {
+            ("POST", sc.API["files"]): {"id": "f1"},
+            ("GET", sc.API["file_status"].format(id="f1")): {"status": "failed"},
+            ("GET", sc.API["file"].format(id="f1")): {"id": "f1", "data": {"status": "failed", "error": stored}},
+        }
+
+        def request(method, path, **_kw):
+            return sc.Response(200, "application/json", json.dumps(responses[(method, path)]).encode())
+
+        webui = mock.Mock(request=mock.Mock(side_effect=request))
+        with self.assertRaises(sc.ScenarioFailure) as raised:
+            kit_module.upload_handbook(webui, "t")
+        self.assertIn("handbook processing failed", str(raised.exception))
+        self.assertIn(stored, str(raised.exception))
+
+
 class FirstStartTests(unittest.TestCase):
     def test_the_alembic_tmp_table_warning_is_not_a_migration_error(self):
         warning = (
