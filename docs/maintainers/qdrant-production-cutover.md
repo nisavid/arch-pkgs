@@ -15,23 +15,22 @@ does nothing to the host without `--apply`, and `--apply` requires root.
 | Package | Archive | Size (bytes) | SHA-256 |
 | --- | --- | ---: | --- |
 | `qdrant-migration` | `qdrant-migration-1.18.3-1-x86_64.pkg.tar.zst` | 26721008 | `591f16328fcff0fc0193353a65f4c783afc1d24258ae251d3a8927283276ce9e` |
-| `qdrant` | `qdrant-1.19.0-1-x86_64.pkg.tar.zst` | 28018464 | `15f15fe2c0c774691bf3193bc8fc7883fa530c89db697f7c0bcc2720d231b011` |
-| `qdrant-web-ui` | `qdrant-web-ui-0.2.16-1-any.pkg.tar.zst` | 5719063 | `f3d46e6ff09b8eb87b1465ee6a17a7cc35c574596b7fbf30518d3bc1d42fe10a` |
+| `qdrant` | `qdrant-1.19.1-1-x86_64.pkg.tar.zst` | 28289048 | `56208d6725771df687563b9d12e3c963b39c63120b1412f2335411f32c21ed85` |
+| `qdrant-web-ui` | `qdrant-web-ui-0.2.18-1-any.pkg.tar.zst` | 5728430 | `962d2b7659fb66bd2eb3b2f425ef90a91cbe7701a66c31b4fd622caeb0e0f283` |
 
 The retained baseline is `qdrant-1.17.1-1-x86_64.pkg.tar.zst`, 25531392
 bytes, SHA-256
 `d237ac6b804c7b4ec3f73f8ef57340ebaba62abff7853636286f140c8affd5cb`.
 
-**Identity is the digest.** The accepted final3 archives were not retained, so
-all three were rebuilt with the runbook's reconstruction procedure. Every
-rebuilt archive is byte-identical to its accepted final3 digest. These copies
-are therefore the accepted artifacts. The accepted G0–G3 evidence in
-[`evidence/qdrant-1.19.0-1/`](evidence/qdrant-1.19.0-1/) binds them, with no
-G2 redo and no further G3 rerun. The rebuild record is
-[`g0-g1-rebuild.json`](evidence/qdrant-1.19.0-1-rebind-2026-09-22/g0-g1-rebuild.json).
-[`g3-attempt-1.json`](evidence/qdrant-1.19.0-1-rebind-2026-09-22/g3-attempt-1.json)
-records an informational, non-gating harness run. It stopped on a host disk
-precondition, not on a failure of the candidate.
+**Identity is the digest.** The 1.19.1 re-baseline rebuilt `qdrant` and
+`qdrant-web-ui` with the runbook's reconstruction procedure and ran G0–G3 again
+on those exact archives. The `qdrant-migration` recipe did not change, so its
+archive is still the accepted final3 bytes. The G0–G3 evidence in
+[`evidence/qdrant-1.19.1-1/`](evidence/qdrant-1.19.1-1/) binds all three
+archives. The superseded 1.19.0 records stay in
+[`evidence/qdrant-1.19.0-1/`](evidence/qdrant-1.19.0-1/) and
+[`evidence/qdrant-1.19.0-1-rebind-2026-09-22/`](evidence/qdrant-1.19.0-1-rebind-2026-09-22/)
+as history; the cutover no longer accepts those artifacts.
 
 ## Disk Quota
 
@@ -73,7 +72,7 @@ runs with telemetry disabled and loopback-only egress.
 ### 1. Preflight
 
 Hold `qdrant` at 1.17.1-1 until cutover. Once the `nisavid` repository offers
-1.19.0-1, an ordinary `pacman -Syu` would jump straight from 1.17.1 to 1.19.0
+1.19.1-1, an ordinary `pacman -Syu` would jump straight from 1.17.1 to 1.19.1
 and skip the accepted 1.18.3 step. Until cutover, refresh with
 `sudo pacman -Syu --ignore qdrant`. `pacman(8)` documents `--ignore` as
 ignoring upgrades of the named package, and it applies only to that one
@@ -142,7 +141,7 @@ sudo tools/qdrant_production_cutover.zsh cutover --apply
 `cutover --apply` reruns preflight and then:
 
 1. Stops `qdrant.service`.
-2. Saves the rollback set in `/var/lib/qdrant-rollback/qdrant-1.17.1-1-pre-1.19.0/`:
+2. Saves the rollback set in `/var/lib/qdrant-rollback/qdrant-1.17.1-1-pre-1.19.1/`:
    - a copy of `/var/lib/qdrant`, checked against a SHA-256 listing
    - a copy of `/etc/qdrant`
    - the 1.17.1-1 archive
@@ -162,7 +161,7 @@ sudo tools/qdrant_production_cutover.zsh cutover --apply
    place, so a failed write never leaves an empty or partial `qdrant.env`.
 5. Installs `nisavid/qdrant` and `nisavid/qdrant-web-ui`. It requires no
    `config.yaml.pacnew`, and `/etc/qdrant/config.yaml` must match the packaged
-   1.19.0 file. It then reloads systemd and starts `qdrant.service`.
+   1.19.1 file. It then reloads systemd and starts `qdrant.service`.
 6. With the admin key, creates the five `open-webui-rag-v1` collections
    (`_memories`, `_knowledge`, `_files`, `_web-search`, `_hash-based`). Each
    has 2560 dimensions, cosine distance, `hnsw_config` `m: 0` and
@@ -185,7 +184,7 @@ sudo tools/qdrant_production_cutover.zsh cutover --apply
    the repository. To rotate, re-provision the HMAC secret and re-mint the JWT.
    The credential name and path match the `LoadCredentialEncrypted=` line of
    the staged Open WebUI 0.11 candidate unit.
-9. Restarts `qdrant.service` and waits for 1.19.0, so verify also proves the
+9. Restarts `qdrant.service` and waits for 1.19.1, so verify also proves the
    collections persist across a restart.
 10. Runs verify.
 
@@ -213,7 +212,7 @@ is fixed:
 
    ```bash
    sudo <checkout>/tools/qdrant_production_cutover.zsh cutover --apply \
-     --rollback-set qdrant-1.17.1-1-pre-1.19.0-reentry-<UTC time> \
+     --rollback-set qdrant-1.17.1-1-pre-1.19.1-reentry-<UTC time> \
      [<non-default options of the failed run>] [--reuse-credential]
    ```
 
@@ -234,9 +233,9 @@ sudo tools/qdrant_production_cutover.zsh verify
 
 Verify checks that:
 
-- the installed packages are `qdrant` 1.19.0-1, `qdrant-migration` 1.18.3-1,
-  and `qdrant-web-ui` 0.2.16-1
-- `GET /` reports 1.19.0, and `/readyz` returns 200
+- the installed packages are `qdrant` 1.19.1-1, `qdrant-migration` 1.18.3-1,
+  and `qdrant-web-ui` 0.2.18-1
+- `GET /` reports 1.19.1, and `/readyz` returns 200
 - HTTP and gRPC listen on `127.0.0.1:6333` and `127.0.0.1:6334`, and nothing
   else listens on a Qdrant port
 - an unauthenticated `GET /collections` is refused with 401
@@ -274,12 +273,12 @@ verify prints `HAND-BACK: qdrant verify PASSED` and this dry run passes.
 Roll back if any of these happens:
 
 - cutover or verify fails
-- 1.19.0 fails to start, or restarts without a deliberate restart
+- 1.19.1 fails to start, or restarts without a deliberate restart
 - Qdrant rejects writes on a quota
 - the Open WebUI household deploy is rolled back before the stability
   condition holds
 
-Never open storage migrated by 1.18.3 or 1.19.0 with 1.17.1. Rollback restores
+Never open storage migrated by 1.18.3 or 1.19.1 with 1.17.1. Rollback restores
 the untouched copy.
 
 Stop Open WebUI first, and keep `hayhooks.service` stopped. Rollback refuses
@@ -366,7 +365,7 @@ separately approves removal, keep:
 
 G4 now runs inside
 [Acceptance-deploy the Open WebUI household candidate set](https://github.com/nisavid/arch-pkgs/issues/89).
-It composes the accepted Qdrant 1.19.0 server with Open WebUI instead of
+It composes the accepted Qdrant 1.19.1 server with Open WebUI instead of
 Haystack and Hayhooks. This supersedes the frozen runbook's closing Haystack
 G4 clause in
 [`qdrant-migration-acceptance.md`](qdrant-migration-acceptance.md). That
