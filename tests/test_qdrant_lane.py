@@ -58,7 +58,7 @@ class QdrantLaneContractTests(unittest.TestCase):
                     "pkgname = qdrant-web-ui",
                     "pkgbase = qdrant-web-ui",
                     "xdata = pkgtype=pkg",
-                    "pkgver = 0.2.16-1",
+                    "pkgver = 0.2.18-1",
                     "pkgdesc = Static dashboard assets for Qdrant",
                     "url = https://github.com/qdrant/qdrant-web-ui",
                     "builddate = 1786983811",
@@ -110,9 +110,9 @@ class QdrantLaneContractTests(unittest.TestCase):
         migration_srcinfo = self.read("packages/qdrant-migration/.SRCINFO")
         maintenance_record = self.read("packages/qdrant/README.md")
 
-        self.assertIn("pkgver = 1.19.0", srcinfo)
+        self.assertIn("pkgver = 1.19.1", srcinfo)
         self.assertIn(
-            "e0c9a030ae47d95f7c739598343bd2529c817fe262c4e7b2a4f1070ff82a024e",
+            "ca9f0cb5a6954d253b51f249161cb63e2c3fee2a3bf360056cf01f0e70b2b878",
             srcinfo,
         )
         self.assertIn("pkgname = qdrant-migration", migration_srcinfo)
@@ -122,8 +122,8 @@ class QdrantLaneContractTests(unittest.TestCase):
             migration_srcinfo,
         )
         for identity in (
-            "af875b4bfd98103f7c0ee34fe4f25c5099893ca9",
-            "74f3e85b9473c62560006c043e13737ce6b48412",
+            "de333e3c04660fe475d6275e9efc9fb9f54138fe",
+            "6ab21cac18ebb6f4ae29102c7f8f5cc11affd5de",
             "1.18.3",
             "3ea8cf7ce633256fb1b2a75b0de9d9ce60b22254",
             "db8fa43fcb6aedec1e739487e17a99731b74590a",
@@ -528,11 +528,11 @@ class QdrantLaneContractTests(unittest.TestCase):
 
         self.assertRegex(
             catalog,
-            r"(?m)^\| \[`qdrant`\]\(qdrant/\) \| `qdrant` \| 1\.19\.0-1 \| deferred \|.*\| no \|$",
+            r"(?m)^\| \[`qdrant`\]\(qdrant/\) \| `qdrant` \| 1\.19\.1-1 \| deferred \|.*\| no \|$",
         )
         self.assertRegex(
             catalog,
-            r"(?m)^\| \[`qdrant-web-ui`\]\(qdrant-web-ui/\) \| `qdrant-web-ui` \| 0\.2\.16-1 \| deferred \|.*\| no \|$",
+            r"(?m)^\| \[`qdrant-web-ui`\]\(qdrant-web-ui/\) \| `qdrant-web-ui` \| 0\.2\.18-1 \| deferred \|.*\| no \|$",
         )
         self.assertRegex(
             catalog,
@@ -817,21 +817,21 @@ class QdrantLaneContractTests(unittest.TestCase):
         maintenance_record = self.read("packages/qdrant-web-ui/README.md")
 
         self.assertIn("pkgname = qdrant-web-ui", srcinfo)
-        self.assertIn("pkgver = 0.2.16", srcinfo)
+        self.assertIn("pkgver = 0.2.18", srcinfo)
         self.assertIn("pkgrel = 1", srcinfo)
         self.assertRegex(srcinfo, r"(?m)^\s*arch = any$")
         self.assertIn(
-            "4446f0cea024078011c78cd24a592c9b563656d15205818563fa6b22d394dd29",
+            "fdce24c04ec1627d2369cb8fe610ee06ad9236f82aad214aa7f294ac37372859",
             srcinfo,
         )
         self.assertIn(
-            "be85d9cffc5d5ad8122c4fe332cd6731cddcd508a61d77ee918626fc4d977577",
+            "3fa78da022fdee695469c3a35fb41124955250a1b1e4f066831229bbea701874",
             srcinfo,
         )
         for identity in (
-            "018e83a869a3d2b831e92664e8d33f51ec7981b1",
-            "d3f7a1174933ab637d9711ea45456d32b878b50e",
-            "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+            "c904d06ed0f5983ab412ddf558b3e47ceb166689",
+            "6f8536529934672a0d2631cfaa0d0779967922bc",
+            "210b508429e913d9de5301f90508bc2cbf5b2281de5b45e607c04d58f0f3bd8f",
         ):
             with self.subTest(identity=identity):
                 self.assertIn(identity, maintenance_record)
