@@ -188,6 +188,7 @@ TRIAL_STEPS: tuple[str, ...] = (
     "open-webui.acceptance.privacy",
     "open-webui.acceptance.drill.restore",
     "open-webui.acceptance.drill.rollback",
+    "open-webui.acceptance.qdrant.paging",
     "open-webui.acceptance.resources",
     "open-webui.acceptance.evidence",
 )
@@ -987,10 +988,11 @@ class Kit:
     def uds(self, timeout: float = 120.0) -> sc.Endpoint:
         return sc.Endpoint(socket_path=self.socket_path, timeout=timeout)
 
-    def caddy(self) -> sc.Endpoint:
+    def caddy(self, timeout: float = 120.0) -> sc.Endpoint:
         return sc.Endpoint(
             origin=sc.DEFAULT_ACCEPTANCE_ORIGIN,
             cacert=sc.acceptance_caddy_root_certificate(self.root),
+            timeout=timeout,
         )
 
     def lemond(self) -> sc.Endpoint:
@@ -1127,6 +1129,19 @@ class Qdrant:
         if not isinstance(payload.get("text"), str) or not isinstance(vector, list):
             raise sc.ScenarioFailure("the stored chunk is malformed")
         return payload["text"], [float(value) for value in vector]
+
+    def tenant_points(self, collection: str, tenant: str) -> int:
+        """The exact number of one tenant's points; a read-only count, never a scroll."""
+
+        result = self.call(
+            "POST",
+            f"/collections/{collection}/points/count",
+            {"filter": {"must": [{"key": "tenant_id", "match": {"value": tenant}}]}, "exact": True},
+        )
+        count = (result or {}).get("count")
+        if isinstance(count, bool) or not isinstance(count, int):
+            raise sc.ScenarioFailure(f"Qdrant count for {collection} is malformed")
+        return count
 
 
 # ---------------------------------------------------------------------------
@@ -1808,20 +1823,26 @@ def a_d3_checks(kit: Kit, anchor: Mapping[str, Any], restored: Mapping[str, Any]
 
 
 def upload_handbook(webui: sc.Endpoint, token: str, timeout: float = 180.0) -> str:
-    body, content_type = sc.multipart_file("file", sc.HANDBOOK_NAME, sc.handbook_bytes(), "text/markdown")
+    return upload_markdown(webui, token, sc.HANDBOOK_NAME, sc.handbook_bytes(), "handbook", timeout)
+
+
+def upload_markdown(webui: sc.Endpoint, token: str, name: str, data: bytes, what: str, timeout: float) -> str:
+    """Upload one Markdown file and wait until Open WebUI has indexed it."""
+
+    body, content_type = sc.multipart_file("file", name, data, "text/markdown")
     upload = webui.request("POST", sc.API["files"], body=body, content_type=content_type, token=token)
     file_id = (upload.json() or {}).get("id") if upload.status == 200 else None
     if not isinstance(file_id, str):
-        raise sc.ScenarioFailure(f"handbook upload returned HTTP {upload.status}")
+        raise sc.ScenarioFailure(f"{what} upload returned HTTP {upload.status}")
 
     def processed() -> bool:
         response = webui.request("GET", sc.API["file_status"].format(id=file_id), token=token)
         status = (response.json() or {}).get("status") if response.status == 200 else None
         if status == "failed":
-            raise sc.ScenarioFailure(f"handbook processing failed: {sc.file_processing_error(webui, token, file_id)}")
+            raise sc.ScenarioFailure(f"{what} processing failed: {sc.file_processing_error(webui, token, file_id)}")
         return status == "completed"
 
-    wait_until(processed, timeout, "handbook processing")
+    wait_until(processed, timeout, f"{what} processing")
     return file_id
 
 
@@ -1849,6 +1870,176 @@ def file_chat(webui: sc.Endpoint, token: str, chat_model: str, file_id: str | No
 def cited_fact(webui: sc.Endpoint, token: str, chat_model: str, file_id: str) -> bool:
     status, text, summary, _ = file_chat(webui, token, chat_model, file_id)
     return status == 200 and sc.cited_answer_passes(text, summary, sc.HANDBOOK_NAME)
+
+
+# The Qdrant paging check.  The packaged Qdrant strict mode caps every query
+# and scroll at max_query_limit 1000 (packages/qdrant/qdrant.config.yaml), so
+# only a tenant with more points than that proves Open WebUI pages its scroll
+# reads.  The corpus is generated, never committed: 1,100 Markdown sections of
+# 600 to 700 characters.  Two sections never fit one 1000-character chunk and
+# none needs a split, so with or without Markdown header splitting Open WebUI
+# indexes one chunk per section.
+QDRANT_SCROLL_PAGE = 1000
+PAGING_CORPUS_NAME = "household-paging-corpus.md"
+PAGING_SECTIONS = 1100
+PAGING_PLANTED_SECTION = 1050
+PAGING_FACT = "The copper lantern hangs above the north greenhouse door."
+PAGING_PROMPT = (
+    "Using only the attached knowledge, quote verbatim the one sentence that "
+    "says where the copper lantern hangs. Reply with that sentence only."
+)
+_PAGING_WORDS = (
+    "amber", "basalt", "birch", "cedar", "cobalt", "delta", "dune", "ember", "fjord", "flint", "garnet",
+    "grove", "harbor", "heron", "indigo", "iris", "jasper", "kelp", "lichen", "marble", "nectar", "onyx",
+    "pebble", "quartz", "russet", "saffron", "tundra", "umber", "violet", "willow", "yarrow", "zephyr",
+)
+
+
+def paging_corpus() -> bytes:
+    """The deterministic paging corpus, with its fact planted in section 1,050."""
+
+    sections = []
+    for number in range(1, PAGING_SECTIONS + 1):
+        sentences = [PAGING_FACT] if number == PAGING_PLANTED_SECTION else []
+        row = 0
+        while len(" ".join(sentences)) < 600:
+            row += 1
+            digest = hashlib.sha256(f"{number}:{row}".encode()).digest()
+            words = [_PAGING_WORDS[byte % len(_PAGING_WORDS)] for byte in digest[:6]]
+            sentences.append(f"Ledger page {number:04d} row {row} lists {' '.join(words[:5])} and {words[5]}.")
+        sections.append(f"## Ledger page {number:04d}\n" + " ".join(sentences))
+    return ("\n\n".join(sections) + "\n").encode()
+
+
+PAGING_POLL_S = 1.0
+# Upper bounds, not expectations: the stub rehearsal should index the corpus
+# twice in about a minute, and the trial's 2,200 one-chunk zembed requests
+# should take a few minutes.
+PAGING_TIMEOUTS = MappingProxyType({"request_s": 1200.0, "index_s": 1200.0, "settle_s": 300.0})
+PAGING_RAG_SETTINGS = (
+    "ENABLE_RAG_HYBRID_SEARCH", "HYBRID_BM25_WEIGHT", "TEXT_SPLITTER", "ENABLE_MARKDOWN_HEADER_TEXT_SPLITTER",
+    "CHUNK_SIZE", "CHUNK_OVERLAP", "CHUNK_MIN_SIZE_TARGET",
+)
+
+
+@dataclasses.dataclass(frozen=True)
+class Passed:
+    """A passing step's values, with a detail other than ``ok``."""
+
+    detail: str
+    values: dict[str, Any]
+
+
+def settled_points(read: Callable[[], int], timeout: float) -> int:
+    """A tenant's point count once two reads in a row agree on a nonzero value.
+
+    Open WebUI uploads points without waiting for Qdrant to apply them, so a
+    count can trail the call that stored them.  At the timeout the last read
+    is returned for the caller's assertion.
+    """
+
+    deadline = time.monotonic() + timeout
+    previous = read()
+    while True:
+        time.sleep(PAGING_POLL_S)
+        current = read()
+        if (current == previous and current > 0) or time.monotonic() > deadline:
+            return current
+        previous = current
+
+
+def retrieved_chunks(sources: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    chunks = [text for source in sources for text in source.get("document") or [] if isinstance(text, str)]
+    return {"sources": len(sources), "chunks": len(chunks), "planted": any(PAGING_FACT in text for text in chunks)}
+
+
+def _delete_paging_inputs(webui: sc.Endpoint, token: str, file_id: str, knowledge_id: str | None) -> list[str]:
+    targets = [("knowledge", sc.API["knowledge_delete"].format(id=knowledge_id))] if knowledge_id else []
+    targets.append(("file", sc.API["file"].format(id=file_id)))
+    failures = []
+    for what, path in targets:
+        try:
+            status: int | str = webui.request("DELETE", path, token=token).status
+        except (OSError, http.client.HTTPException) as error:
+            status = type(error).__name__
+        if status != 200:
+            failures.append(f"the paging {what} delete returned {status}")
+    return failures
+
+
+def paging_check(webui: sc.Endpoint, qdrant: Qdrant, token: str, chat_model: str) -> Passed:
+    """Prove Open WebUI pages its Qdrant scroll reads past the strict-mode cap.
+
+    The corpus indexes into more than one scroll page of file chunks.  Adding
+    the file to a knowledge base copies its chunks with one scroll read, so a
+    knowledge tenant that holds exactly as many points as the file's proves
+    every page was read; a one-page read would copy exactly 1000.  A
+    knowledge-scoped chat then runs the packaged hybrid search, whose BM25
+    corpus is another full scroll read, and must return the planted sentence.
+    Both counts are exact, read-only Qdrant counts.
+    """
+
+    config = webui.json("GET", sc.API["rag_config"], token=token)
+    settings = {key: (config or {}).get(key) for key in PAGING_RAG_SETTINGS}
+    if settings["ENABLE_RAG_HYBRID_SEARCH"] is not True:
+        raise sc.ScenarioFailure(f"hybrid search is not enabled: {json.dumps(settings, sort_keys=True)}")
+    corpus = paging_corpus()
+    values: dict[str, Any] = {
+        "corpus": {"name": PAGING_CORPUS_NAME, "bytes": len(corpus), "sha256": hashlib.sha256(corpus).hexdigest(),
+                   "sections": PAGING_SECTIONS, "planted_section": PAGING_PLANTED_SECTION},
+        "rag_settings": settings,
+        "scroll_page": QDRANT_SCROLL_PAGE,
+    }
+    started = time.monotonic()
+    file_id = upload_markdown(webui, token, PAGING_CORPUS_NAME, corpus, "paging corpus", PAGING_TIMEOUTS["index_s"])
+    timings = {"index_s": round(time.monotonic() - started, 3)}
+    knowledge_id: str | None = None
+    try:
+        file_points = settled_points(lambda: qdrant.tenant_points(COLLECTIONS[2], f"file-{file_id}"),
+                                     PAGING_TIMEOUTS["settle_s"])
+        created = webui.json("POST", sc.API["knowledge_create"],
+                             {"name": "household-paging-corpus", "description": "Acceptance paging check"}, token=token)
+        knowledge_id = created.get("id") if isinstance(created, dict) else None
+        if not isinstance(knowledge_id, str):
+            raise sc.ScenarioFailure("the knowledge create returned no id")
+        knowledge = knowledge_id
+        started = time.monotonic()
+        webui.json("POST", sc.API["knowledge_file_add"].format(id=knowledge), {"file_id": file_id}, token=token)
+        knowledge_points = settled_points(lambda: qdrant.tenant_points(COLLECTIONS[1], knowledge),
+                                          PAGING_TIMEOUTS["settle_s"])
+        timings["knowledge_add_s"] = round(time.monotonic() - started, 3)
+        started = time.monotonic()
+        response = webui.request(
+            "POST",
+            sc.API["chat"],
+            payload={
+                "model": chat_model,
+                "stream": True,
+                "temperature": 0,
+                "params": {"temperature": 0},
+                "messages": [{"role": "user", "content": PAGING_PROMPT}],
+                "files": [{"type": "collection", "id": knowledge}],
+            },
+            token=token,
+        )
+        timings["chat_s"] = round(time.monotonic() - started, 3)
+        if response.status != 200:
+            raise sc.ScenarioFailure(f"the knowledge-scoped chat returned HTTP {response.status}")
+        _, sources = sc.parse_chat_response(response.body, response.content_type)
+        retrieved = retrieved_chunks(sources)
+        values.update(points={"file": file_points, "knowledge": knowledge_points}, retrieved=retrieved,
+                      timings=timings)
+        if not (file_points > QDRANT_SCROLL_PAGE and knowledge_points == file_points
+                and retrieved["chunks"] and retrieved["planted"]):
+            raise sc.ScenarioFailure(json.dumps(values, sort_keys=True))
+    except BaseException:
+        # Clean up on every path, but never let the cleanup hide the failure.
+        _delete_paging_inputs(webui, token, file_id, knowledge_id)
+        raise
+    failures = _delete_paging_inputs(webui, token, file_id, knowledge_id)
+    if failures:
+        raise sc.ScenarioFailure("; ".join(failures))
+    return Passed(f"file tenant {file_points} points; knowledge tenant {knowledge_points} points", values)
 
 
 def one_admin(webui: sc.Endpoint, token: str) -> dict[str, Any]:
@@ -1995,10 +2186,11 @@ class Trial:
         print(step.line() if not self.kit.rehearsal or step.result != sc.PASS else f"{step.id} {step.result}",
               flush=True)
 
-    def step(self, step_id: str, action: Callable[[], dict[str, Any]], *, critical: bool = False) -> None:
+    def step(self, step_id: str, action: Callable[[], dict[str, Any] | Passed], *, critical: bool = False) -> None:
         started = time.monotonic()
         try:
-            values, result, detail = action(), sc.PASS, "ok"
+            outcome, result = action(), sc.PASS
+            values, detail = (outcome.values, outcome.detail) if isinstance(outcome, Passed) else (outcome, "ok")
         except sc.Escalation as error:
             values, result, detail = {}, sc.ESCALATE, str(error)
         except sc.Blocked as error:
@@ -2370,6 +2562,10 @@ class Trial:
             raise sc.ScenarioFailure(json.dumps(values, sort_keys=True))
         return values
 
+    def qdrant_paging(self) -> Passed:
+        kit = self.kit
+        return paging_check(kit.caddy(PAGING_TIMEOUTS["request_s"]), kit.qdrant(), self.token, self.chat_id())
+
     def resources(self) -> dict[str, Any]:
         kit = self.kit
         snapshot_resources(kit, "end of trial")
@@ -2452,9 +2648,12 @@ class Trial:
             # its ceiling is recorded, and the rollback drill still runs.
             self.step(TRIAL_STEPS[15], self.restore_drill)
             self.step(TRIAL_STEPS[16], self.rollback_drill, critical=True)
+            # After both drills, so their anchor and timings never carry the
+            # paging corpus.
+            self.step(TRIAL_STEPS[17], self.qdrant_paging)
         except Stop:
             pass
-        self.step_safely(TRIAL_STEPS[17], self.resources)
+        self.step_safely(TRIAL_STEPS[18], self.resources)
         try:
             self.lemond_post, _ = sc.lemond_snapshot(kit.lemond())
         except (OSError, http.client.HTTPException, sc.ScenarioFailure):
@@ -2515,7 +2714,7 @@ class Trial:
         complete = drills == {"restore_drills": 1, "rollback_drills": 1}
         if safe and not complete:
             detail = "a critical failure stopped the trial before both drills ran"
-        evidence_step = Step(TRIAL_STEPS[18], sc.PASS if safe and complete else sc.FAIL, detail, 0.0,
+        evidence_step = Step(TRIAL_STEPS[19], sc.PASS if safe and complete else sc.FAIL, detail, 0.0,
                              {"trial_set_count": 1, **drills})
         self.record(evidence_step)
         if (not safe or not complete) and exit_code == sc.EXIT_PASS:

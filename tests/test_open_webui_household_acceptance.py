@@ -1276,6 +1276,133 @@ class HandbookTests(unittest.TestCase):
         self.assertIn(stored, str(raised.exception))
 
 
+class QdrantPagingTests(unittest.TestCase):
+    def test_the_paging_corpus_chunks_past_one_scroll_page_and_plants_its_fact_deep(self):
+        corpus = kit_module.paging_corpus()
+        self.assertEqual(corpus, kit_module.paging_corpus())
+        sections = corpus.decode("utf-8").strip("\n").split("\n\n")
+        self.assertEqual(len(sections), 1100)
+        # Two sections never fit one 1000-character chunk, and none needs a
+        # split, so either Open WebUI splitter gives one chunk per section.
+        self.assertTrue(all(500 < len(section) < 1000 for section in sections))
+        self.assertTrue(all(section.startswith("## ") and "\n\n" not in section for section in sections))
+        planted = [number for number, section in enumerate(sections, 1)
+                   if "The copper lantern hangs above the north greenhouse door." in section]
+        self.assertEqual(planted, [1050])
+        filler = "\n".join(section for number, section in enumerate(sections, 1) if number != 1050).lower()
+        for word in ("copper", "lantern", "hang", "north", "greenhouse", "door", "where"):
+            self.assertNotRegex(filler, rf"\b{word}")
+        self.assertLess(len(corpus), 1024 * 1024)
+
+    def test_a_tenant_count_is_one_exact_read_only_count_request(self):
+        qdrant = kit_module.Qdrant(16333, "admin-key")
+        requests = []
+
+        def request(method, path, *, payload=None, token=None, **_kw):
+            requests.append((method, path, payload, token))
+            return sc.Response(200, "application/json", json.dumps({"result": {"count": 1100}}).encode())
+
+        qdrant.endpoint = mock.Mock(request=mock.Mock(side_effect=request))
+        self.assertEqual(qdrant.tenant_points("open-webui-rag-v1_knowledge", "k1"), 1100)
+        self.assertEqual(requests, [(
+            "POST", "/collections/open-webui-rag-v1_knowledge/points/count",
+            {"filter": {"must": [{"key": "tenant_id", "match": {"value": "k1"}}]}, "exact": True},
+            "admin-key",
+        )])
+
+    PLANTED_CHUNK = "## Ledger page 1050\nThe copper lantern hangs above the north greenhouse door. Ledger page 1050 row 1"
+    PLANTED_SOURCES = [{"source": {"type": "collection", "id": "k1"}, "document": [PLANTED_CHUNK],
+                        "metadata": [{"name": "household-paging-corpus.md"}], "distances": [0.91]}]
+
+    class FakeOpenWebUI:
+        """Open WebUI as the paging check sees it; ``tenants`` is what Qdrant then holds."""
+
+        json = sc.Endpoint.json
+
+        def __init__(self, *, file_points=1100, knowledge_points=1100, sources=None, hybrid=True, delete_status=200):
+            self.file_points, self.knowledge_points = file_points, knowledge_points
+            self.sources = QdrantPagingTests.PLANTED_SOURCES if sources is None else sources
+            self.hybrid, self.delete_status = hybrid, delete_status
+            self.tenants, self.chats, self.deleted = {}, [], []
+
+        def request(self, method, path, *, payload=None, body=None, content_type=None, token=None):
+            def reply(value, status=200, kind="application/json"):
+                return sc.Response(status, kind, value if isinstance(value, bytes) else json.dumps(value).encode())
+
+            if (method, path) == ("GET", sc.API["rag_config"]):
+                return reply({"ENABLE_RAG_HYBRID_SEARCH": self.hybrid, "TEXT_SPLITTER": "", "CHUNK_SIZE": 1000,
+                              "CHUNK_OVERLAP": 100, "ENABLE_MARKDOWN_HEADER_TEXT_SPLITTER": True})
+            if (method, path) == ("POST", sc.API["files"]):
+                self.tenants["file-f1"] = self.file_points
+                return reply({"id": "f1"})
+            if (method, path) == ("GET", sc.API["file_status"].format(id="f1")):
+                return reply({"status": "completed"})
+            if (method, path) == ("POST", sc.API["knowledge_create"]):
+                return reply({"id": "k1"})
+            if (method, path) == ("POST", sc.API["knowledge_file_add"].format(id="k1")):
+                self.tenants["k1"] = self.knowledge_points
+                return reply({"id": "k1"})
+            if (method, path) == ("POST", sc.API["chat"]):
+                self.chats.append(payload)
+                events = [{"sources": self.sources}, {"choices": [{"delta": {"content": "An answer."}}]}]
+                stream = "".join(f"data: {json.dumps(event)}\n\n" for event in events) + "data: [DONE]\n\n"
+                return reply(stream.encode(), kind="text/event-stream")
+            if (method, path) == ("DELETE", sc.API["knowledge_delete"].format(id="k1")):
+                self.deleted.append("knowledge k1")
+                return reply({}, self.delete_status)
+            if (method, path) == ("DELETE", sc.API["file"].format(id="f1")):
+                self.deleted.append("file f1")
+                return reply({})
+            raise AssertionError(f"unexpected request {method} {path}")
+
+    def check(self, webui):
+        qdrant = kit_module.Qdrant(16333, "admin-key")
+
+        def count(method, path, *, payload, **_kw):
+            tenant = payload["filter"]["must"][0]["match"]["value"]
+            return sc.Response(200, "application/json", json.dumps({"result": {"count": webui.tenants.get(tenant, 0)}}).encode())
+
+        qdrant.endpoint = mock.Mock(request=mock.Mock(side_effect=count))
+        with mock.patch.object(kit_module, "PAGING_POLL_S", 0):
+            return kit_module.paging_check(webui, qdrant, "t", "chat")
+
+    def test_a_knowledge_base_past_one_scroll_page_passes_and_records_both_counts(self):
+        webui = self.FakeOpenWebUI()
+        outcome = self.check(webui)
+        self.assertEqual(outcome.detail, "file tenant 1100 points; knowledge tenant 1100 points")
+        self.assertEqual(outcome.values["points"], {"file": 1100, "knowledge": 1100})
+        self.assertEqual(outcome.values["retrieved"], {"sources": 1, "chunks": 1, "planted": True})
+        self.assertEqual([chat["files"] for chat in webui.chats], [[{"type": "collection", "id": "k1"}]])
+        self.assertEqual(webui.deleted, ["knowledge k1", "file f1"])
+
+    def test_each_missed_paging_assertion_fails_and_still_cleans_up(self):
+        unplanted = [{**self.PLANTED_SOURCES[0], "document": ["## Ledger page 0007\nLedger page 0007 row 1"]}]
+        cases = {
+            # A one-page scroll copies exactly one page into the knowledge base.
+            "one scroll page copied": {"knowledge_points": 1000},
+            "no tenant past the cap": {"file_points": 1000, "knowledge_points": 1000},
+            "empty sources": {"sources": []},
+            "planted sentence not retrieved": {"sources": unplanted},
+        }
+        for name, overrides in cases.items():
+            with self.subTest(name):
+                webui = self.FakeOpenWebUI(**overrides)
+                with self.assertRaises(sc.ScenarioFailure):
+                    self.check(webui)
+                self.assertEqual(webui.deleted, ["knowledge k1", "file f1"])
+
+    def test_hybrid_search_off_fails_before_anything_is_uploaded(self):
+        webui = self.FakeOpenWebUI(hybrid=False)
+        with self.assertRaises(sc.ScenarioFailure):
+            self.check(webui)
+        self.assertEqual(webui.tenants, {})
+
+    def test_a_failed_cleanup_delete_fails_the_check(self):
+        with self.assertRaises(sc.ScenarioFailure) as raised:
+            self.check(self.FakeOpenWebUI(delete_status=500))
+        self.assertIn("knowledge", str(raised.exception))
+
+
 class FirstStartTests(unittest.TestCase):
     def test_the_alembic_tmp_table_warning_is_not_a_migration_error(self):
         warning = (
@@ -1344,8 +1471,13 @@ class ResourceTests(unittest.TestCase):
 class EvidenceTests(unittest.TestCase):
     def test_trial_map_is_one_pass_with_the_frozen_resmoke_ids_in_order(self):
         steps = kit_module.TRIAL_STEPS
-        self.assertEqual(len(steps), 19)
-        self.assertEqual(len(set(steps)), 19)
+        self.assertEqual(len(steps), 20)
+        self.assertEqual(len(set(steps)), 20)
+        # The paging corpus runs after both drills, so their anchor and
+        # timings never carry its points.
+        self.assertEqual(steps[steps.index("open-webui.acceptance.drill.rollback") + 1],
+                         "open-webui.acceptance.qdrant.paging")
+        self.assertEqual(steps[-2:], ("open-webui.acceptance.resources", "open-webui.acceptance.evidence"))
         self.assertEqual(tuple(item for item in steps if item.startswith("open-webui.resmoke.")), sc.SCENARIO_IDS)
         self.assertEqual(sum(1 for item in steps if ".drill." in item), 2)
 
@@ -1439,7 +1571,7 @@ class EvidenceTests(unittest.TestCase):
                 code = trial.finish()
             self.assertEqual(code, sc.EXIT_FAIL)
             recorded = trial.steps[-1]
-            self.assertEqual((recorded.id, recorded.result), (kit_module.TRIAL_STEPS[18], sc.FAIL))
+            self.assertEqual((recorded.id, recorded.result), (kit_module.TRIAL_STEPS[-1], sc.FAIL))
             self.assertEqual(recorded.values["restore_drills"], 0)
 
     def test_an_undetectable_lemonade_restart_is_a_condition_not_a_pass(self):
@@ -1563,7 +1695,7 @@ class EvidenceTests(unittest.TestCase):
                 raise sc.ScenarioFailure('{"restore_s": 41.0}')
 
             for name in ("identity", "unit_properties", "first_start", "commission", "restart", "g4", "no_credential",
-                         "reranker_down", "recovery", "privacy", "rollback_drill", "resources"):
+                         "reranker_down", "recovery", "privacy", "rollback_drill", "qdrant_paging", "resources"):
                 setattr(trial, name, ok(name))
             trial.restore_drill = over_ceiling
             trial.prepare_scenarios = lambda: None
@@ -1573,10 +1705,24 @@ class EvidenceTests(unittest.TestCase):
                     mock.patch.object(sc, "lemond_snapshot", return_value=({}, {})), \
                     contextlib.redirect_stdout(io.StringIO()):
                 trial.run()
-            self.assertIn("rollback_drill", ran)
+            self.assertEqual(ran[-3:], ["rollback_drill", "qdrant_paging", "resources"])
             results = {step.id: step.result for step in trial.steps}
             self.assertEqual(results["open-webui.acceptance.drill.restore"], sc.FAIL)
             self.assertEqual(results["open-webui.acceptance.drill.rollback"], sc.PASS)
+            self.assertEqual(results["open-webui.acceptance.qdrant.paging"], sc.PASS)
+
+    def test_a_step_can_record_its_measured_detail(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit, trial = self.trial(directory, rehearsal=False)
+            trial.steps = []
+            measured = kit_module.Passed("file tenant 1100 points; knowledge tenant 1100 points",
+                                         {"points": {"file": 1100, "knowledge": 1100}})
+            with contextlib.redirect_stdout(io.StringIO()) as output:
+                trial.step("open-webui.acceptance.qdrant.paging", lambda: measured)
+            recorded = trial.steps[-1]
+            self.assertEqual((recorded.result, recorded.detail, recorded.values),
+                             (sc.PASS, measured.detail, measured.values))
+            self.assertIn("knowledge tenant 1100 points", output.getvalue())
 
     def test_the_rollback_refuses_without_an_anchor_before_touching_state(self):
         with tempfile.TemporaryDirectory() as directory:
