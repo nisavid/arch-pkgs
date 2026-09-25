@@ -1180,7 +1180,7 @@ class CredentialTests(unittest.TestCase):
         self.assertEqual(signature, expected)
         self.assertEqual(kit_module.jwt_claims(kit_module.mint_jwt("k", "r", 300, now=1000))["exp"], 1300)
 
-    def test_no_credential_check_ignores_toggles_and_flags_key_material_in_admin_exports(self):
+    def test_stored_secret_check_ignores_toggles_and_flags_key_material_in_admin_exports(self):
         env = packaged_env()
         self.assertEqual(kit_module.nonempty_key_paths(env, {"OPENAI_API_KEYS": ""}), [])
         # The nested shapes of Open WebUI 0.11's GET /openai/config and /api/v1/retrieval/config.
@@ -1194,8 +1194,8 @@ class CredentialTests(unittest.TestCase):
             ["OPENAI_API_KEYS", "web.TAVILY_API_KEY"],
         )
 
-    def no_credential(self, directory, config):
-        """Run the no-credential check on an Open WebUI 0.11 database holding ``config``.
+    def no_stored_secret(self, directory, config):
+        """Run the stored-secret check on an Open WebUI 0.11 database holding ``config``.
 
         Migration 3ff2c63645b8 renames the old ``config(id, data)`` blob table to
         ``config_old`` and creates one ``config`` row per dotted key, the
@@ -1221,9 +1221,9 @@ class CredentialTests(unittest.TestCase):
         trial = kit_module.Trial(kit)
         with mock.patch.object(kit_module.Kit, "uds") as uds:
             uds.return_value.json.return_value = {"status": True}
-            return trial.no_credential()
+            return trial.no_stored_secret()
 
-    def test_no_credential_check_passes_on_empty_per_key_config_rows(self):
+    def test_stored_secret_check_passes_on_empty_per_key_config_rows(self):
         config = {
             "openai.enable": True,
             "openai.api_base_urls": [sc.DEFAULT_LEMOND_URL + "/api/v1"],
@@ -1235,13 +1235,13 @@ class CredentialTests(unittest.TestCase):
             "auth.api_key.endpoint_restrictions": False,
         }
         with tempfile.TemporaryDirectory() as directory:
-            values = self.no_credential(directory, config)
+            values = self.no_stored_secret(directory, config)
         self.assertEqual(values["nonempty_key_fields"], [])
 
-    def test_no_credential_check_flags_a_credential_in_a_per_key_config_row(self):
+    def test_stored_secret_check_flags_a_secret_in_a_per_key_config_row(self):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaises(sc.ScenarioFailure) as raised:
-                self.no_credential(directory, {"rag.openai.api_key": "sk-x", "openai.api_keys": [""]})
+                self.no_stored_secret(directory, {"rag.openai.api_key": "sk-x", "openai.api_keys": [""]})
         self.assertEqual(json.loads(str(raised.exception))["nonempty_key_fields"], ["rag.openai.api_key"])
 
     def test_user_credentials_need_the_units_to_load_them_too(self):
@@ -1559,6 +1559,10 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(steps[-2:], ("open-webui.acceptance.resources", "open-webui.acceptance.evidence"))
         self.assertEqual(tuple(item for item in steps if item.startswith("open-webui.resmoke.")), sc.SCENARIO_IDS)
         self.assertEqual(sum(1 for item in steps if ".drill." in item), 2)
+        # A changed step gets a new id and an evidence schema bump, never a
+        # rewritten id.
+        self.assertEqual(steps[6], "open-webui.acceptance.connections.no-stored-secret")
+        self.assertEqual(kit_module.SCHEMA, "open-webui-household-acceptance/v2")
 
     def test_publicize_hides_private_paths_and_addresses(self):
         replacements = [("/srv/build/owui", "<root>"), ("/run/user/1000", "$XDG_RUNTIME_DIR")]
@@ -1615,7 +1619,7 @@ class EvidenceTests(unittest.TestCase):
             kit, trial = self.trial(directory, rehearsal=False)
             evidence = kit_module.build_evidence(kit, trial, 0, False)
             v1.assert_public_safe(evidence)
-            self.assertEqual(evidence["schema"], "open-webui-household-acceptance/v1")
+            self.assertEqual(evidence["schema"], "open-webui-household-acceptance/v2")
             self.assertEqual(
                 (evidence["trial_set_count"], evidence["restore_drills"], evidence["rollback_drills"]), (1, 1, 1)
             )
@@ -1773,7 +1777,7 @@ class EvidenceTests(unittest.TestCase):
                 ran.append("restore")
                 raise sc.ScenarioFailure('{"restore_s": 41.0}')
 
-            for name in ("identity", "unit_properties", "first_start", "commission", "restart", "g4", "no_credential",
+            for name in ("identity", "unit_properties", "first_start", "commission", "restart", "g4", "no_stored_secret",
                          "reranker_down", "recovery", "privacy", "rollback_drill", "qdrant_paging", "resources"):
                 setattr(trial, name, ok(name))
             trial.restore_drill = over_ceiling

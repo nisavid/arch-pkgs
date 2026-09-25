@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
-"""Credential-free, loopback-only, deterministic Lemonade stand-in for the kit rehearsal.
+"""Loopback-only, deterministic Lemonade stand-in for the kit rehearsal.
 
 The rehearsal is kit debugging only: it is never trial evidence.  This stub
 serves the Lemonade routes Open WebUI and the scenario module use, with the
 v1 deterministic embedding and rerank helpers, so the whole kit can run
-without the shared Lemonade.  It requires no key and logs whether any request
-carried an Authorization header, plus the first bytes of every embedding
-input so the rehearsal can check that Open WebUI applied the settings
-prefixes.
+without the shared Lemonade.  It logs whether any request carried an
+Authorization header, plus the first bytes of every embedding input so the
+rehearsal can check that Open WebUI applied the settings prefixes.
 """
 
 from __future__ import annotations
