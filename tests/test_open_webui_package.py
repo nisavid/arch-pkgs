@@ -82,13 +82,13 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
         lock = lock_bytes.decode()
         entries = re.findall(r"(?m)^([A-Za-z0-9][A-Za-z0-9._-]*)==([^ \\\n]+)", lock)
 
-        self.assertEqual(len(entries), 222)
-        self.assertEqual(len({name.casefold().replace("_", "-") for name, _ in entries}), 222)
+        self.assertEqual(len(entries), 200)
+        self.assertEqual(len({name.casefold().replace("_", "-") for name, _ in entries}), 200)
         self.assertIn(("qdrant-client", "1.18.0"), entries)
         self.assertIn(("portalocker", "3.2.0"), entries)
         self.assertEqual(
             hashlib.sha256(lock_bytes).hexdigest(),
-            "df99fc265998cf7029d22b01faa81f3dc015d255754748e3e6512d84cce95007",
+            "8a3532e0b4e30a0edcbdb8255e915fca70ec583690266e17169ad48dbac6a1f5",
         )
         for block in re.split(r"(?m)(?=^[A-Za-z0-9][A-Za-z0-9._-]*==)", lock):
             if re.search(r"(?m)^[A-Za-z0-9][A-Za-z0-9._-]*==", block):
@@ -134,11 +134,11 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
         for asset, digest in (
             (
                 "open-webui-npm-offline-closure-0.11.4.tar.zst",
-                "6238b436c6669a311623d97724c6b2ada0e77090d0e5219860acc38c53fb32b1",
+                "617abc7d60da12f080faa690de989fff38eb4cd40b519256cce35a48086b9438",
             ),
             (
                 "open-webui-python-offline-closure-0.11.4-cp314-x86_64.tar.zst",
-                "bcd3c5c651fc42e8e5a73a4c81f4b5760e82f6b39eb714caf999700bad4ed27c",
+                "005be1c5605e5291b37ccc789454f8f37ec894302bc064fcfcae5e1b4a9a0f13",
             ),
         ):
             self.assertIn(asset, source_info)
