@@ -610,6 +610,90 @@ class OpenWebUIHouseholdRAGGateTests(unittest.TestCase):
                     timeout=timeout,
                 )
 
+    def test_empty_rerank_candidates_return_nothing_and_keep_the_gate_open(self):
+        # Since 0.11.4, RerankCompressor returns [] for an empty candidate
+        # list before it consults the reranker, so an empty retrieval yields
+        # no content and no longer closes the qualified gate. Real candidates
+        # still pass only with valid reranker scores, or close the gate.
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_root = Path(temp_dir)
+            relative = "backend/open_webui/retrieval/utils.py"
+            utils_path = source_root / relative
+            utils_path.parent.mkdir(parents=True)
+            shutil.copyfile(self.upstream_source / relative, utils_path)
+            applied = subprocess.run(
+                ["git", "apply", f"--include={relative}", str(RAG_PATCH)],
+                cwd=source_root,
+                text=True,
+                capture_output=True,
+                timeout=20,
+                check=False,
+            )
+            self.assertEqual(applied.returncode, 0, applied.stderr)
+
+            parsed = ast.parse(utils_path.read_text(encoding="utf-8"))
+            compressor_node = next(
+                node
+                for node in parsed.body
+                if isinstance(node, ast.ClassDef) and node.name == "RerankCompressor"
+            )
+
+            class CompressorFields:
+                def __init__(self, **fields):
+                    for name, value in fields.items():
+                        setattr(self, name, value)
+
+            typing_module = __import__("typing")
+            namespace = {
+                "Any": typing_module.Any,
+                "BaseDocumentCompressor": CompressorFields,
+                "Callbacks": typing_module.Any,
+                "Document": SimpleNamespace,
+                "RAGUnavailableError": self.gate.RAGUnavailableError,
+                "Sequence": typing_module.Sequence,
+                "asyncio": asyncio,
+                "close_required_reranker": self.gate.close_required_reranker,
+                "operator": __import__("operator"),
+                "validate_rerank_scores": self.gate.validate_rerank_scores,
+            }
+            exec(  # noqa: S102 - executes one extracted class from the exact bound source
+                compile(
+                    ast.fix_missing_locations(
+                        ast.Module(body=[compressor_node], type_ignores=[])
+                    ),
+                    str(utils_path),
+                    "exec",
+                ),
+                namespace,
+            )
+
+        reranked_batches = []
+
+        def malformed_reranker(query, documents):
+            reranked_batches.append(list(documents))
+            return []
+
+        compressor = namespace["RerankCompressor"](
+            embedding_function=None,
+            top_n=3,
+            reranking_function=malformed_reranker,
+            r_score=0.0,
+        )
+        marker = object()
+        self.gate.configure_required_reranker(True)
+        self.gate.qualify_required_reranker([0.91, 0.08])
+
+        self.assertEqual(asyncio.run(compressor.acompress_documents([], "query")), [])
+        self.assertEqual(reranked_batches, [])
+        self.gate.require_required_reranker(marker)
+
+        candidate = SimpleNamespace(page_content="unreranked text", metadata={})
+        with self.assertRaises(self.gate.RAGUnavailableError):
+            asyncio.run(compressor.acompress_documents([candidate], "query"))
+        self.assertEqual(reranked_batches, [[candidate]])
+        with self.assertRaises(self.gate.RAGUnavailableError):
+            self.gate.require_required_reranker(marker)
+
     def test_patch_applies_to_retained_exact_open_webui_source_and_compiles(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             source_root = Path(temp_dir)
