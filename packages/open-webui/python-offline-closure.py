@@ -27,9 +27,9 @@ from packaging.version import InvalidVersion, Version
 
 FORMAT = "open-webui-python-offline-closure-v1"
 TARGET = "cp314-manylinux_2_28_x86_64"
-EXPECTED_DISTRIBUTION_COUNT = 222
+EXPECTED_DISTRIBUTION_COUNT = 200
 EXPECTED_PIP_VERSION = "26.2.1"
-INDEX_CUTOFF = dt.datetime.fromisoformat("2026-08-18T06:25:20+00:00")
+INDEX_CUTOFF = dt.datetime.fromisoformat("2026-09-21T19:31:44+00:00")
 REQUIREMENT = re.compile(r"^([a-z0-9][a-z0-9._-]*)==([^ \\]+)(?: \\)?$")
 HASH = re.compile(r"^    --hash=sha256:([0-9a-f]{64})(?: \\)?$")
 
@@ -584,7 +584,8 @@ def verify_archive(
         raise ClosureError("archive manifest artifact inventory is invalid")
     if not allow_partial and len(artifacts) != EXPECTED_DISTRIBUTION_COUNT:
         raise ClosureError(
-            "archive manifest is not the complete 222-distribution closure"
+            "archive manifest is not the complete "
+            f"{EXPECTED_DISTRIBUTION_COUNT}-distribution closure"
         )
 
     artifact_by_filename: dict[str, dict[str, object]] = {}
