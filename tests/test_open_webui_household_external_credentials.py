@@ -24,9 +24,9 @@ PATCH_0006 = PACKAGE_DIR / "0006-enforce-session-epoch.patch"
 PATCH_0007 = PACKAGE_DIR / "0007-keep-rag-credentials-external.patch"
 RAG_GATE = PACKAGE_DIR / "open-webui-rag-gate.py"
 
-OPEN_WEBUI_COMMIT = "f9590b8017199e56d5e953657e6498e3cef1d246"
+OPEN_WEBUI_COMMIT = "8bd8b4fac5e059578ac0c74b3c18d11139f88b7d"
 OPEN_WEBUI_SDIST_SHA256 = (
-    "e28c4fa997bf0a678caa7a0db6441da2e0c33b9a4120677f959ec3e45fccf9e9"
+    "1f1a31668a0dee733953c29d6183d78dd78984e696aa8eb0f2083f5796497be0"
 )
 EXTERNAL_KEYS = {
     "rag.openai.api_key",
@@ -418,6 +418,8 @@ class OpenWebUIExternalCredentialTests(unittest.TestCase):
             "get_retrieval_config": get_config,
             "unload_embedding_model": unload,
             "get_ef": lambda *_args: object(),
+            # USE_SLIM_DOCKER is unset in the packaged service.
+            "USE_SLIM": False,
             "get_embedding_function": lambda *args, **_kwargs: captured.setdefault(
                 "key", args[4]
             ),
@@ -485,6 +487,7 @@ class OpenWebUIExternalCredentialTests(unittest.TestCase):
                 exception=lambda *_args: None,
             ),
             "DEVICE_TYPE": "cpu",
+            "USE_SLIM": False,
         }
         get_endpoint = _extract_async_function(router, "get_rag_config", namespace)
         update_endpoint = _extract_async_function(

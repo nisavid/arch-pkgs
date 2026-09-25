@@ -1,6 +1,6 @@
 # Page Qdrant scroll reads so strict-mode max_query_limit does not reject them.
-# Open WebUI commit: f9590b8017199e56d5e953657e6498e3cef1d246
-# Open WebUI 0.11.0 sdist SHA-256: e28c4fa997bf0a678caa7a0db6441da2e0c33b9a4120677f959ec3e45fccf9e9
+# Open WebUI commit: 8bd8b4fac5e059578ac0c74b3c18d11139f88b7d
+# Open WebUI 0.11.4 sdist SHA-256: 1f1a31668a0dee733953c29d6183d78dd78984e696aa8eb0f2083f5796497be0
 # Apply after 0001-0007; none of them touch these files.
 # query() and get() in both Qdrant clients follow next_page_offset instead of
 # one scroll with NO_LIMIT = 999999999. Each request asks for at most
@@ -24,10 +24,10 @@
 # against that release.
 # Details: packages/open-webui/README.md, Qdrant Scroll Paging
 diff --git a/backend/open_webui/retrieval/vector/dbs/qdrant.py b/backend/open_webui/retrieval/vector/dbs/qdrant.py
-index 7156a16..0827c94 100644
+index f8ed600..c10c10e 100644
 --- a/backend/open_webui/retrieval/vector/dbs/qdrant.py
 +++ b/backend/open_webui/retrieval/vector/dbs/qdrant.py
-@@ -30,6 +30,36 @@ NO_LIMIT = 999999999
+@@ -31,6 +31,36 @@ NO_LIMIT = 999999999
  
  log = logging.getLogger(__name__)
  
@@ -62,9 +62,9 @@ index 7156a16..0827c94 100644
 +    return points
 +
  
- class QdrantClient(VectorDBBase):
-     def __init__(self):
-@@ -171,32 +201,27 @@ class QdrantClient(VectorDBBase):
+ def _metadata_filter(key: str, op: str, value: Any) -> models.FieldCondition:
+     match = models.MatchAny(any=value) if op == '$in' else models.MatchValue(value=value)
+@@ -180,32 +210,27 @@ class QdrantClient(VectorDBBase):
          if not self.has_collection(collection_name):
              return None
          try:
@@ -106,10 +106,10 @@ index 7156a16..0827c94 100644
      def insert(self, collection_name: str, items: list[VectorItem]):
          # Insert the items into the collection, if the collection does not exist, it will be created.
 diff --git a/backend/open_webui/retrieval/vector/dbs/qdrant_multitenancy.py b/backend/open_webui/retrieval/vector/dbs/qdrant_multitenancy.py
-index 9b71764..7eb7d7e 100644
+index 870cd2b..261b3b2 100644
 --- a/backend/open_webui/retrieval/vector/dbs/qdrant_multitenancy.py
 +++ b/backend/open_webui/retrieval/vector/dbs/qdrant_multitenancy.py
-@@ -28,12 +28,41 @@ from qdrant_client.http.exceptions import UnexpectedResponse
+@@ -29,12 +29,41 @@ from qdrant_client.http.exceptions import UnexpectedResponse
  from qdrant_client.http.models import PointStruct
  from qdrant_client.models import models
  
@@ -152,14 +152,14 @@ index 9b71764..7eb7d7e 100644
  
  def _tenant_filter(tenant_id: str) -> models.FieldCondition:
      return models.FieldCondition(key=TENANT_ID_FIELD, match=models.MatchValue(value=tenant_id))
-@@ -283,17 +312,11 @@ class QdrantClient(VectorDBBase):
+@@ -287,17 +316,11 @@ class QdrantClient(VectorDBBase):
          if not self.client.collection_exists(collection_name=mt_collection):
-             log.debug(f"Collection {mt_collection} doesn't exist, query returns None")
+             log.debug("Collection %s doesn't exist, query returns None", mt_collection)
              return None
 -        if limit is None:
 -            limit = NO_LIMIT
          tenant_filter = _tenant_filter(tenant_id)
-         field_conditions = [_metadata_filter(k, v) for k, v in filter.items()]
+         field_conditions = [_metadata_filter(k, '$eq', v) for k, v in filter.items()]
          combined_filter = models.Filter(must=[tenant_filter, *field_conditions])
 -        points = self.client.scroll(
 -            collection_name=mt_collection,
@@ -172,8 +172,8 @@ index 9b71764..7eb7d7e 100644
  
      def get(self, collection_name: str) -> Optional[GetResult]:
          """
-@@ -306,12 +329,8 @@ class QdrantClient(VectorDBBase):
-             log.debug(f"Collection {mt_collection} doesn't exist, get returns None")
+@@ -310,12 +333,8 @@ class QdrantClient(VectorDBBase):
+             log.debug("Collection %s doesn't exist, get returns None", mt_collection)
              return None
          tenant_filter = _tenant_filter(tenant_id)
 -        points = self.client.scroll(

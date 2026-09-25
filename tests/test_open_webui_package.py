@@ -21,13 +21,13 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
     def test_recipe_binds_exact_release_and_frozen_closures(self):
         recipe = read(OPEN_WEBUI / "PKGBUILD")
 
-        self.assertIn("pkgver=0.11.0", recipe)
+        self.assertIn("pkgver=0.11.4", recipe)
         self.assertIn(
-            "e28c4fa997bf0a678caa7a0db6441da2e0c33b9a4120677f959ec3e45fccf9e9",
+            "1f1a31668a0dee733953c29d6183d78dd78984e696aa8eb0f2083f5796497be0",
             recipe,
         )
         self.assertIn(
-            "71c266be87d0fb2cd79d9172d0e86a3b1b59d550d7054622b831344df07d361b",
+            "e4c2b02607ae984ec8ec08f3f9e02a8de06b1226af0f2df37fe2fab7f9d52523",
             recipe,
         )
         self.assertIn("open-webui-private-requirements.lock", recipe)
@@ -63,7 +63,7 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
         self.assertGreaterEqual(recipe.count("--no-deps"), 2)
         self.assertIn("npm ci", read(OPEN_WEBUI / "0003-build-frozen-frontend.patch"))
         self.assertIn(
-            "57b3bc90e6ebca23c0cec1736e470fbb2fee1c6b05531551b8871f3cbdab185c",
+            "0ab15d00cda8a7dca4499d11960ea4532db5827ad5f55975c1062f6434cfbe9a",
             recipe,
         )
         self.assertIn("LC_ALL=C sort -z", recipe)
@@ -124,14 +124,14 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
             text=True,
         ).stdout
 
-        self.assertIn("pkgrel=7", recipe)
+        self.assertIn("pkgrel=1", recipe)
         for asset, digest in (
             (
-                "open-webui-npm-offline-closure-0.11.0.tar.zst",
+                "open-webui-npm-offline-closure-0.11.4.tar.zst",
                 "6238b436c6669a311623d97724c6b2ada0e77090d0e5219860acc38c53fb32b1",
             ),
             (
-                "open-webui-python-offline-closure-0.11.0-cp314-x86_64.tar.zst",
+                "open-webui-python-offline-closure-0.11.4-cp314-x86_64.tar.zst",
                 "bcd3c5c651fc42e8e5a73a4c81f4b5760e82f6b39eb714caf999700bad4ed27c",
             ),
         ):
@@ -430,7 +430,7 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
             match = re.search(rf'^{setting}="([^"]*)"$', environment, re.MULTILINE)
             self.assertIsNotNone(match, setting)
             prefix = match.group(1)
-            # Open WebUI 0.11.0 joins a text prefix as f"{prefix}{text}".
+            # Open WebUI 0.11.4 joins a text prefix as f"{prefix}{text}".
             text = "household canary"
             self.assertTrue(
                 provider.format_zembed_input(text, input_type).startswith(f"{prefix}{text}"),
@@ -455,7 +455,7 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
     def test_operator_notes_describe_only_the_disposable_candidate(self):
         notes = read(OPEN_WEBUI / "README.md")
 
-        self.assertIn("Open WebUI 0.11.0", notes)
+        self.assertIn("Open WebUI 0.11.4", notes)
         self.assertIn("not approved for production activation or publication", notes)
         self.assertIn("/run/open-webui/open-webui.sock", notes)
         self.assertIn("open-webui-session-epoch-ledger reserve", notes)

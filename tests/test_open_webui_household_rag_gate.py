@@ -29,7 +29,7 @@ EXTERNAL_RERANKER_PREIMAGE = (
     / "tools"
     / "fixtures"
     / "open-webui-household"
-    / "open-webui-0.11.0-pristine-external-reranker.py"
+    / "open-webui-0.11.4-pristine-external-reranker.py"
 )
 
 
@@ -412,7 +412,9 @@ class OpenWebUIHouseholdRAGGateTests(unittest.TestCase):
                 and node.name in {"query_chat_files", "query_knowledge_files"}
             ]
             namespace = {
-                "json": __import__("json"),
+                # 0.11.4 serializes through JSONCodec, which is stdlib json
+                # unless ENABLE_ORJSON is set.
+                "JSONCodec": __import__("json"),
                 "log": mock.Mock(),
                 "Optional": __import__("typing").Optional,
                 "RAG_UNAVAILABLE_DETAIL": self.gate.RAG_UNAVAILABLE_DETAIL,
@@ -473,11 +475,11 @@ class OpenWebUIHouseholdRAGGateTests(unittest.TestCase):
     def test_patch_is_bound_to_exact_source_and_covers_every_fail_open_path(self):
         patch = RAG_PATCH.read_text(encoding="utf-8")
         self.assertIn(
-            "Open WebUI commit: f9590b8017199e56d5e953657e6498e3cef1d246", patch
+            "Open WebUI commit: 8bd8b4fac5e059578ac0c74b3c18d11139f88b7d", patch
         )
         self.assertIn(
-            "Open WebUI 0.11.0 sdist SHA-256: "
-            "e28c4fa997bf0a678caa7a0db6441da2e0c33b9a4120677f959ec3e45fccf9e9",
+            "Open WebUI 0.11.4 sdist SHA-256: "
+            "1f1a31668a0dee733953c29d6183d78dd78984e696aa8eb0f2083f5796497be0",
             patch,
         )
 
