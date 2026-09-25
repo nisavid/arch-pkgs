@@ -9,7 +9,7 @@ live-validated Lemonade provider, and runs **one** integrated trial set with
 one restore drill and one rollback drill.
 
 The kit is `tools/accept_open_webui_household.py` (evidence schema
-`open-webui-household-acceptance/v1`) plus the shared scenario module
+`open-webui-household-acceptance/v2`) plus the shared scenario module
 `tools/open_webui_household_scenarios.py`. The kit PR alone means *source
 updated*. The candidate set is *acceptance deployed* only after the trial's
 evidence merges.
@@ -32,9 +32,9 @@ fixes the shape:
   [Deploy the accepted Open WebUI household stack](https://github.com/nisavid/arch-pkgs/issues/59).
 - The only resource gates are **no OOM kill** and **no unplanned restart**.
   Every other resource value is recorded, not gated.
-- Open WebUI's Lemonade connection uses no credential in this refresh (owner
-  decision). The ticket's earlier Lemonade-connection items are superseded;
-  the no-credential check below replaces them.
+- Open WebUI's model connections carry no stored secret in this refresh
+  (owner decision). The ticket's earlier connection items are superseded;
+  the stored-secret check below replaces them.
 - The trial runs on the host's real ML provider set (owner decision). The
   evidence records each provider's pacman identity as a knowingly-foreign
   provider of record, and no provider is overlaid; see
@@ -274,7 +274,7 @@ only.
 | `open-webui.acceptance.auth.one-admin` (A-S2) | The packaged `open-webui-commission-admin` succeeds; signup off and exactly one admin, rechecked after both drills. | exact |
 | `open-webui.acceptance.ready.restart` (A-R1) | Restart to UDS `/ready` 200 plus authenticated retrieval health 200. | ceiling 25 s |
 | `open-webui.acceptance.qdrant.g4` (A-S3, A-S4) | Fresh 1.19 state; five `open-webui-rag-v1` collections, 2,560-dim cosine, payload indexes `tenant_id`, `metadata.hash`, `metadata.file_id`; the runtime holds only the `prw` JWT; the negative probe (an `r` JWT upsert and a `prw` collection create or delete return 403). | exact |
-| `open-webui.acceptance.lemonade.no-credential` (A-S5) | Open WebUI holds no credential for its Lemonade connection: five secret credentials plus the session-epoch credential; empty API-key fields in the env, overlay, SQLite config, and admin exports. | exact |
+| `open-webui.acceptance.connections.no-stored-secret` (A-S5) | Open WebUI's model connections carry no stored secret: the unit loads only Open WebUI's five secret credentials plus the session-epoch credential, and the API-key fields in the env, overlay, SQLite config, and admin exports are empty. | exact |
 | `open-webui.resmoke.zembed-canary` (A-R3) | 2,560 dims, `\|norm − 1\| ≤ 0.001`, margin ≥ 0.20, prefixes read from the running process's settings; one indexed chunk's stored vector has cosine ≥ 0.999 with the direct content-prefixed vector. | fixed; failure exits 3 and escalates |
 | `open-webui.resmoke.zerank-qualification` (A-R4) | Retrieval health 200 after start; a direct rerank gives finite scores with the relevant document first. | pass/fail |
 | `open-webui.acceptance.route.caddy-uds` (A-S1) | HTTPS 200 through Caddy to the socket; authenticated WebSocket 101; no Open WebUI TCP listener and no non-loopback listener on the Caddy port. Rechecked after both drills. | exact |
@@ -289,7 +289,7 @@ only.
 | `open-webui.acceptance.resources` (A-RES1..3) | `memory.events` `oom_kill` 0 for every unit and for the kit slice, whose count is hierarchical and so still covers a unit whose cgroup is gone; an active unit whose count cannot be read fails the gate as unobserved; and `NRestarts` 0 in every snapshot for every unit (systemd resets it on each planned start, and a snapshot precedes each one); peak memory, CPU, Qdrant sizes, snapshot and backup sizes, and the cache inventory recorded. | gates: no OOM, no unplanned restart |
 | `open-webui.acceptance.evidence` (A-E1, A-E3) | Public-safe evidence with `trial_set_count=1`, the restore and rollback drills counted from the steps that actually ran (a critical failure that stops the trial first records 0 and fails this step), and no generation fields. | pass/fail |
 
-Between the no-credential check and the zembed canary, the trial also
+Between the stored-secret check and the zembed canary, the trial also
 records one setup step, `open-webui.acceptance.handbook-indexed`: the fixture handbook
 upload that the cited answer and both drills reuse. It is not a separate
 requirement.
@@ -518,7 +518,7 @@ The `down` and second `up` before `trial` exercise the repeated-up path the
 real trial may need; the second `up` keeps `first-start.json`.
 
 - It runs against `tools/fixtures/open-webui-household-acceptance/stub_provider.py`,
-  a credential-free deterministic provider. The sampler allowlist excludes the
+  a deterministic stand-in provider. The sampler allowlist excludes the
   Lemonade origin, so any Lemonade contact fails the rehearsal.
 - It may exercise each drill code path once, because the real trial runs only
   once.

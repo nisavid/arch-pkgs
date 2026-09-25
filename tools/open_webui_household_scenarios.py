@@ -617,7 +617,7 @@ def render_valkey_acl(password_sha256: str) -> str:
 
 
 def connection_seed(lemond_url: str = DEFAULT_LEMOND_URL) -> dict[str, str]:
-    """The credential-free, Lemonade-only chat connection seed for one provider origin.
+    """The single chat connection seed for one provider origin, with Ollama off.
 
     The packaged ``open-webui.env`` carries this seed for the default origin
     from 0.11.0-5 on, so the acceptance overlay sets only the keys whose
@@ -1378,7 +1378,7 @@ def configure(
     lemond_url: str = DEFAULT_LEMOND_URL,
     whisper_model: str = DEFAULT_WHISPER_MODEL,
 ) -> dict[str, Any]:
-    """Set the credential-free Lemonade connection, local Whisper STT, and the chat model."""
+    """Set the single chat connection, local Whisper STT, and the chat model."""
 
     ollama = webui.json("GET", API["ollama_config"], token=token) or {}
     webui.json("POST", API["ollama_config_update"], {**ollama, "ENABLE_OLLAMA_API": False}, token=token)

@@ -5,7 +5,7 @@ The kit deploys the exact candidate bytes named by the build ticket's manifest
 as user-level services under one disposable, marked root, wires them to the
 shared Lemonade provider, and runs exactly one integrated trial set: one pass
 over the scenario map, one restore drill, and one rollback drill.  Evidence
-schema: ``open-webui-household-acceptance/v1``.
+schema: ``open-webui-household-acceptance/v2``.
 
 Subcommands: preflight [--probe-only], stage, up, down, trial, resmoke,
 teardown [--keep-anchor].  The stub rehearsal (``--provider stub
@@ -56,7 +56,7 @@ sys.path.insert(0, str(TOOLS))
 import measure_open_webui_household as v1  # noqa: E402
 import open_webui_household_scenarios as sc  # noqa: E402
 
-SCHEMA = "open-webui-household-acceptance/v1"
+SCHEMA = "open-webui-household-acceptance/v2"
 MARKER = ".owui-acceptance"
 KIT_STATE = "kit.json"
 DEFAULT_ROOT = Path("/srv/build/arch-pkgs-owui-acceptance")
@@ -177,7 +177,7 @@ TRIAL_STEPS: tuple[str, ...] = (
     "open-webui.acceptance.auth.one-admin",
     "open-webui.acceptance.ready.restart",
     "open-webui.acceptance.qdrant.g4",
-    "open-webui.acceptance.lemonade.no-credential",
+    "open-webui.acceptance.connections.no-stored-secret",
     sc.SCENARIO_IDS[0],
     sc.SCENARIO_IDS[1],
     "open-webui.acceptance.route.caddy-uds",
@@ -1347,7 +1347,7 @@ def render_units(kit: Kit) -> dict[str, str]:
     if kit.provider == "stub":
         packaged = kit.packaged_env()
         units[UNITS["stub"]] = kit_unit(
-            kit, "stub", "credential-free rehearsal provider",
+            kit, "stub", "deterministic rehearsal provider",
             f"/usr/bin/python3 {STUB_SCRIPT} --host 127.0.0.1 --port {PORTS['stub']} "
             f"--embedding-model {packaged['RAG_EMBEDDING_MODEL']} --reranking-model {packaged['RAG_RERANKING_MODEL']}",
         )
@@ -2416,7 +2416,7 @@ class Trial:
             raise sc.ScenarioFailure(json.dumps(values, sort_keys=True))
         return values
 
-    def no_credential(self) -> dict[str, Any]:
+    def no_stored_secret(self) -> dict[str, Any]:
         kit = self.kit
         owui_lines = parse_unit((kit.unit_dir / UNITS["open-webui"]).read_text())
         credentials = sorted(
@@ -2697,7 +2697,7 @@ class Trial:
             self.step(TRIAL_STEPS[3], self.commission, critical=True)
             self.step(TRIAL_STEPS[4], self.restart)
             self.step(TRIAL_STEPS[5], self.g4)
-            self.step(TRIAL_STEPS[6], self.no_credential)
+            self.step(TRIAL_STEPS[6], self.no_stored_secret)
             contexts: list[sc.Context] = []
             self.step("open-webui.acceptance.handbook-indexed",
                       lambda: contexts.append(self.prepare_scenarios()) or {}, critical=True)
