@@ -594,7 +594,12 @@ which would strip the host's user identity.
 
 - Each household member who uses Open WebUI joins the tailnet; the owner
   invites them.
-- The tailnet policy stays the default allow-all.
+- The tailnet policy stays the default allow-all. The owner decided not to
+  narrow it to `tcp:443` for this node, so no policy change belongs to this
+  install. The unit's packaged loopback deny is the control. A port scan can
+  stall the serve route; the owner accepted that risk, because restarting
+  `open-webui-tailnet.service` clears the stall (see the README's
+  [Denying `127.0.0.1` and `::1`](../../packages/open-webui/README.md#denying-127001-and-1)).
 - MagicDNS and HTTPS certificates are enabled for the tailnet.
 - The owner has chosen the node name `<name>` before P3, because P3.4 seeds
   `WEBUI_URL` from it. Record the choice on
