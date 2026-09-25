@@ -1,10 +1,16 @@
+import contextlib
 import hashlib
+import importlib.machinery
 import importlib.util
+import json
 import os
 import re
+import socketserver
 import subprocess
 import tempfile
+import threading
 import unittest
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from unittest import mock
 
@@ -553,6 +559,155 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
         self.assertIn('intended.get("name")', helper)
         self.assertNotIn("argparse", helper)
         self.assertNotRegex(helper, r"sys\.argv\[[1-9]")
+
+
+def load_commissioning_helper():
+    path = OPEN_WEBUI / "open-webui-commission-admin"
+    loader = importlib.machinery.SourceFileLoader(
+        "open_webui_commission_admin", str(path)
+    )
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+class FakeClock:
+    """A wall clock that moves only when the code under test sleeps."""
+
+    def __init__(self, now: float):
+        self.now = now
+
+    def time(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        if seconds < 0:
+            raise ValueError("sleep length must be non-negative")
+        self.now += seconds
+
+
+class FakeOpenWebUI:
+    """The 0.11.4 auth routes the helper calls, served on a real Unix socket.
+
+    A password change records its whole second and rejects every token whose
+    whole-second iat is at or before it, as upstream is_valid_token does in
+    backend/open_webui/utils/auth.py.
+    """
+
+    def __init__(self, clock: FakeClock, email: str, name: str, password: str):
+        self.clock = clock
+        self.email = email
+        self.name = name
+        self.password = password
+        self.revoked_at: int | None = None
+        self.requests: list[tuple[str, str, int]] = []
+
+    def respond(self, method, path, token, payload):
+        if method == "POST" and path == "/api/v1/auths/signin":
+            if payload != {"email": self.email, "password": self.password}:
+                return 400, {"detail": "incorrect credentials"}
+            return 200, {"token": f"admin:{int(self.clock.time())}"}
+        if token is None or not token.startswith("admin:"):
+            return 401, {"detail": "Not authenticated"}
+        issued_at = int(token.removeprefix("admin:"))
+        if self.revoked_at is not None and issued_at <= self.revoked_at:
+            return 401, {"detail": "Invalid token"}
+        if method == "POST" and path == "/api/v1/auths/update/password":
+            if payload is None or payload.get("password") != self.password:
+                return 400, {"detail": "incorrect password"}
+            self.password = payload["new_password"]
+            self.revoked_at = int(self.clock.time())
+            return 200, True
+        if method == "GET" and path == "/api/v1/users/":
+            user = {"email": self.email, "name": self.name, "role": "admin"}
+            return 200, {"total": 1, "users": [user]}
+        if method == "GET" and path == "/api/config":
+            return 200, {"features": {"enable_signup": False}}
+        return 404, {"detail": "Not Found"}
+
+    def handler(self):
+        fake = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def _dispatch(self):
+                length = int(self.headers.get("Content-Length", "0"))
+                payload = json.loads(self.rfile.read(length)) if length else None
+                authorization = self.headers.get("Authorization", "")
+                token = authorization.removeprefix("Bearer ") or None
+                status, body = fake.respond(self.command, self.path, token, payload)
+                fake.requests.append((self.command, self.path, status))
+                encoded = json.dumps(body).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(encoded)))
+                self.end_headers()
+                self.wfile.write(encoded)
+
+            do_GET = _dispatch
+            do_POST = _dispatch
+
+            def log_message(self, _format, *_args):
+                return
+
+        return Handler
+
+
+@contextlib.contextmanager
+def serving_unix_socket(socket_path: Path, handler):
+    server = socketserver.ThreadingUnixStreamServer(str(socket_path), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+class CommissioningHelperTests(unittest.TestCase):
+    def test_final_session_outlives_the_password_change_revocation(self):
+        helper = load_commissioning_helper()
+        # Start mid-second so every request before the helper's wait falls in
+        # the second that the password change revokes.
+        start = 1_790_000_000.25
+        clock = FakeClock(start)
+        server = FakeOpenWebUI(
+            clock, "admin@example.invalid", "Administrator", "bootstrap-secret"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            credentials = root / "credentials"
+            credentials.mkdir()
+            for name, value in (
+                ("admin-email", "Admin@Example.invalid"),
+                ("admin-name", "Administrator"),
+                ("admin-bootstrap-password", "bootstrap-secret"),
+                ("admin-final-password", "final-secret"),
+            ):
+                (credentials / name).write_text(f"{value}\n", encoding="utf-8")
+            socket_path = root / "open-webui.sock"
+            environment = {
+                "CREDENTIALS_DIRECTORY": str(credentials),
+                "OPEN_WEBUI_SOCKET": str(socket_path),
+            }
+            with (
+                serving_unix_socket(socket_path, server.handler()),
+                mock.patch.dict(os.environ, environment),
+                mock.patch.object(helper, "time", clock),
+                contextlib.redirect_stdout(open(os.devnull, "w")),
+            ):
+                self.assertEqual(helper.main(), 0)
+
+        self.assertEqual(server.password, "final-secret")
+        self.assertNotIn(401, [status for _, _, status in server.requests])
+        self.assertEqual(
+            server.requests[-2:],
+            [("GET", "/api/v1/users/", 200), ("GET", "/api/config", 200)],
+        )
+        # The helper waits out only the rest of the revoked second.
+        self.assertLess(clock.now - start, 1.0)
 
 
 class RapidOCRPackageContractTests(unittest.TestCase):

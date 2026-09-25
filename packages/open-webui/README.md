@@ -150,7 +150,9 @@ The helper signs in over the Unix socket and verifies exactly one intended
 administrator before it changes anything. It then changes the password through
 the exact 0.11 API, proves the bootstrap password no longer works, proves the
 final password works, verifies the sole administrator again, and verifies
-signup is false. After it succeeds, consume and remove every bootstrap input
+signup is false. Since 0.11.1 a password change revokes every session issued
+in the same whole second, so the helper waits for the next second before it
+signs in with the final password. After it succeeds, consume and remove every bootstrap input
 and temporary drop-in, restart `open-webui.service` normally, repeat the
 postconditions, and only then publish the tailnet route
 ([Tailnet Route](#tailnet-route) step 4).

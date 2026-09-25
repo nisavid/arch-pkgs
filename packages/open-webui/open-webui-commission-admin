@@ -4,6 +4,7 @@ import json
 import os
 import socket
 import sys
+import time
 from pathlib import Path
 
 
@@ -85,6 +86,16 @@ def signin(socket_path: Path, email: str, password: str) -> dict[str, object]:
     return response
 
 
+def wait_past_revocation_second() -> None:
+    # A password change revokes every session issued in or before the
+    # change's whole second, and tokens carry whole-second issue times, so a
+    # sign-in within that second would be revoked at once. Open WebUI shares
+    # this host's wall clock, so wait until that second has passed.
+    next_second = int(time.time()) + 1
+    while (now := time.time()) < next_second:
+        time.sleep(next_second - now)
+
+
 def require_sole_administrator(socket_path: Path, token: str, email: str, name: str) -> None:
     _, users = request_json(socket_path, "GET", "/api/v1/users/", token=token)
     if not isinstance(users, dict) or users.get("total") != 1:
@@ -123,6 +134,7 @@ def main() -> int:
     )
     if changed is not True:
         raise CommissioningError("administrator password change was not confirmed")
+    wait_past_revocation_second()
 
     request_json(
         socket_path,
