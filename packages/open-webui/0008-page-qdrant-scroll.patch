@@ -1,0 +1,173 @@
+# Page Qdrant scroll reads so strict-mode max_query_limit does not reject them.
+# Open WebUI commit: f9590b8017199e56d5e953657e6498e3cef1d246
+# Open WebUI 0.11.0 sdist SHA-256: e28c4fa997bf0a678caa7a0db6441da2e0c33b9a4120677f959ec3e45fccf9e9
+# Apply after 0001-0007; none of them touch these files.
+# query() and get() in both Qdrant clients follow next_page_offset instead of
+# one scroll with NO_LIMIT = 999999999. Each request asks for at most
+# SCROLL_PAGE_SIZE = 1000 points. Paging stops when Qdrant returns no next
+# offset or a positive caller limit is reached; the last request asks only for
+# the remaining count. As guards, it also stops on an empty page or on the
+# offset it was just sent, keeping the points already read. A caller limit of
+# 0 or less makes query() return an empty result after the existing collection
+# check, without a scroll request (upstream sent the limit to Qdrant, which
+# rejects limit=0); a missing collection still returns None.
+# A paged read is not a point-in-time snapshot; concurrent writes may or
+# may not appear, while every point present for the whole read is returned
+# exactly once.
+# SCROLL_PAGE_SIZE must stay at or below the packaged Qdrant strict-mode
+# max_query_limit (1000, packages/qdrant/qdrant.config.yaml).
+# search() top-k is unchanged. In the non-multitenancy client, search(limit=None)
+# still maps to NO_LIMIT; the household runs multitenancy mode and does not use it.
+# Drop this patch only once an upstream Open WebUI release pages Qdrant
+# scroll reads with requests at or below the packaged Qdrant max_query_limit
+# (1000), and only after checking a strict-mode read of more than 1,000 points
+# against that release.
+# Details: packages/open-webui/README.md, Qdrant Scroll Paging
+diff --git a/backend/open_webui/retrieval/vector/dbs/qdrant.py b/backend/open_webui/retrieval/vector/dbs/qdrant.py
+index 7156a16..8cf3503 100644
+--- a/backend/open_webui/retrieval/vector/dbs/qdrant.py
++++ b/backend/open_webui/retrieval/vector/dbs/qdrant.py
+@@ -30,6 +30,28 @@ NO_LIMIT = 999999999
+ 
+ log = logging.getLogger(__name__)
+ 
++# Qdrant's scroll API is paginated. Read in bounded pages and follow
++# next_page_offset instead of requesting everything at once, which a
++# strict-mode max_query_limit rejects.
++SCROLL_PAGE_SIZE = 1000
++
++
++def _scroll_all(client, collection_name: str, scroll_filter=None, limit: int | None = None) -> list:
++    points, offset = [], None
++    while limit is None or len(points) < limit:
++        page_size = SCROLL_PAGE_SIZE if limit is None else min(SCROLL_PAGE_SIZE, limit - len(points))
++        prev = offset
++        page, offset = client.scroll(
++            collection_name=collection_name,
++            scroll_filter=scroll_filter,
++            limit=page_size,
++            offset=offset,
++        )
++        points.extend(page)
++        if offset is None or not page or offset == prev:
++            break
++    return points
++
+ 
+ class QdrantClient(VectorDBBase):
+     def __init__(self):
+@@ -171,32 +193,27 @@ class QdrantClient(VectorDBBase):
+         if not self.has_collection(collection_name):
+             return None
+         try:
+-            if limit is None:
+-                limit = NO_LIMIT  # otherwise qdrant would set limit to 10!
+-
+             field_conditions = []
+             for key, value in filter.items():
+                 field_conditions.append(
+                     models.FieldCondition(key=f'metadata.{key}', match=models.MatchValue(value=value))
+                 )
+ 
+-            points = self.client.scroll(
+-                collection_name=f'{self.collection_prefix}_{collection_name}',
+-                scroll_filter=models.Filter(should=field_conditions),
+-                limit=limit,
++            points = _scroll_all(
++                self.client,
++                f'{self.collection_prefix}_{collection_name}',
++                models.Filter(should=field_conditions),
++                limit,
+             )
+-            return self._result_to_get_result(points[0])
++            return self._result_to_get_result(points)
+         except Exception as e:
+             log.exception(f"Error querying a collection '{collection_name}': {e}")
+             return None
+ 
+     def get(self, collection_name: str) -> Optional[GetResult]:
+         # Get all the items in the collection.
+-        points = self.client.scroll(
+-            collection_name=f'{self.collection_prefix}_{collection_name}',
+-            limit=NO_LIMIT,  # otherwise qdrant would set limit to 10!
+-        )
+-        return self._result_to_get_result(points[0])
++        points = _scroll_all(self.client, f'{self.collection_prefix}_{collection_name}')
++        return self._result_to_get_result(points)
+ 
+     def insert(self, collection_name: str, items: list[VectorItem]):
+         # Insert the items into the collection, if the collection does not exist, it will be created.
+diff --git a/backend/open_webui/retrieval/vector/dbs/qdrant_multitenancy.py b/backend/open_webui/retrieval/vector/dbs/qdrant_multitenancy.py
+index 9b71764..7f9a445 100644
+--- a/backend/open_webui/retrieval/vector/dbs/qdrant_multitenancy.py
++++ b/backend/open_webui/retrieval/vector/dbs/qdrant_multitenancy.py
+@@ -28,12 +28,33 @@ from qdrant_client.http.exceptions import UnexpectedResponse
+ from qdrant_client.http.models import PointStruct
+ from qdrant_client.models import models
+ 
+-NO_LIMIT = 999999999
+ TENANT_ID_FIELD = 'tenant_id'
+ DEFAULT_DIMENSION = 384
+ 
+ log = logging.getLogger(__name__)
+ 
++# Qdrant's scroll API is paginated. Read in bounded pages and follow
++# next_page_offset instead of requesting everything at once, which a
++# strict-mode max_query_limit rejects.
++SCROLL_PAGE_SIZE = 1000
++
++
++def _scroll_all(client, collection_name: str, scroll_filter=None, limit: int | None = None) -> list:
++    points, offset = [], None
++    while limit is None or len(points) < limit:
++        page_size = SCROLL_PAGE_SIZE if limit is None else min(SCROLL_PAGE_SIZE, limit - len(points))
++        prev = offset
++        page, offset = client.scroll(
++            collection_name=collection_name,
++            scroll_filter=scroll_filter,
++            limit=page_size,
++            offset=offset,
++        )
++        points.extend(page)
++        if offset is None or not page or offset == prev:
++            break
++    return points
++
+ 
+ def _tenant_filter(tenant_id: str) -> models.FieldCondition:
+     return models.FieldCondition(key=TENANT_ID_FIELD, match=models.MatchValue(value=tenant_id))
+@@ -283,17 +304,11 @@ class QdrantClient(VectorDBBase):
+         if not self.client.collection_exists(collection_name=mt_collection):
+             log.debug(f"Collection {mt_collection} doesn't exist, query returns None")
+             return None
+-        if limit is None:
+-            limit = NO_LIMIT
+         tenant_filter = _tenant_filter(tenant_id)
+         field_conditions = [_metadata_filter(k, v) for k, v in filter.items()]
+         combined_filter = models.Filter(must=[tenant_filter, *field_conditions])
+-        points = self.client.scroll(
+-            collection_name=mt_collection,
+-            scroll_filter=combined_filter,
+-            limit=limit,
+-        )
+-        return self._result_to_get_result(points[0])
++        points = _scroll_all(self.client, mt_collection, combined_filter, limit)
++        return self._result_to_get_result(points)
+ 
+     def get(self, collection_name: str) -> Optional[GetResult]:
+         """
+@@ -306,12 +321,8 @@ class QdrantClient(VectorDBBase):
+             log.debug(f"Collection {mt_collection} doesn't exist, get returns None")
+             return None
+         tenant_filter = _tenant_filter(tenant_id)
+-        points = self.client.scroll(
+-            collection_name=mt_collection,
+-            scroll_filter=models.Filter(must=[tenant_filter]),
+-            limit=NO_LIMIT,
+-        )
+-        return self._result_to_get_result(points[0])
++        points = _scroll_all(self.client, mt_collection, models.Filter(must=[tenant_filter]))
++        return self._result_to_get_result(points)
+ 
+     def upsert(self, collection_name: str, items: List[VectorItem]):
+         """

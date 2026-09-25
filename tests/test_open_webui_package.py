@@ -33,7 +33,7 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
         self.assertIn("open-webui-private-requirements.lock", recipe)
         self.assertIn('python "${srcdir}/verify-open-webui-private-lock.py"', recipe)
         self.assertNotIn("'SKIP'", recipe)
-        self.assertEqual(recipe.count("patch --fuzz=0"), 7)
+        self.assertEqual(recipe.count("patch --fuzz=0"), 8)
         for provenance_asset in (
             "open-webui-private-constraints.txt",
             "open-webui-system-providers.txt",
@@ -46,6 +46,7 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
             "0005-require-qualified-reranking.patch",
             "0006-enforce-session-epoch.patch",
             "0007-keep-rag-credentials-external.patch",
+            "0008-page-qdrant-scroll.patch",
             "open-webui-rag-gate.py",
             "open-webui-session-epoch-ledger.py",
         ):
@@ -123,7 +124,7 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
             text=True,
         ).stdout
 
-        self.assertIn("pkgrel=6", recipe)
+        self.assertIn("pkgrel=7", recipe)
         for asset, digest in (
             (
                 "open-webui-npm-offline-closure-0.11.0.tar.zst",
