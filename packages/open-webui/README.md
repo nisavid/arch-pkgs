@@ -496,13 +496,13 @@ bound constants deliberately when changing the release or provider boundary.
 
 The recipe binds two versioned release assets as `noextract` sources:
 
-- `open-webui-npm-offline-closure-0.11.0.tar.zst` contains the 1,233 unique
+- `open-webui-npm-offline-closure-0.11.4.tar.zst` contains the 1,231 unique
   registry tarballs required by the exact release lock. The tracked manifest
-  binds all 1,275 lock records to their SHA-512 integrity values and archive
+  binds all 1,273 lock records to their SHA-512 integrity values and archive
   members. `prepare()` verifies the archive and seeds an isolated npm cache;
   the frontend build then runs `npm ci --offline`.
-- `open-webui-python-offline-closure-0.11.0-cp314-x86_64.tar.zst` contains the
-  222 wheels selected for CPython 3.14 on x86_64 Linux. Its embedded manifest
+- `open-webui-python-offline-closure-0.11.4-cp314-x86_64.tar.zst` contains the
+  200 wheels selected for CPython 3.14 on x86_64 Linux. Its embedded manifest
   binds every file to the private requirements lock. `prepare()` verifies safe
   members and exact identities before extraction; installation uses
   `uv --offline --no-index --require-hashes` against only that wheelhouse.
@@ -514,9 +514,9 @@ the reviewed bytes at the recipe's versioned build-input release:
 
 ```bash
 python npm-offline-closure.py materialize \
-  --lock open_webui-0.11.0/package-lock.json \
+  --lock open_webui-0.11.4/package-lock.json \
   --manifest npm-offline-closure-manifest.json \
-  --archive open-webui-npm-offline-closure-0.11.0.tar.zst \
+  --archive open-webui-npm-offline-closure-0.11.4.tar.zst \
   --cache npm-download-cache
 
 python python-offline-closure.py materialize \
@@ -526,11 +526,18 @@ python python-offline-closure.py archive \
   --lock open-webui-private-requirements.lock \
   --manifest python-closure/manifest.json \
   --wheelhouse python-closure/wheelhouse \
-  --output open-webui-python-offline-closure-0.11.0-cp314-x86_64.tar.zst
+  --output open-webui-python-offline-closure-0.11.4-cp314-x86_64.tar.zst
 ```
 
-These inputs remove the dependency-network blocker. The subsequent no-egress
-pkgrel-3 build and payload-inspection gate passed and is recorded in
+The 0.11.4 archives were regenerated this way twice, in independent output
+directories with separate download caches, and both runs matched byte for
+byte. The recipe fetches them from its `open-webui-0.11.4-offline-closures-v1`
+build-input release. Until that release is published, `makepkg --verifysource`
+needs local copies of the exact archive bytes in the package directory.
+
+For 0.11.0, these inputs removed the dependency-network blocker. The
+subsequent no-egress 0.11.0 pkgrel-3 build and payload-inspection gate passed
+and is recorded in
 [`docs/maintainers/open-webui-offline-package-build-2026-08-19.md`](../../docs/maintainers/open-webui-offline-package-build-2026-08-19.md).
 Reproduce the compact, whole-archive inspection receipt from a retained package
 with:

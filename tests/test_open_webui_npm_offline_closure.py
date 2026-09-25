@@ -66,23 +66,23 @@ class OpenWebUINpmOfflineClosureTests(unittest.TestCase):
 
         self.assertEqual(
             hashlib.sha256(manifest_bytes).hexdigest(),
-            "a45a76bc4d81fafeae69c61a3de2e1dc471e103069f43a03709f474167beedc7",
+            "11d3edcf787dc09034a1d36fe6e9e47b8c75175e6b3c68f89a9e030a5e63a7ea",
         )
         self.assertEqual(
             manifest["lockfile_sha256"],
-            "664ff34f1d8273e2e6a7a6b6437d27fd195d289ea3df9c56cdd30c4afbd62b02",
+            "377444ce2229a8a2d047414bf9010da8a1c0ab2f0de11991e9ca4992e615aff3",
         )
         self.assertEqual(
-            manifest["project"], {"name": "open-webui", "version": "0.11.0"}
+            manifest["project"], {"name": "open-webui", "version": "0.11.4"}
         )
-        self.assertEqual(manifest["package_record_count"], 1275)
-        self.assertEqual(manifest["unique_tarball_count"], 1233)
+        self.assertEqual(manifest["package_record_count"], 1273)
+        self.assertEqual(manifest["unique_tarball_count"], 1231)
         self.assertEqual(
-            sum(entry["size"] for entry in manifest["tarballs"]), 886851096
+            sum(entry["size"] for entry in manifest["tarballs"]), 887017231
         )
         self.assertEqual(
             sum(len(entry["lock_paths"]) for entry in manifest["tarballs"]),
-            1275,
+            1273,
         )
         urls = [entry["url"] for entry in manifest["tarballs"]]
         self.assertEqual(urls, sorted(set(urls)))
