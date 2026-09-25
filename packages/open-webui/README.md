@@ -470,19 +470,22 @@ points per request.
 
 ### Private Python closure
 
-`open-webui-private-requirements.lock` is generated from the exact 0.11.0
+`open-webui-private-requirements.lock` is generated from the exact 0.11.4
 source archive, whose upstream `uv.lock` is SHA-256
-`bf42de5c836d5afe5628533cf8369e856d5d09bfd00efef302c31df3fa249947`.
-The package-local constraints select the audited release versions plus the
-`qdrant-client==1.18.0` optional backend and its
+`f0c49cfa1936887c3447cb4c33cbbfdd2064aa0937140ec1c0520523efae5392`.
+The package-local constraints select the 200 audited release versions,
+including the `qdrant-client==1.18.0` optional backend and its
 `portalocker==3.2.0` dependency. The separate provider list removes the 21
 pacman-owned distributions. Resolution is fixed to CPython 3.14 on
-`x86_64-unknown-linux-gnu`, uv 0.12.5, and the recorded index cutoff.
+`x86_64-unknown-linux-gnu`, uv 0.12.5, and the recorded index cutoff,
+`2026-09-21T19:31:44Z`: the first whole second after PyPI recorded the 0.11.4
+source archive upload. The lock therefore admits only index files that
+existed when upstream published the release.
 
 Regenerate and verify the lock from an exact downloaded source archive with:
 
 ```bash
-./generate-open-webui-private-lock.zsh ./open_webui-0.11.0.tar.gz
+./generate-open-webui-private-lock.zsh ./open_webui-0.11.4.tar.gz
 ```
 
 The generator verifies the source and upstream-lock digests, emits hashes for
