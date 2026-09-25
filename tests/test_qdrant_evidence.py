@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-EVIDENCE_ROOT = REPO_ROOT / "docs" / "maintainers" / "evidence" / "qdrant-1.19.0-1"
+EVIDENCE_ROOT = REPO_ROOT / "docs" / "maintainers" / "evidence" / "qdrant-1.19.1-1"
 RECORD_FILES = {
     "g0_g1": "g0-g1.json",
     "g2_browser": "g2-browser.json",
@@ -268,7 +268,9 @@ class QdrantEvidenceContractTests(unittest.TestCase):
         )
 
         acceptance = self.documents["acceptance.json"]
-        self.assertEqual(acceptance["schema"], "arch-pkgs.qdrant.acceptance.final3.v1")
+        self.assertEqual(
+            acceptance["schema"], "arch-pkgs.qdrant.acceptance.reconstruction.v1"
+        )
         self.assertEqual(set(acceptance["authoritative_records"]), set(RECORD_FILES))
         self.assertNotIn("acceptance.json", json.dumps(acceptance))
 
@@ -347,7 +349,7 @@ class QdrantEvidenceContractTests(unittest.TestCase):
                 "1.18.3": acceptance["exact_artifact_tuple"]["qdrant_migration"][
                     "binary"
                 ]["sha256"],
-                "1.19.0": expected_qdrant["binary"]["sha256"],
+                "1.19.1": expected_qdrant["binary"]["sha256"],
             },
         )
         self.assertEqual(
@@ -629,22 +631,29 @@ class QdrantEvidenceContractTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "not a regular file"):
                 repository_source_files(fixture, ["packages/qdrant-web-ui"])
 
-    def test_accepted_build_boundary_and_future_reconstruction_are_distinct(self):
+    def test_reconstruction_build_boundary_is_recorded(self):
         g0_g1 = self.documents["g0-g1.json"]
+        reconstruction = g0_g1["reconstruction"]
         cargo_boundary = g0_g1["source_and_cache_boundary"]["native_locked_cargo_cache"]
         integrity = cargo_boundary["read_only_integrity_check"]
         build = g0_g1["final_builds"]["common"]
 
-        self.assertFalse(cargo_boundary["historical_population_command_retained"])
+        self.assertTrue(cargo_boundary["historical_population_command_retained"])
+        self.assertEqual(
+            cargo_boundary["population_command"], reconstruction["prefetch_command"]
+        )
+        self.assertIn("--network=none", reconstruction["final_command"])
+        self.assertIn("--env CARGO_NET_OFFLINE=true", reconstruction["final_command"])
         self.assertIn(
-            "does not claim cache-population reproducibility",
-            cargo_boundary["acceptance_scope"],
+            "makepkg --nodeps --cleanbuild --force", reconstruction["final_command"]
         )
         self.assertTrue(
             cargo_boundary["source_locks"]["all_match_pinned_source_archives"]
         )
         self.assertEqual(integrity["locked_archives_missing"], 0)
         self.assertEqual(integrity["locked_archive_checksum_mismatches"], 0)
+        self.assertTrue(integrity["checked_against_pre_final_manifest"])
+        self.assertTrue(integrity["cache_sources_unchanged_by_final_build"])
         self.assertTrue(
             all(
                 dependency["checkout_head_matches"]
@@ -653,18 +662,40 @@ class QdrantEvidenceContractTests(unittest.TestCase):
             )
         )
         self.assertEqual(build["network_mode"], "none")
-        self.assertFalse(build["outer_cargo_net_offline_environment_set"])
-        self.assertFalse(build["cleanbuild_option_used"])
+        self.assertTrue(build["outer_cargo_net_offline_environment_set"])
+        self.assertTrue(build["cleanbuild_option_used"])
+        self.assertFalse(reconstruction["prefetch_roots_reused"])
+        self.assertTrue(reconstruction["prefetch_outputs_discarded"])
+
+        digest = re.compile(r"^[0-9a-f]{64}$")
+        for lane in ("qdrant", "qdrant-web-ui"):
+            with self.subTest(lane=lane):
+                record = reconstruction["lanes"][lane]
+                for manifest in (
+                    "package_input_manifest",
+                    "source_cache_manifest",
+                    "cargo_cache_manifest",
+                    "output_set_manifest",
+                ):
+                    self.assertRegex(record[manifest]["sha256"], digest)
+                self.assertTrue(record["negative_controls"])
+                for control in record["negative_controls"]:
+                    self.assertEqual(control["result"], "failed-before-output")
+                    self.assertTrue(control["output_root_empty"])
+        self.assertIn(
+            "missing-crate",
+            {
+                control["case"]
+                for control in reconstruction["lanes"]["qdrant"]["negative_controls"]
+            },
+        )
+        self.assertTrue(g0_g1["candidate_set"]["output_set_validator"]["accepted"])
 
         runbook = (
             REPO_ROOT / "docs/maintainers/qdrant-migration-acceptance.md"
         ).read_text(encoding="utf-8")
         self.assertIn(
             "The accepted final3 artifact set predates the reconstruction procedure",
-            runbook,
-        )
-        self.assertIn(
-            "It does not claim clean-cache replayability",
             runbook,
         )
         self.assertIn(

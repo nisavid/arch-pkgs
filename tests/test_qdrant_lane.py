@@ -20,7 +20,7 @@ WEB_UI_VERIFIER = WEB_UI_DIR / "verify-package.py"
 MIGRATION_TOOL = REPO_ROOT / "tools" / "validate_qdrant_migration.zsh"
 SECRET_PREFLIGHT = QDRANT_DIR / "qdrant-secret-preflight"
 QDRANT_EVIDENCE_DIR = (
-    REPO_ROOT / "docs" / "maintainers" / "evidence" / "qdrant-1.19.0-1"
+    REPO_ROOT / "docs" / "maintainers" / "evidence" / "qdrant-1.19.1-1"
 )
 
 
@@ -546,7 +546,7 @@ class QdrantLaneContractTests(unittest.TestCase):
         runbook = self.read("docs/maintainers/qdrant-migration-acceptance.md")
 
         for requirement in (
-            "1.17.1 → 1.18.3 → 1.19.0",
+            "1.17.1 → 1.18.3 → 1.19.1",
             "Empty-state route",
             "Retained-data route",
             "cold copy",
@@ -597,7 +597,7 @@ class QdrantLaneContractTests(unittest.TestCase):
             "limit 1000",
             "limit 1001",
             "1.17.1 full-storage snapshot into a 1.18.3 target",
-            "1.18.3 full-storage snapshot into a 1.19.0 target",
+            "1.18.3 full-storage snapshot into a 1.19.1 target",
             "pre-pressure",
             "post-rejection",
             "post-release retry",
@@ -722,9 +722,9 @@ class QdrantLaneContractTests(unittest.TestCase):
             "network mode",
             "exact prefetch and final commands",
             "cache, input, and output manifest digests",
-            "qdrant-1.19.0-1-x86_64.pkg.tar.zst",
+            "qdrant-1.19.1-1-x86_64.pkg.tar.zst",
             "qdrant-migration-1.18.3-1-x86_64.pkg.tar.zst",
-            "qdrant-web-ui-0.2.16-1-any.pkg.tar.zst",
+            "qdrant-web-ui-0.2.18-1-any.pkg.tar.zst",
             "debug or undeclared output",
             "incomplete-cache negative control",
             "must fail before any candidate archive",
@@ -803,7 +803,7 @@ class QdrantLaneContractTests(unittest.TestCase):
                 )
                 self.assertRegex(
                     normalized,
-                    r"Web UI 0\.2\.16.*Usage Quotas.*accepted as a read-only view.*"
+                    r"Web UI 0\.2\.18.*Usage Quotas.*accepted as a read-only view.*"
                     r"authenticated global quota state",
                 )
                 self.assertRegex(
@@ -1483,7 +1483,7 @@ class QdrantMigrationPlannerContractTests(unittest.TestCase):
         self.assertIn("--grpc-port", result.stdout)
         self.assertIn("16333", result.stdout)
         self.assertIn("16334", result.stdout)
-        for version in ("1.17.1", "1.18.3", "1.19.0"):
+        for version in ("1.17.1", "1.18.3", "1.19.1"):
             with self.subTest(version=version):
                 self.assertIn(f"--qdrant-{version}", result.stdout)
         self.assertIn("--qdrant-1.17.1-package", result.stdout)
@@ -1547,12 +1547,12 @@ class QdrantMigrationPlannerContractTests(unittest.TestCase):
                 "72145432",
             ),
             (
-                "1.19.0",
-                "qdrant-1.19.0-1-x86_64.pkg.tar.zst",
-                "15f15fe2c0c774691bf3193bc8fc7883fa530c89db697f7c0bcc2720d231b011",
-                "28018464",
-                "bf24efd92208fab1a8f4769a56158280b458b7a42850095ac875824571005f8c",
-                "72134360",
+                "1.19.1",
+                "qdrant-1.19.1-1-x86_64.pkg.tar.zst",
+                "56208d6725771df687563b9d12e3c963b39c63120b1412f2335411f32c21ed85",
+                "28289048",
+                "70099d4d48aa749f8ced02a89f34ac1e308268a580e8125e5be0caac5611ad35",
+                "72942392",
             ),
         )
 
@@ -1600,7 +1600,7 @@ class QdrantMigrationPlannerContractTests(unittest.TestCase):
             fixture = Path(tempdir)
             marker = fixture / "wrong-candidate-executed"
             binaries: dict[str, Path] = {}
-            for version in ("1.17.1", "1.18.3", "1.19.0"):
+            for version in ("1.17.1", "1.18.3", "1.19.1"):
                 binary = fixture / f"qdrant-{version}"
                 marker_write = (
                     f"printf '%s\\n' invoked > {shlex.quote(str(marker))}\n"
@@ -1626,8 +1626,8 @@ class QdrantMigrationPlannerContractTests(unittest.TestCase):
                 str(binaries["1.17.1"]),
                 "--qdrant-1.18.3",
                 str(binaries["1.18.3"]),
-                "--qdrant-1.19.0",
-                str(binaries["1.19.0"]),
+                "--qdrant-1.19.1",
+                str(binaries["1.19.1"]),
             )
 
             self.assertNotEqual(result.returncode, 0)
@@ -1647,13 +1647,13 @@ class QdrantMigrationPlannerContractTests(unittest.TestCase):
                 f"{tempdir}/missing-1.17.1",
                 "--qdrant-1.18.3",
                 f"{tempdir}/missing-1.18.3",
-                "--qdrant-1.19.0",
-                f"{tempdir}/missing-1.19.0",
+                "--qdrant-1.19.1",
+                f"{tempdir}/missing-1.19.1",
             )
 
         self.assertNotEqual(result.returncode, 0)
         diagnostic = f"{result.stdout}\n{result.stderr}"
-        for version in ("1.17.1", "1.18.3", "1.19.0"):
+        for version in ("1.17.1", "1.18.3", "1.19.1"):
             with self.subTest(version=version):
                 self.assertIn(version, diagnostic)
 
@@ -1666,7 +1666,7 @@ class QdrantMigrationPlannerContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir="/tmp") as tempdir:
             fixture = Path(tempdir)
             binary_paths: dict[str, Path] = {}
-            for version in ("1.17.1", "1.18.3", "1.19.0"):
+            for version in ("1.17.1", "1.18.3", "1.19.1"):
                 if version == "1.17.1":
                     binary_paths[version] = Path("/usr/bin/qdrant")
                     continue
@@ -1700,8 +1700,8 @@ class QdrantMigrationPlannerContractTests(unittest.TestCase):
                 str(binary_paths["1.17.1"]),
                 "--qdrant-1.18.3",
                 str(binary_paths["1.18.3"]),
-                "--qdrant-1.19.0",
-                str(binary_paths["1.19.0"]),
+                "--qdrant-1.19.1",
+                str(binary_paths["1.19.1"]),
             )
             result = self.run_sourced_tool(
                 "validate_exact_candidate_binary() { "
@@ -1721,12 +1721,12 @@ class QdrantMigrationPlannerContractTests(unittest.TestCase):
             "retained-data",
             "1.17.1",
             "1.18.3",
-            "1.19.0",
+            "1.19.1",
             "cold copy",
             "snapshot",
             "full-storage restore",
             "1.17.1 full-storage snapshot into a separate 1.18.3 target",
-            "1.18.3 full-storage snapshot into a separate 1.19.0 target",
+            "1.18.3 full-storage snapshot into a separate 1.19.1 target",
             "1001-point fixture",
             "query limit 1000",
             "query limit 1001",
@@ -1744,7 +1744,7 @@ class QdrantMigrationPlannerContractTests(unittest.TestCase):
             fixture = Path(tempdir)
             marker = fixture / "wrong-candidate-executed"
             binary_paths: dict[str, Path] = {}
-            for version in ("1.17.1", "1.18.3", "1.19.0"):
+            for version in ("1.17.1", "1.18.3", "1.19.1"):
                 binary = fixture / f"qdrant-{version}"
                 marker_write = (
                     f"printf '%s\\n' invoked > {shlex.quote(str(marker))}\n"
@@ -1773,8 +1773,8 @@ class QdrantMigrationPlannerContractTests(unittest.TestCase):
                 str(binary_paths["1.17.1"]),
                 "--qdrant-1.18.3",
                 str(binary_paths["1.18.3"]),
-                "--qdrant-1.19.0",
-                str(binary_paths["1.19.0"]),
+                "--qdrant-1.19.1",
+                str(binary_paths["1.19.1"]),
             )
 
             self.assertNotEqual(result.returncode, 0)
@@ -1790,7 +1790,7 @@ class QdrantMigrationPlannerContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir="/tmp") as tempdir:
             fixture = Path(tempdir)
             binary_arguments: list[str] = []
-            for version in ("1.17.1", "1.18.3", "1.19.0"):
+            for version in ("1.17.1", "1.18.3", "1.19.1"):
                 binary = fixture / f"qdrant-{version}"
                 binary.write_text(
                     f"#!/bin/sh\nprintf '%s\\n' 'qdrant {version}'\n",
@@ -1852,7 +1852,7 @@ class QdrantMigrationPlannerContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir="/tmp") as tempdir:
             fixture = Path(tempdir)
             arguments: list[str] = []
-            for version in ("1.17.1", "1.18.3", "1.19.0"):
+            for version in ("1.17.1", "1.18.3", "1.19.1"):
                 binary = fixture / f"qdrant-{version}"
                 binary.write_text(
                     f"#!/bin/sh\nprintf '%s\\n' 'qdrant {version}'\n",
@@ -1913,7 +1913,7 @@ class QdrantMigrationPlannerContractTests(unittest.TestCase):
         }
         expected_boundaries = {
             "restore_full_1_17_next_1_18": ("1.17.1", "1.18.3"),
-            "restore_full_1_18_next_1_19": ("1.18.3", "1.19.0"),
+            "restore_full_1_18_next_1_19": ("1.18.3", "1.19.1"),
         }
 
         for obligation, (source, target) in expected_boundaries.items():
@@ -2495,18 +2495,35 @@ wait_for_owned_process_stop 4242 1234 /usr/bin/qdrant 4
                 self.assertLess(recovery["details"]["observed_percent"], release_below)
                 self.assertTrue(recovery["details"]["retry_succeeded"])
 
+        # The runbook allows either trigger: the 100-point load batch that
+        # crosses the threshold is itself rejected, or it is accepted and the
+        # authoritative quota then rejects the next write. The harness gate
+        # accepts exactly these two consistent shapes.
         memory_rejection = pressure["memory_above_threshold_rejection"]["details"]
         rejected_batch = memory_rejection["rejected_load_batch"]
-        self.assertEqual(
-            memory_rejection["threshold_trigger"],
-            "quota_observed_after_rejected_load",
-        )
-        self.assertTrue(memory_rejection["load_batch_rejected"])
-        self.assertEqual(memory_rejection["load_rejection_http_code"], "507")
-        self.assertTrue(memory_rejection["load_rejection_error"])
-        self.assertEqual(rejected_batch["ids_count"], 100)
-        self.assertEqual(len(rejected_batch["ids"]), 100)
-        self.assertTrue(rejected_batch["absent"])
+        self.assertIsInstance(memory_rejection["load_batch_rejected"], bool)
+        if memory_rejection["load_batch_rejected"]:
+            self.assertEqual(
+                memory_rejection["threshold_trigger"],
+                "quota_observed_after_rejected_load",
+            )
+            self.assertEqual(memory_rejection["load_rejection_http_code"], "507")
+            self.assertTrue(memory_rejection["load_rejection_error"])
+            self.assertEqual(rejected_batch["ids_count"], 100)
+            self.assertEqual(len(rejected_batch["ids"]), 100)
+            self.assertTrue(rejected_batch["absent"])
+        else:
+            self.assertEqual(
+                memory_rejection["threshold_trigger"],
+                "quota_observed_after_accepted_load",
+            )
+            self.assertIsNone(memory_rejection["load_rejection_http_code"])
+            self.assertIsNone(memory_rejection["load_rejection_error"])
+            self.assertEqual(
+                rejected_batch,
+                {"applicable": False, "ids": [], "ids_count": 0, "absent": True},
+            )
+            self.assertTrue(memory_rejection["rejected_ids_absent"])
 
         memory_recovery = pressure["memory_release_margin_recovery"]["details"]
         self.assertEqual(
@@ -2624,7 +2641,7 @@ wait_for_owned_process_stop 4242 1234 /usr/bin/qdrant 4
         observed = pressure["memory_above_threshold_rejection"]["details"][
             "load_batch_rejected"
         ]
-        self.assertIs(observed, True)
+        self.assertIsInstance(observed, bool)
 
     def test_evidence_gate_validates_each_resource_pressure_obligation(self):
         evidence = self.read_evidence()

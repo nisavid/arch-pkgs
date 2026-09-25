@@ -1,0 +1,148 @@
+{
+  "schema": "qdrant-g2-browser-evidence/v2",
+  "disposition": "accepted",
+  "failedChecks": [],
+  "privacy": {
+    "publicCopySafe": true,
+    "rawEvidenceRetainedSeparately": true,
+    "machineLocalPathsOmitted": true,
+    "credentialMaterialOmitted": true
+  },
+  "artifacts": {
+    "qdrant": {
+      "package": {
+        "name": "qdrant",
+        "version": "1.19.1-1",
+        "architecture": "x86_64",
+        "size": 28289048,
+        "sha256": "56208d6725771df687563b9d12e3c963b39c63120b1412f2335411f32c21ed85"
+      },
+      "binarySha256": "70099d4d48aa749f8ced02a89f34ac1e308268a580e8125e5be0caac5611ad35",
+      "sbomSha256": "a206672364d44bbf05cfc2d293c5f98db05c1f9de3f3dce8526f0810750bcfc4",
+      "configSha256": "800fd7130542e5d61bc869962e6d7d59de2bccad261811d54e9b6745ffc991f4",
+      "serviceSha256": "610312cbba4efffa1d5422ab75154605000d4a4d177f77437ca00e2926ef4114",
+      "secretHelperSha256": "6a364ce0a745c6f02d38f3c39fc71e91fd31a2f33e63442cfa64b251fab545cd"
+    },
+    "qdrantWebUi": {
+      "package": {
+        "name": "qdrant-web-ui",
+        "version": "0.2.18-1",
+        "architecture": "any",
+        "size": 5728430,
+        "sha256": "962d2b7659fb66bd2eb3b2f425ef90a91cbe7701a66c31b4fd622caeb0e0f283"
+      },
+      "installedTree": {
+        "fileCount": 229,
+        "digestAlgorithm": "sha256-of-sorted-sha256-relative-path-lines",
+        "sha256": "42e603291267e1892486cb6fe2121cb8b88e5557b429c5a89ac04104191dbb1f"
+      },
+      "sbomSha256": "35a5b24fe84f2d2640eef3748c36a79320113125ab6c6b5fed9d855c1395ecb7",
+      "cloudDataSha256": "38e0b9de817f645c4bec37c0d4a3e58baecccb040f5718dc069a72c7385a0bed"
+    }
+  },
+  "isolation": {
+    "boundary": "bubblewrap-user-mount-network-pid-uts-ipc",
+    "runtimeView": "host /usr overlaid read-only with the exact qdrant and qdrant-web-ui payloads; packaged /etc/qdrant/config.yaml; fresh empty /var/lib/qdrant; read-only Chrome and selected /etc font, locale, and certificate files",
+    "hostSensitiveRootsAbsent": [
+      "homeRoot",
+      "superuserHome",
+      "hostQdrantConfig",
+      "hostQdrantState"
+    ],
+    "networkInterfaces": [
+      "loopback"
+    ],
+    "listeners": [
+      "127.0.0.1:6333",
+      "127.0.0.1:6334"
+    ],
+    "nonLoopbackEgressDenied": true,
+    "nonLoopbackEgressProbe": {
+      "ipv4": "ENETUNREACH",
+      "ipv6": "ENETUNREACH"
+    },
+    "unexpectedNetworkRequests": 0
+  },
+  "authentication": {
+    "adminSecretBrowserExposure": false,
+    "browserCredential": {
+      "access": [
+        {
+          "collection": "browser-fixture",
+          "role": "prw"
+        }
+      ],
+      "adminSecret": false,
+      "kind": "JWT",
+      "lifetimeSeconds": 300,
+      "subject": "qdrant-disposable-browser-acceptance"
+    },
+    "allAuthorizedBrowserRequestsUsedTheScopedJwt": true,
+    "authorizedRequestCount": 11,
+    "browserCredentialPersisted": false,
+    "adminSecretPersisted": false
+  },
+  "browserRuntime": {
+    "engine": "chromium",
+    "browserVersion": "151.0.7922.137",
+    "playwrightPythonVersion": "1.62.0",
+    "chromeLauncherSha256": "aea09d69ce7f24d5901f6bfb15dd44d0c856e793e0a498f8d8393ec7d2c308ec",
+    "chromeBinarySha256": "e1029a026f724e75741ea433ee5269e9fbef9bce82adcfeff1f2359e85afdcdf",
+    "matchesFinal3BrowserRuntime": true
+  },
+  "dashboard": {
+    "status": 200,
+    "cloudMetadata": {
+      "requestObserved": true,
+      "requestPath": "/dashboard/cloud/data.json",
+      "status": 200,
+      "value": null
+    },
+    "contentSecurityPolicy": "default-src 'self'; base-uri 'none'; connect-src 'self'; font-src 'self' data:; form-action 'self'; frame-ancestors 'none'; img-src 'self' data: blob:; object-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:",
+    "referrerPolicy": "no-referrer",
+    "contentTypeOptions": "nosniff",
+    "frameOptions": "DENY",
+    "monacoEditorWorker": "executed",
+    "monacoJsonWorker": "executed",
+    "graphWorker": "executed",
+    "graphWasm": {
+      "algorithm": "UMAP",
+      "positions": 6,
+      "executed": true
+    },
+    "requestCount": 26,
+    "consoleErrors": 0,
+    "pageErrors": 0,
+    "siteDataCleared": true,
+    "profilePersisted": false
+  },
+  "cleanup": {
+    "qdrantProcessRemoved": true,
+    "browserProcessesRemovedWithNamespace": true,
+    "listenersRemoved": true,
+    "credentialMaterialRemoved": true
+  },
+  "harness": {
+    "provenance": "Reconstructed for this re-baseline from the runbook G2 contract and the final3 record shape; the final3 browser harness scripts were not retained. It was validated first against the superseded final3 artifacts, reproducing their installed-tree digest and worker, WASM, CSP, and cleanup results.",
+    "hostLauncherSha256": "49308874c6139117cbee0ac096f3cc02c0a5d84748f501f20c695a4e3e76f837",
+    "namespaceHarnessSha256": "9e183baabfc5839b0ec384a4aeee29ae2cbd8dbe54b16ff6f17684f151fdd4e7",
+    "browserControllerSha256": "836a9ce5a73b4a0e351bab31b85dc6dfa783b82fedfc40a4c51e355aac60a3e3",
+    "seedAndTokenGeneratorSha256": "4c97515846505ae603fe54c33a75a4e2162e26fc6404dcbcc9b3446535923c41"
+  },
+  "evidence": {
+    "browserAcceptance": "a032c8e6b952d7220fe380ce90a5c224ba4c02a1079f0cbc51e378ac6b2e973e",
+    "cleanupInside": "1c61233716f5ba32e9e330ef162e1dec278db5feb9f61e0106acd000dc68ede8",
+    "cleanupOutside": "24f500405c4b6b3c86776253f0ca09108136498eb95ebf3454f7131f0da0ee83",
+    "harness": "2c51d65ce242257d02a59ecbc3e7a3cac99c8aceb784da6b81ebb64e1d264e0a",
+    "isolation": "e9a683d4eed2b7a018bbf7a94a9337cbe059663c25adfe12c3c87d6161dd1ba4",
+    "listenersAfterStop": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "listenersRunning": "fd0cba01977ee01099449f35e2bd2184594ef3485aa77da41463c5b06d80f161",
+    "namespace": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "netNamespace": "14f57743d03e34e807375f3ea242377916b2c43eebb939cf4712e2ccbc59030a",
+    "payloadInputs": "bb96d2917baafb4de972d0d0b9cea76cade3d3e698257e31984d1fa4acfa2d44",
+    "pidNamespace": "4a5a3321489cf930acbe1f0424618d84342fee52eb792cd2d6b6e56cf4a491d2",
+    "qdrant": "656b88e54a693fb0cfd9d7d8bf736c559b3d937d5c22ee2b312f42e0deeb8785",
+    "seed": "ae8fb48b83d88cf7aa9bd66f9cd1cf83a631ce743ce523a8ca188c5408be45a5",
+    "webUiTree": "42e603291267e1892486cb6fe2121cb8b88e5557b429c5a89ac04104191dbb1f"
+  }
+}

@@ -11,20 +11,20 @@ script_name=${0:t}
 # Absolute, so printed commands work from any directory.
 script_path=${0:A}
 
-# Accepted identities. The byte-identical rebuilds are bound by the accepted
-# G0-G3 evidence under docs/maintainers/evidence/qdrant-1.19.0-1/.
+# Accepted identities, bound by the G0-G3 evidence under
+# docs/maintainers/evidence/qdrant-1.19.1-1/.
 typeset -A want_version want_file want_size want_sha
-want_version=(qdrant-migration 1.18.3-1 qdrant 1.19.0-1 qdrant-web-ui 0.2.16-1)
+want_version=(qdrant-migration 1.18.3-1 qdrant 1.19.1-1 qdrant-web-ui 0.2.18-1)
 want_file=(
   qdrant-migration qdrant-migration-1.18.3-1-x86_64.pkg.tar.zst
-  qdrant qdrant-1.19.0-1-x86_64.pkg.tar.zst
-  qdrant-web-ui qdrant-web-ui-0.2.16-1-any.pkg.tar.zst
+  qdrant qdrant-1.19.1-1-x86_64.pkg.tar.zst
+  qdrant-web-ui qdrant-web-ui-0.2.18-1-any.pkg.tar.zst
 )
-want_size=(qdrant-migration 26721008 qdrant 28018464 qdrant-web-ui 5719063)
+want_size=(qdrant-migration 26721008 qdrant 28289048 qdrant-web-ui 5728430)
 want_sha=(
   qdrant-migration 591f16328fcff0fc0193353a65f4c783afc1d24258ae251d3a8927283276ce9e
-  qdrant 15f15fe2c0c774691bf3193bc8fc7883fa530c89db697f7c0bcc2720d231b011
-  qdrant-web-ui f3d46e6ff09b8eb87b1465ee6a17a7cc35c574596b7fbf30518d3bc1d42fe10a
+  qdrant 56208d6725771df687563b9d12e3c963b39c63120b1412f2335411f32c21ed85
+  qdrant-web-ui 962d2b7659fb66bd2eb3b2f425ef90a91cbe7701a66c31b4fd622caeb0e0f283
 )
 baseline_version=1.17.1-1
 baseline_file=qdrant-1.17.1-1-x86_64.pkg.tar.zst
@@ -44,7 +44,7 @@ repo=nisavid
 sync_db=
 pkg_cache=/var/cache/pacman/pkg
 rollback_root=/var/lib/qdrant-rollback
-rollback_set=qdrant-1.17.1-1-pre-1.19.0
+rollback_set=qdrant-1.17.1-1-pre-1.19.1
 credstore=/etc/credstore.encrypted
 disk_quota_percent=85
 apply=0
@@ -61,9 +61,9 @@ Usage: ${script_name} <preflight|cutover|verify|rollback> [options]
   preflight  read-only checks; refuses on identity mismatch, non-empty
              storage, live consumers, or insufficient free space
   cutover    preflight, stop 1.17.1, save the rollback set, run the 1.18.3
-             step, install 1.19.0 and the Web UI, provision secrets, create
+             step, install 1.19.1 and the Web UI, provision secrets, create
              the ${collection_prefix} collections, then verify
-  verify     post-install smoke of the running 1.19.0 service
+  verify     post-install smoke of the running 1.19.1 service
   rollback   restore 1.17.1 and the saved state from the rollback set
 
 Options (defaults match the packaged layout):
@@ -589,7 +589,7 @@ do_cutover() {
     note "secret: keeping the existing ${config_dir}/qdrant.env (preflight checked its form)"
   fi
 
-  stage='install 1.19.0'
+  stage='install 1.19.1'
   run pacman -S --needed --noconfirm "${repo}/qdrant" "${repo}/qdrant-web-ui" || fail_stage
   if (( apply )); then
     [[ ! -e "${config_dir}/config.yaml.pacnew" ]] || fail_stage
@@ -600,7 +600,7 @@ do_cutover() {
 
   if (( apply )); then
     stage='create collections'
-    wait_for_version 1.19.0 || fail_stage
+    wait_for_version 1.19.1 || fail_stage
     make_private_dir || fail_stage
     admin=$(admin_header) || fail_stage
     create_collections "$admin" || fail_stage
@@ -625,11 +625,11 @@ do_cutover() {
 
   stage='restart persistence check'
   systemctl restart qdrant.service || fail_stage
-  wait_for_version 1.19.0 || fail_stage
+  wait_for_version 1.19.1 || fail_stage
 
   stage='verify'
   do_verify || fail_stage
-  hand_back "qdrant cutover COMPLETE on 1.19.0-1; rollback set ${set_dir} retained; before Open WebUI writes, prove rollback with: $(rollback_command dry)"
+  hand_back "qdrant cutover COMPLETE on 1.19.1-1; rollback set ${set_dir} retained; before Open WebUI writes, prove rollback with: $(rollback_command dry)"
 }
 
 do_verify() {
@@ -640,7 +640,7 @@ do_verify() {
     [[ "$(pacman -Q "$name" 2>/dev/null | awk '{print $2}')" == "${want_version[$name]}" ]] \
       || refuse "installed ${name} is not ${want_version[$name]}"
   done
-  [[ "$(http_json / 2>/dev/null | jq -r '.version // empty')" == 1.19.0 ]] || refuse "running Qdrant is not 1.19.0"
+  [[ "$(http_json / 2>/dev/null | jq -r '.version // empty')" == 1.19.1 ]] || refuse "running Qdrant is not 1.19.1"
   [[ "$(http_code GET /readyz)" == 200 ]] || refuse "Qdrant /readyz is not 200"
   listeners=$(ss -ltnH '( sport = :6333 or sport = :6334 or sport = :6335 )' | awk '{print $4}')
   for code in 127.0.0.1:6333 127.0.0.1:6334; do
@@ -872,7 +872,7 @@ case "$command" in
   cutover) do_cutover ;;
   verify)
     do_verify || { hand_back "qdrant verify FAILED (${#refusals} check(s)); consider rollback"; exit 1; }
-    hand_back "qdrant verify PASSED on 1.19.0-1; before Open WebUI writes, prove rollback with: $(rollback_command dry)"
+    hand_back "qdrant verify PASSED on 1.19.1-1; before Open WebUI writes, prove rollback with: $(rollback_command dry)"
     ;;
   rollback) do_rollback ;;
 esac
