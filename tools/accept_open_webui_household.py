@@ -1818,7 +1818,7 @@ def upload_handbook(webui: sc.Endpoint, token: str, timeout: float = 180.0) -> s
         response = webui.request("GET", sc.API["file_status"].format(id=file_id), token=token)
         status = (response.json() or {}).get("status") if response.status == 200 else None
         if status == "failed":
-            raise sc.ScenarioFailure("handbook processing failed")
+            raise sc.ScenarioFailure(f"handbook processing failed: {sc.file_processing_error(webui, token, file_id)}")
         return status == "completed"
 
     wait_until(processed, timeout, "handbook processing")

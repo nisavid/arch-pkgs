@@ -637,6 +637,26 @@ class CitedAnswerTests(unittest.TestCase):
                 scenarios.cited_answer(ctx)
             self.assertEqual(len(deletes), 1)
 
+    def test_a_failed_file_reports_the_error_open_webui_stored(self):
+        stored = "Unexpected Response: 400 (Bad Request) Limit exceeded 999999999 > 1000 for \"limit\""
+        ctx, deletes = self.cited_context(200)
+        fixed = ctx.webui.request.side_effect
+
+        def request(method, path, **kw):
+            if (method, path) == ("GET", scenarios.API["file_status"].format(id="f1")):
+                return scenarios.Response(200, "application/json", b'{"status": "failed"}')
+            if (method, path) == ("GET", scenarios.API["file"].format(id="f1")):
+                record = {"id": "f1", "data": {"status": "failed", "error": stored}}
+                return scenarios.Response(200, "application/json", json.dumps(record).encode())
+            return fixed(method, path, **kw)
+
+        ctx.webui.request.side_effect = request
+        with self.assertRaises(scenarios.ScenarioFailure) as raised:
+            scenarios.cited_answer(ctx)
+        self.assertIn("status failed", str(raised.exception))
+        self.assertIn(stored, str(raised.exception))
+        self.assertEqual(len(deletes), 1)
+
     def test_cited_answer_rejects_extra_sources_and_non_finite_scores(self):
         fact = scenarios.CANONICAL_FACT
         two = {"count": 2, "names": ["a", "b"], "scores": [0.5, 0.4]}

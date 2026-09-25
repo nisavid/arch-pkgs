@@ -1094,6 +1094,23 @@ def zerank_qualification(ctx: Context) -> dict[str, Any]:
     return {"health": "qualified", "scores": [round(score, 6) for score in scores]}
 
 
+def file_processing_error(webui: Endpoint, token: str, file_id: str) -> str:
+    """The error Open WebUI stored on a file whose processing failed.
+
+    Open WebUI 0.11 keeps it in the file record's ``data.error``; the plain
+    process-status route returns only the status.
+    """
+
+    try:
+        response = webui.request("GET", API["file"].format(id=file_id), token=token)
+        record = response.json() if response.status == 200 else None
+    except (OSError, http.client.HTTPException, ValueError):
+        record = None
+    data = record.get("data") if isinstance(record, dict) else None
+    error = data.get("error") if isinstance(data, dict) else None
+    return str(error)[:500] if error else "no stored error"
+
+
 def _wait_for_file(ctx: Context, file_id: str) -> None:
     deadline = time.monotonic() + ctx.poll_timeout
     path = API["file_status"].format(id=file_id)
@@ -1102,7 +1119,10 @@ def _wait_for_file(ctx: Context, file_id: str) -> None:
         status = (response.json() or {}).get("status") if response.status == 200 else None
         if status == "completed":
             return
-        if status == "failed" or response.status not in {200, 202}:
+        if status == "failed":
+            raise ScenarioFailure(f"file processing ended with HTTP {response.status} status failed: "
+                                  f"{file_processing_error(ctx.webui, ctx.token, file_id)}")
+        if response.status not in {200, 202}:
             raise ScenarioFailure(f"file processing ended with HTTP {response.status} status {status}")
         if time.monotonic() > deadline:
             raise ScenarioFailure("file processing did not complete in time")
