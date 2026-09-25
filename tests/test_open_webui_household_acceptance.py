@@ -328,6 +328,34 @@ class UnitDerivationTests(unittest.TestCase):
                 stopped = [call.args[1] for call in systemctl.call_args_list if call.args[0] == "stop"]
                 self.assertLessEqual(set(stopped), {"builds-owui_acc.slice", kit_module.UNITS["caddy"]})
 
+    def test_every_transient_systemd_run_uses_the_chosen_slice(self):
+        class Launched(Exception):
+            pass
+
+        launched = []
+
+        def fake_run(command, **_kwargs):
+            if command[0] == "systemd-run":
+                launched.append(command)
+                if len(launched) == 1:
+                    raise Launched  # commissioning goes on to talk to Open WebUI
+            return subprocess.CompletedProcess(command, 0, stdout=b"probe")
+
+        with tempfile.TemporaryDirectory() as directory:
+            kit = make_kit(directory)
+            kit.slice = "builds-owui_acc.slice"
+            (kit.root / kit_module.MARKER).write_text("marker\n")
+            with mock.patch.object(kit_module, "run", side_effect=fake_run):
+                with self.assertRaises(Launched):
+                    kit_module.Trial(kit).commission()
+                self.assertTrue(kit_module.probe_systemd_creds(kit.slice))
+            with mock.patch.object(kit_module.subprocess, "run", side_effect=fake_run):
+                kit_module.cmd_resmoke(kit, kit_module.parser().parse_args(["resmoke"]))
+        self.assertEqual(len(launched), 3)
+        for command in launched:
+            payload = next(index for index, arg in enumerate(command) if index and not arg.startswith("-"))
+            self.assertIn("--slice=builds-owui_acc.slice", command[1:payload])
+
     def test_no_kit_unit_sets_an_oom_score(self):
         with tempfile.TemporaryDirectory() as directory:
             kit = make_kit(directory, rehearsal=True)
@@ -1223,10 +1251,10 @@ class CredentialTests(unittest.TestCase):
             return subprocess.CompletedProcess(command, 0, stdout=b"probe" if "decrypt" in command else b"")
 
         with mock.patch.object(kit_module, "run", side_effect=fake_run):
-            self.assertFalse(kit_module.probe_systemd_creds())
+            self.assertFalse(kit_module.probe_systemd_creds(kit_module.SLICE))
         with mock.patch.object(kit_module, "run",
                                side_effect=lambda command, **_: subprocess.CompletedProcess(command, 0, stdout=b"probe")):
-            self.assertTrue(kit_module.probe_systemd_creds())
+            self.assertTrue(kit_module.probe_systemd_creds(kit_module.SLICE))
 
 
 class FirstStartTests(unittest.TestCase):

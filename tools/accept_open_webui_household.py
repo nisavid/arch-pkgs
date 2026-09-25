@@ -2076,7 +2076,7 @@ class Trial:
 
     def commission(self) -> dict[str, Any]:
         kit = self.kit
-        command = ["systemd-run", "--user", "--wait", "--pipe", "--collect", "--quiet",
+        command = ["systemd-run", "--user", "--wait", "--pipe", "--collect", "--quiet", f"--slice={kit.slice}",
                    f"--setenv=OPEN_WEBUI_SOCKET={kit.socket_path}"]
         for name in COMMISSION_CREDENTIALS:
             key, value = kit.credential_directive(name)
@@ -2821,11 +2821,12 @@ def verify_supporting(kit: Kit) -> list[dict[str, Any]]:
     return records
 
 
-def probe_systemd_creds() -> bool:
+def probe_systemd_creds(slice_unit: str) -> bool:
     """Whether both consumers can open a ``systemd-creds --user`` credential.
 
     The kit decrypts from its own process (``read_credential``) and the units
     through ``LoadCredentialEncrypted=``; the route is usable only if both work.
+    The probe unit runs in ``slice_unit``, the kit slice.
     """
 
     try:
@@ -2834,7 +2835,7 @@ def probe_systemd_creds() -> bool:
             run(["systemd-creds", "--user", "encrypt", "--name=owui-acc-probe", "-", str(sealed)], input=b"probe")
             opened = run(["systemd-creds", "--user", "decrypt", "--name=owui-acc-probe", str(sealed), "-"]).stdout
             loaded = run([
-                "systemd-run", "--user", "--wait", "--pipe", "--collect", "--quiet",
+                "systemd-run", "--user", "--wait", "--pipe", "--collect", "--quiet", f"--slice={slice_unit}",
                 f"--property=LoadCredentialEncrypted=owui-acc-probe:{sealed}",
                 "sh", "-c", 'cat "$CREDENTIALS_DIRECTORY/owui-acc-probe"',
             ]).stdout
@@ -2923,7 +2924,7 @@ def cmd_stage(kit: Kit, args: argparse.Namespace) -> int:
     for record in archives:
         extract(kit, kit.path("inputs", record["name"]), archive_package(record["name"]))
     supporting = verify_supporting(kit)
-    route = "systemd-creds" if probe_systemd_creds() else "plaintext-0400"
+    route = "systemd-creds" if probe_systemd_creds(kit.slice) else "plaintext-0400"
     kit.save_state(
         **staged_pins(kit), credential_route=route, commissioned=False, trial_started=False,
         manifest={"sha256": manifest["sha256"], "source_commit": manifest["source_commit"]},
@@ -3076,7 +3077,7 @@ def cmd_resmoke(kit: Kit, args: argparse.Namespace) -> int:
         result = subprocess.run(module + ["--credentials-dir", str(kit.credstore)], check=False,
                                 env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"})
         return result.returncode
-    command = ["systemd-run", "--user", "--wait", "--pipe", "--collect", "--quiet",
+    command = ["systemd-run", "--user", "--wait", "--pipe", "--collect", "--quiet", f"--slice={kit.slice}",
                "--setenv=PYTHONDONTWRITEBYTECODE=1"]
     for name in RESMOKE_CREDENTIALS:
         key, value = kit.credential_directive(name)
