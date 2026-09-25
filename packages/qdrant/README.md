@@ -10,9 +10,11 @@ do not receive direct network access to the Qdrant API or dashboard.
 
 ## Maintenance Baseline
 
-- `authoritative_reference`: AUR
+- `authoritative_reference`: exact-version AUR
+  [`qdrant` commit `f8a80b0`](https://aur.archlinux.org/cgit/aur.git/tree/PKGBUILD?h=qdrant&id=f8a80b0650725c1ce14031c779d37f206a02cc83)
+  at `1.19.1-1`. It differs from the retained migration baseline,
   [`qdrant` commit `51762d7`](https://aur.archlinux.org/cgit/aur.git/tree/PKGBUILD?h=qdrant&id=51762d7ed828dfc25be633b4f0ca336d546ec81f)
-  at the retained `1.18.3-1` migration baseline.
+  at `1.18.3-1`, only in its version and source digest.
 - `advisory_references`: upstream Qdrant
   [releases](https://github.com/qdrant/qdrant/releases),
   [upgrade guidance](https://qdrant.tech/documentation/upgrades/),
@@ -29,7 +31,7 @@ do not receive direct network access to the Qdrant API or dashboard.
   consecutive-minor migration, corruption-rejection, recovery, rollback, and
   Haystack/Hayhooks composition gates before publication or deployment.
 
-Relative to the AUR `1.18.3-1` recipe, the active package adds runtime
+Relative to the AUR `1.19.1-1` recipe, the active package adds runtime
 dependencies on `bash`, `coreutils`, and `qdrant-web-ui`; it adds `jq` and
 pinned `cargo-sbom` source to the build. Both local recipes use locked Cargo
 fetches and builds, the AWS-LC jitter workaround, build-path remapping, and a
@@ -44,12 +46,12 @@ dashboard-header patch, and license.
 
 ## Pinned Identities
 
-The active package is Qdrant `1.19.0`:
+The active package is Qdrant `1.19.1`:
 
-- annotated tag object: `af875b4bfd98103f7c0ee34fe4f25c5099893ca9`
-- GitHub-verified commit: `74f3e85b9473c62560006c043e13737ce6b48412`
+- annotated tag object: `de333e3c04660fe475d6275e9efc9fb9f54138fe`
+- GitHub-verified commit: `6ab21cac18ebb6f4ae29102c7f8f5cc11affd5de`
 - source archive SHA-256:
-  `e0c9a030ae47d95f7c739598343bd2529c817fe262c4e7b2a4f1070ff82a024e`
+  `ca9f0cb5a6954d253b51f249161cb63e2c3fee2a3bf360056cf01f0e70b2b878`
 
 Both recipes generate SPDX 2.3 dependency manifests with pinned
 `cargo-sbom` `0.10.0` source (SHA-256
@@ -66,9 +68,10 @@ The separately maintained migration package is Qdrant `1.18.3`:
 - source archive SHA-256:
   `c5f918b4f37279ec00b22b718ca54bca7b43c9d17628b28b8eba363beceb0c96`
 
-The `1.19.0` annotated tag is not cryptographically signed. Its accepted
-provenance is the GitHub-verified release commit plus the independently
-reproduced archive hash recorded above. The `1.18.3` annotated tag carries a
+The `1.19.1` annotated tag carries a valid PGP signature verified by GitHub,
+and its release commit is also GitHub-verified; its pinned archive hash, which
+matches the AUR recipe and whose contents match the commit tree, remains the
+exact source-byte boundary. The `1.18.3` annotated tag carries a
 valid PGP signature verified by GitHub, and its release commit is also
 GitHub-verified; its pinned archive hash remains the exact source-byte boundary.
 

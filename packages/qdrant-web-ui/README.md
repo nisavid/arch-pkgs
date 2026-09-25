@@ -8,11 +8,11 @@ bootstrap. Qdrant serves the read-only files from
 ## Maintenance Baseline
 
 - `authoritative_reference`: upstream Qdrant Web UI
-  [`v0.2.16`](https://github.com/qdrant/qdrant-web-ui/releases/tag/v0.2.16)
+  [`v0.2.18`](https://github.com/qdrant/qdrant-web-ui/releases/tag/v0.2.18)
   tagged source and the release workflow's official `dist-qdrant.zip` binary
   asset; no matching Arch, CachyOS, or AUR static-asset package exists.
 - `advisory_references`: upstream's exact-tag
-  [`publish-dist-packages.yml`](https://github.com/qdrant/qdrant-web-ui/blob/d3f7a1174933ab637d9711ea45456d32b878b50e/.github/workflows/publish-dist-packages.yml),
+  [`publish-dist-packages.yml`](https://github.com/qdrant/qdrant-web-ui/blob/6f8536529934672a0d2631cfaa0d0779967922bc/.github/workflows/publish-dist-packages.yml),
   the AUR [`qdrant`](https://aur.archlinux.org/packages/qdrant) server recipe,
   and Qdrant's
   [Web UI integration](https://github.com/qdrant/qdrant/blob/v1.19.0/src/actix/web_ui.rs).
@@ -32,16 +32,17 @@ bootstrap. Qdrant serves the read-only files from
 
 | Input | Accepted identity |
 | --- | --- |
-| Version | `0.2.16` |
-| Annotated tag object | `018e83a869a3d2b831e92664e8d33f51ec7981b1` |
-| Resolved commit | `d3f7a1174933ab637d9711ea45456d32b878b50e` |
-| `dist-qdrant.zip` SHA-256 | `4446f0cea024078011c78cd24a592c9b563656d15205818563fa6b22d394dd29` |
-| Tagged source SHA-256 | `be85d9cffc5d5ad8122c4fe332cd6731cddcd508a61d77ee918626fc4d977577` |
-| Exact-tag `LICENSE` SHA-256 | `c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4` |
+| Version | `0.2.18` |
+| Annotated tag object | `c904d06ed0f5983ab412ddf558b3e47ceb166689` |
+| Resolved commit | `6f8536529934672a0d2631cfaa0d0779967922bc` |
+| `dist-qdrant.zip` SHA-256 | `fdce24c04ec1627d2369cb8fe610ee06ad9236f82aad214aa7f294ac37372859` |
+| Tagged source SHA-256 | `3fa78da022fdee695469c3a35fb41124955250a1b1e4f066831229bbea701874` |
+| Exact-tag `LICENSE` SHA-256 | `210b508429e913d9de5301f90508bc2cbf5b2281de5b45e607c04d58f0f3bd8f` |
 
-GitHub resolves the annotated tag to the accepted commit but reports the tag's
-SSH signature as unverified because of its tagger email. The pinned identities
-and independently reproduced digests are therefore the acceptance boundary.
+GitHub resolves the annotated tag to the accepted, GitHub-verified commit, but
+the tag itself is unsigned. The release asset digest matches the digest GitHub
+publishes for it, and the tagged source archive's contents match the commit
+tree. The pinned identities and digests are therefore the acceptance boundary.
 
 ## Runtime Data Policy
 
@@ -68,8 +69,8 @@ headers; this package only provides assets.
 ```bash
 makepkg --verifysource
 makepkg -f
-python3 verify-package.py qdrant-web-ui-0.2.16-1-any.pkg.tar.zst
-bsdtar -tvf qdrant-web-ui-0.2.16-1-any.pkg.tar.zst
+python3 verify-package.py qdrant-web-ui-0.2.18-1-any.pkg.tar.zst
+bsdtar -tvf qdrant-web-ui-0.2.18-1-any.pkg.tar.zst
 ```
 
 The verifier checks package metadata, exact license bytes, asset placement,
