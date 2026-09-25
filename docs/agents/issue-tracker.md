@@ -60,9 +60,12 @@ Run `gh issue view <number> --json number,title,body,labels,comments`.
 Used by `/wayfinder`. The **map** is a single issue with **child** issues as
 tickets.
 
-- **Map**: a single issue labelled `wayfinder:map`, holding the Notes /
-  Decisions-so-far / Fog body.
-  `gh issue create --title "..." --body "..." --label wayfinder:map`.
+- **Map**: a single issue labelled `wayfinder:map` and exactly one
+  `destination:*` label (see [Map destinations](#map-destinations)), holding
+  the Notes / Decisions-so-far / Fog body.
+  `gh issue create --title "..." --body "..." --label wayfinder:map --label destination:deployment`,
+  swapping in `destination:merge` or `destination:decision` when the map stops
+  short of deployment.
 - **Child ticket**: an issue linked to the map as a GitHub sub-issue (`gh api`
   on the sub-issues endpoint). Where sub-issues aren't enabled, add the child to
   a task list in the map body and put `Part of #<map>` at the top of the child
