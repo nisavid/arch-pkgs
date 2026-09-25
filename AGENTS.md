@@ -48,3 +48,23 @@ Before claiming a package update is complete, run the relevant checks for the ch
 ## Scripts
 
 - Prefer Zsh for repo helper scripts unless Bash or POSIX `sh` is explicitly required.
+
+## Agent skills
+
+### Issue tracker
+
+Issues live in this repo's GitHub Issues, via the `gh` CLI. Maps use native
+sub-issues, `wayfinder:*` ticket labels, and a `destination:*` label; new maps
+carry execution through deployment by default. See
+`docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five canonical triage labels, verbatim: `needs-triage`, `needs-info`,
+`ready-for-agent`, `ready-for-human`, `wontfix`. See
+`docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` and `docs/adr/` at the repo root, created lazily.
+See `docs/agents/domain.md`.
