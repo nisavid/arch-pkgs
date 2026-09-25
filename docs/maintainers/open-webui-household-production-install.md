@@ -689,20 +689,17 @@ sudo tailscale --socket=/run/open-webui-tailnet/tailscaled.sock serve status
 
 ### P5.4 The smoke account
 
-If the lead and owner approve a dedicated non-admin smoke account for the
-re-smoke, the owner creates it in the admin UI, grants it access to the
-owner-pinned chat model, and stores its credentials as the acceptance
-runbook's re-smoke section shows. The account is never an admin. On a host
-where `systemd-creds --user` cannot decrypt, those credentials are 0400 files
-in a 0700 directory the owner owns, loaded with `LoadCredential=`; the lead
-ruled that user-level consumers use that fallback there.
+The owner decided that the re-smoke runs as a dedicated smoke account,
+created in this window. The owner creates it in the admin UI as an ordinary
+user, never an admin, grants it access to the owner-pinned chat model, and
+stores its credentials as the acceptance runbook's re-smoke section shows. On
+a host where `systemd-creds --user` cannot decrypt, those credentials are 0400
+files in a 0700 directory the owner owns, loaded with `LoadCredential=`; the
+lead ruled that user-level consumers use that fallback there.
 
 The production re-smoke is the only proof in this runbook for four of the
 deploy ticket's items: the zembed and zerank canaries, the live upload,
-index, and cited-answer canary, and the speech-to-text smoke. Without the
-smoke account,
-[Deploy the accepted Open WebUI household stack](https://github.com/nisavid/arch-pkgs/issues/59)
-stays open until the lead names another proof for them.
+index, and cited-answer canary, and the speech-to-text smoke.
 
 - Rollback: delete the account in the admin UI and remove its two
   credential files.
@@ -845,8 +842,8 @@ Unprivileged, after P7:
   records as dropped or not enforced is in force here;
 - `ss -ltnH 'sport = :8080'` prints nothing, and no Open WebUI TCP listener;
 - HTTPS 200 and WebSocket 101 at `<household-origin>`;
-- the re-smoke set against production, per the acceptance runbook, if the
-  smoke account exists;
+- the re-smoke set against production as the P5.4 smoke account, per the
+  acceptance runbook;
 - `systemctl is-active hayhooks.service` and `systemctl is-enabled hayhooks.service`
   report inactive and disabled (or `pacman -Q hayhooks` fails if removed).
 
