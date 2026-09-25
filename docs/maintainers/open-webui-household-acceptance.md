@@ -200,7 +200,9 @@ The command blocks carry no trailing comments, because zsh without
 
 The trial and the rehearsal both pass `--slice builds-owui_acc.slice`, so the
 kit units inherit the host's build memory cap from a capped user
-`builds.slice`. The kit units are long-running user services, so a
+`builds.slice`. So do the transient `systemd-run` units the kit starts for the
+credential probe, commissioning, and the resmoke: each one passes the staged
+slice. The kit units are long-running user services, so a
 `systemd-run --scope` wrapper around the kit command would not cap them.
 Never pass `builds.slice` itself: stopping the kit slice would then stop every
 other build in it.
