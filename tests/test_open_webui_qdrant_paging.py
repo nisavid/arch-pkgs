@@ -46,8 +46,35 @@ class ScrollDidNotStop(Exception):
     pass
 
 
+def condition_matches(payload: dict, condition: tuple) -> bool:
+    """Evaluate an AnyModels FieldCondition(key, MatchValue(value)) on a payload."""
+    name, _, fields = condition
+    if name != "FieldCondition" or fields["match"][0] != "MatchValue":
+        raise ValueError(f"fake Qdrant cannot evaluate {condition!r}")
+    value = payload
+    for part in fields["key"].split("."):
+        value = value.get(part) if isinstance(value, dict) else None
+    return value == fields["match"][2]["value"]
+
+
+def filter_matches(payload: dict, scroll_filter: tuple | None) -> bool:
+    """Qdrant filter semantics: every must condition and any should condition.
+
+    An empty should list is not modeled, and no client here sends one.
+    """
+    if scroll_filter is None:
+        return True
+    name, _, clauses = scroll_filter
+    must, should = clauses.get("must", []), clauses.get("should")
+    if name != "Filter" or not clauses.keys() <= {"must", "should"} or should == []:
+        raise ValueError(f"fake Qdrant cannot evaluate {scroll_filter!r}")
+    return all(condition_matches(payload, c) for c in must) and (
+        should is None or any(condition_matches(payload, c) for c in should)
+    )
+
+
 class StrictScrollQdrant:
-    """Fake Qdrant scroll_by with strict-mode request limits."""
+    """Fake Qdrant scroll_by with strict-mode request limits and scroll filters."""
 
     def __init__(self, *args, **kwargs):
         self.points = []
@@ -66,7 +93,8 @@ class StrictScrollQdrant:
     ) -> None:
         """Hold UUID-ID points, with optional misbehaving pages.
 
-        The two page overrides refer to positions in UUID order.
+        Every point belongs to tenant file-abc and has hash h. The two page
+        overrides refer to positions in UUID order.
         """
         if ids is None:
             ids = [str(uuid.UUID(int=2 * index + 1)) for index in range(count)]
@@ -76,7 +104,11 @@ class StrictScrollQdrant:
             (
                 types.SimpleNamespace(
                     id=point_id,
-                    payload={"text": f"chunk {index}", "metadata": {"n": index}},
+                    payload={
+                        "text": f"chunk {index}",
+                        "metadata": {"n": index, "hash": "h"},
+                        "tenant_id": "file-abc",
+                    },
                 )
                 for index, point_id in enumerate(ids)
             ),
@@ -107,20 +139,23 @@ class StrictScrollQdrant:
             raise LimitExceeded(f"Limit must be greater than 0: {limit}")
         if limit > STRICT_LIMIT:
             raise LimitExceeded(f'Limit exceeded {limit} > {STRICT_LIMIT} for "limit"')
+        matching = [
+            point for point in self.points if filter_matches(point.payload, scroll_filter)
+        ]
         lower_bound = uuid.UUID(offset) if offset is not None else None
         start = next(
             (
                 index
-                for index, point in enumerate(self.points)
+                for index, point in enumerate(matching)
                 if lower_bound is None or uuid.UUID(point.id) >= lower_bound
             ),
-            len(self.points),
+            len(matching),
         )
-        fetched = self.points[start : start + limit + 1]
+        fetched = matching[start : start + limit + 1]
         page = fetched[:limit]
         next_offset = fetched[limit].id if len(fetched) > limit else None
         if self.empty_page_at is not None and offset == self.empty_page_at:
-            return [], self.points[start + 1].id
+            return [], matching[start + 1].id
         if self.repeat_offset_at is not None and offset == self.repeat_offset_at:
             return page, offset
         return page, next_offset
@@ -240,6 +275,22 @@ class OpenWebUIQdrantPagingTests(unittest.TestCase):
             client = module.QdrantClient()
             yield module.__name__, client
 
+    def call_with_one_guard_warning(self, name: str, call, reason: str, count: int):
+        """Run call and check that it logs exactly one guard warning."""
+        scrolled = {
+            self.qdrant.__name__: "open-webui_file-abc",
+            self.multitenancy.__name__: "open-webui_files",
+        }[name]
+        with self.assertLogs(name, "WARNING") as logs:
+            result = call()
+        self.assertEqual(len(logs.records), 1, logs.output)
+        record = logs.records[0]
+        self.assertEqual(
+            (record.levelname, record.args), ("WARNING", (scrolled, reason, count))
+        )
+        self.assertNotIn("chunk", record.getMessage())  # no point payloads
+        return result
+
     def test_pristine_fixtures_are_the_pinned_upstream_bytes(self):
         for fixture, digest in PRISTINE_CLIENTS.values():
             self.assertEqual(hashlib.sha256(fixture.read_bytes()).hexdigest(), digest)
@@ -297,7 +348,8 @@ class OpenWebUIQdrantPagingTests(unittest.TestCase):
                 ):
                     with self.subTest(client=name, method=method, count=count):
                         client.client.load(count)
-                        result = call()
+                        with self.assertNoLogs(name, "WARNING"):
+                            result = call()
                         self.assertIsNotNone(result)
                         self.assertEqual(
                             result.ids, [[point.id for point in client.client.points]]
@@ -323,7 +375,8 @@ class OpenWebUIQdrantPagingTests(unittest.TestCase):
             ):
                 with self.subTest(client=name, count=count, limit=limit):
                     client.client.load(count)
-                    result = client.query("file-abc", {"hash": "h"}, limit=limit)
+                    with self.assertNoLogs(name, "WARNING"):
+                        result = client.query("file-abc", {"hash": "h"}, limit=limit)
                     self.assertIsNotNone(result)
                     self.assertEqual(
                         result.ids,
@@ -346,7 +399,7 @@ class OpenWebUIQdrantPagingTests(unittest.TestCase):
                     uuid.UUID(ids[1000]).int - uuid.UUID(ids[999]).int, 1
                 )
 
-    def test_scroll_stops_when_qdrant_repeats_its_offset(self):
+    def test_scroll_stops_and_warns_when_qdrant_repeats_its_offset(self):
         for name, client in self.clients():
             for method, call in (
                 ("get", lambda: client.get("file-abc")),
@@ -356,15 +409,27 @@ class OpenWebUIQdrantPagingTests(unittest.TestCase):
                 with self.subTest(client=name, method=method):
                     # The second page reports offset 1000 again instead of 2000.
                     client.client.load(2500, repeat_offset_at=1000)
-                    result = call()
+                    result = self.call_with_one_guard_warning(
+                        name, call, "repeated offset", 2000
+                    )
                     self.assertIsNotNone(result)
                     self.assertEqual(
                         result.ids,
                         [[point.id for point in client.client.points[:2000]]],
                     )
                     self.assertEqual(client.client.limits, [1000, 1000])
+            with self.subTest(client=name, method="query reaching its limit"):
+                # Reaching the caller limit ends paging normally, without a warning.
+                client.client.load(2500, repeat_offset_at=1000)
+                with self.assertNoLogs(name, "WARNING"):
+                    result = client.query("file-abc", {"hash": "h"}, limit=2000)
+                self.assertIsNotNone(result)
+                self.assertEqual(
+                    result.ids, [[point.id for point in client.client.points[:2000]]]
+                )
+                self.assertEqual(client.client.limits, [1000, 1000])
 
-    def test_scroll_stops_on_empty_page_with_next_offset(self):
+    def test_scroll_stops_and_warns_on_empty_page_with_next_offset(self):
         for name, client in self.clients():
             for method, call in (
                 ("get", lambda: client.get("file-abc")),
@@ -374,7 +439,9 @@ class OpenWebUIQdrantPagingTests(unittest.TestCase):
                 with self.subTest(client=name, method=method):
                     # The third page is empty but still reports a next offset.
                     client.client.load(2500, empty_page_at=2000)
-                    result = call()
+                    result = self.call_with_one_guard_warning(
+                        name, call, "empty page", 2000
+                    )
                     self.assertIsNotNone(result)
                     self.assertEqual(
                         result.ids,
@@ -407,6 +474,56 @@ class OpenWebUIQdrantPagingTests(unittest.TestCase):
                     client.client.load(2500)
                     call()
                     self.assertEqual(client.client.filters, [expected[name, method]] * 3)
+
+    def test_filtered_reads_return_exactly_the_matching_points(self):
+        # Every third point has another tenant and every fifth another hash.
+        # Each read matches more than 1,000 points, so the page boundary falls
+        # inside the matching set, and a filtered read skips nonmatching points
+        # on both pages.
+        count = 1999
+        same_tenant = [index % 3 != 1 for index in range(count)]
+        same_hash = [index % 5 != 2 for index in range(count)]
+        matches = {
+            (self.qdrant.__name__, "get"): [True] * count,
+            (self.qdrant.__name__, "query"): same_hash,
+            (self.multitenancy.__name__, "get"): same_tenant,
+            (self.multitenancy.__name__, "query"): [
+                tenant and hash_ for tenant, hash_ in zip(same_tenant, same_hash)
+            ],
+        }
+        for name, client in self.clients():
+            for method, call, limit, limits in (
+                ("get", lambda: client.get("file-abc"), None, [1000, 1000]),
+                ("query", lambda: client.query("file-abc", {"hash": "h"}), None, [1000, 1000]),
+                (
+                    "query",
+                    lambda: client.query("file-abc", {"hash": "h"}, limit=1500),
+                    1500,
+                    [1000, 500],
+                ),
+            ):
+                with self.subTest(client=name, method=method, limit=limit):
+                    client.client.load(count)
+                    for point, tenant, hash_ in zip(
+                        client.client.points, same_tenant, same_hash
+                    ):
+                        if not tenant:
+                            point.payload["tenant_id"] = "file-xyz"
+                        if not hash_:
+                            point.payload["metadata"]["hash"] = "x"
+                    matching = [
+                        point.id
+                        for point, match in zip(client.client.points, matches[name, method])
+                        if match
+                    ]
+                    with self.assertNoLogs(name, "WARNING"):
+                        result = call()
+                    self.assertIsNotNone(result)
+                    self.assertEqual(result.ids, [matching[:limit]])
+                    # Qdrant's limit counts matching points, and the second page
+                    # starts at the 1001st of them.
+                    self.assertEqual(client.client.limits, limits)
+                    self.assertEqual(client.client.offsets, [None, matching[1000]])
 
 
 if __name__ == "__main__":

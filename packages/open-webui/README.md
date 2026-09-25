@@ -394,10 +394,11 @@ points per request.
 - **Stop conditions:** paging stops when Qdrant returns no next offset or a
   positive caller `limit` is reached, and the last request asks only for the
   remaining count. As guards, it also stops on an empty page or on the offset
-  it was just sent, keeping the points already read. A caller `limit` of 0 or
-  less makes `query()` return an empty result after the existing collection
-  check, without a scroll request (upstream sent the limit to Qdrant, which
-  rejects `limit=0`); a missing collection still returns `None`.
+  it was just sent, logs a warning naming the collection, the reason and the
+  number of points read, and keeps the points already read. A caller `limit` of
+  0 or less makes `query()` return an empty result after the existing
+  collection check, without a scroll request (upstream sent the limit to
+  Qdrant, which rejects `limit=0`); a missing collection still returns `None`.
 - **Why:** upstream reads with a single scroll whose limit is
   `NO_LIMIT = 999999999`, a "fetch everything" stand-in added in
   [open-webui#6050](https://github.com/open-webui/open-webui/pull/6050) (2024).
