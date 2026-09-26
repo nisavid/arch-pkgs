@@ -16,8 +16,13 @@ from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 KIT = REPO_ROOT / "tools" / "accept_open_webui_household.py"
-PACKAGED_ENV = REPO_ROOT / "packages" / "open-webui" / "open-webui.env"
-OPEN_WEBUI_UNIT = REPO_ROOT / "packages" / "open-webui" / "open-webui.service"
+# The trial candidate's open-webui.env, household profile example, and unit:
+# exact copies of the 0.11.4-1 package files, which move the household
+# settings out of open-webui.env.  The in-tree package predates that split.
+CANDIDATE = REPO_ROOT / "tools" / "fixtures" / "open-webui-household-acceptance" / "open-webui-0.11.4-1"
+PACKAGED_ENV = CANDIDATE / "open-webui.env"
+PROFILE_EXAMPLE = CANDIDATE / "household.env.example"
+OPEN_WEBUI_UNIT = CANDIDATE / "open-webui.service"
 QDRANT_UNIT = REPO_ROOT / "packages" / "qdrant" / "qdrant.service"
 
 
@@ -37,7 +42,29 @@ v1 = kit_module.v1
 
 
 def packaged_env():
+    """The candidate's vanilla open-webui.env."""
+
     return sc.parse_env_file(PACKAGED_ENV.read_text(encoding="utf-8"))
+
+
+def candidate_env(lemond_url=None):
+    """The candidate's open-webui.env with its example profile, rendered for ``lemond_url``, over it."""
+
+    example = PROFILE_EXAMPLE.read_text(encoding="utf-8")
+    profile = sc.render_household_profile(example, lemond_url or sc.DEFAULT_LEMOND_URL)
+    return {**packaged_env(), **sc.parse_env_file(profile)}
+
+
+def write_candidate_tree(root):
+    """Extract the candidate's env, example, and unit into ``<root>/tree/open-webui`` as stage would."""
+
+    tree = Path(root) / "tree" / "open-webui"
+    for source, target in ((PACKAGED_ENV, "etc/open-webui/open-webui.env"),
+                           (PROFILE_EXAMPLE, sc.HOUSEHOLD_EXAMPLE),
+                           (OPEN_WEBUI_UNIT, "usr/lib/systemd/system/open-webui.service")):
+        (tree / target).parent.mkdir(parents=True, exist_ok=True)
+        (tree / target).write_bytes(source.read_bytes())
+    return tree
 
 
 def make_kit(root, *, rehearsal=False, route=None):
@@ -115,13 +142,11 @@ class ArgumentTests(unittest.TestCase):
             ["a", "b"],
         )
 
-    def test_defaults_come_from_the_packaged_env_and_the_contract(self):
+    def test_defaults_come_from_the_contract(self):
         kit = self.kit("down")
         self.assertEqual(kit.root, kit_module.DEFAULT_ROOT)
         self.assertEqual(kit.lemond_url, sc.DEFAULT_LEMOND_URL)
-        self.assertEqual(
-            packaged_env()["RAG_OPENAI_API_BASE_URL"], sc.DEFAULT_LEMOND_URL + "/api/v1"
-        )
+        self.assertEqual(sc.DEFAULT_LEMOND_URL, "http://127.0.0.1:13305")
         self.assertEqual(kit.whisper_model, "base")
         self.assertEqual(kit.mode, "record")
         self.assertEqual(self.kit("down", "--whisper-model", "tiny").whisper_model, "tiny")
@@ -204,14 +229,19 @@ class ArgumentTests(unittest.TestCase):
 
 class OverlayTests(unittest.TestCase):
     def test_overlay_stays_inside_the_allowlist_in_both_modes(self):
-        env = packaged_env()
         with tempfile.TemporaryDirectory() as directory:
+            write_candidate_tree(directory)
             for rehearsal in (False, True):
                 kit = make_kit(directory, rehearsal=rehearsal)
-                overlay = kit.overlay(env)
-                self.assertLessEqual(set(overlay), sc.overlay_allowlist(env, rehearsal=rehearsal))
+                env = kit.effective_env()
+                overlay = kit.overlay()
+                self.assertLessEqual(set(overlay), sc.overlay_allowlist(env))
                 self.assertEqual(overlay["QDRANT_URI"], "http://127.0.0.1:16333")
                 self.assertEqual(overlay["RAG_EXTERNAL_RERANKER_URL"], "http://127.0.0.1:13306/api/v1/rerank")
+                # The provider connection is the rendered profile's, never the overlay's.
+                for key in ("ENABLE_OLLAMA_API", "ENABLE_OPENAI_API", "OPENAI_API_BASE_URLS", "OPENAI_API_KEYS",
+                            "RAG_OPENAI_API_BASE_URL"):
+                    self.assertNotIn(key, overlay)
                 self.assertEqual({**env, **overlay}["OPENAI_API_KEYS"], "")
                 self.assertNotIn("HF_HUB_OFFLINE", overlay)
                 self.assertNotIn("WHISPER_MODEL", overlay)
@@ -221,18 +251,160 @@ class OverlayTests(unittest.TestCase):
                         self.assertIn(state, value, key)
                         self.assertNotIn("/var/lib/open-webui", value, key)
 
-    def test_rehearsal_points_the_provider_and_the_relay_at_the_stub(self):
-        env = packaged_env()
+    def test_the_rendered_profile_points_the_provider_at_lemonade_or_the_stub(self):
         with tempfile.TemporaryDirectory() as directory:
-            record = make_kit(directory)
-            rehearsal = make_kit(directory, rehearsal=True)
-            self.assertNotIn("OPENAI_API_BASE_URLS", record.overlay(env))
-            self.assertEqual(env["OPENAI_API_BASE_URLS"], "http://127.0.0.1:13305/api/v1")
-            self.assertEqual(rehearsal.overlay(env)["OPENAI_API_BASE_URLS"], "http://127.0.0.1:23305/api/v1")
-            self.assertNotIn("RAG_OPENAI_API_BASE_URL", record.overlay(env))
-            self.assertEqual(rehearsal.overlay(env)["RAG_OPENAI_API_BASE_URL"], "http://127.0.0.1:23305/api/v1")
+            write_candidate_tree(directory)
+            for rehearsal, origin in ((False, "http://127.0.0.1:13305"), (True, "http://127.0.0.1:23305")):
+                kit = make_kit(directory, rehearsal=rehearsal)
+                env = {**kit.effective_env(), **kit.overlay()}
+                with self.subTest(kit.mode):
+                    self.assertEqual(
+                        {key: env[key] for key in ("ENABLE_OLLAMA_API", "ENABLE_OPENAI_API", "OPENAI_API_BASE_URLS",
+                                                   "OPENAI_API_KEYS", "RAG_OPENAI_API_BASE_URL")},
+                        {"ENABLE_OLLAMA_API": "false", "ENABLE_OPENAI_API": "true",
+                         "OPENAI_API_BASE_URLS": f"{origin}/api/v1", "OPENAI_API_KEYS": "",
+                         "RAG_OPENAI_API_BASE_URL": f"{origin}/api/v1"},
+                    )
+                    # The profile names the reranker at the provider; the overlay relays it.
+                    self.assertEqual(kit.profile_env()["RAG_EXTERNAL_RERANKER_URL"], f"{origin}/api/v1/rerank")
+                    self.assertEqual(env["RAG_EXTERNAL_RERANKER_URL"], "http://127.0.0.1:13306/api/v1/rerank")
+                    self.assertIsNone(kit_module.provider_mismatch(kit, kit.effective_env()))
+            rehearsal, record = make_kit(directory, rehearsal=True), make_kit(directory)
             self.assertEqual((rehearsal.lemond_host, rehearsal.lemond_port), ("127.0.0.1", 23305))
             self.assertEqual((record.lemond_host, record.lemond_port), ("127.0.0.1", 13305))
+
+    def test_the_vanilla_env_alone_has_no_model_peer_and_no_reranker(self):
+        # Without a profile, as when the unit's "-" skips a missing one, Open
+        # WebUI has no model connection and the RAG gate has no reranker to
+        # qualify, so document RAG stays closed.  The kit never starts that way.
+        env = packaged_env()
+        self.assertEqual((env["ENABLE_OLLAMA_API"], env["ENABLE_OPENAI_API"]), ("false", "false"))
+        self.assertEqual(env["RAG_RERANKING_ENGINE"], "external")
+        for key in ("RAG_RERANKING_MODEL", "RAG_EXTERNAL_RERANKER_URL", "RAG_EMBEDDING_ENGINE",
+                    "RAG_OPENAI_API_BASE_URL", "OPENAI_API_BASE_URLS"):
+            self.assertNotIn(key, env)
+        with tempfile.TemporaryDirectory() as directory:
+            kit = make_kit(directory)
+            self.assertIn("ENABLE_OPENAI_API", kit_module.provider_mismatch(kit, env) or "")
+
+
+class HouseholdProfileTests(unittest.TestCase):
+    """The trial's household profile: the candidate's example, rendered for the kit's provider."""
+
+    def test_rendering_fills_only_the_provider_origin(self):
+        example = PROFILE_EXAMPLE.read_text(encoding="utf-8")
+        # The lines the operator's grep -nE '^[^#]*<[a-z]+>' prints for the example.
+        self.assertEqual(sc.profile_placeholder_lines(example), [25, 32, 54])
+        rendered = sc.render_household_profile(example, "http://lemond-host:13400/")
+        self.assertEqual(sc.profile_placeholder_lines(rendered), [])
+        self.assertNotIn("<lemond>", rendered)
+        profile = sc.parse_env_file(rendered)
+        self.assertEqual(profile["OPENAI_API_BASE_URLS"], "http://lemond-host:13400/api/v1")
+        self.assertEqual(profile["RAG_EXTERNAL_RERANKER_URL"], "http://lemond-host:13400/api/v1/rerank")
+        # The origin lines stay commented, and the zembed markers are not placeholders.
+        self.assertNotIn("WEBUI_URL", profile)
+        self.assertEqual(profile["RAG_EMBEDDING_QUERY_PREFIX"], sc.ZEMBED_QUERY_HEAD)
+        self.assertEqual(profile["RAG_EMBEDDING_CONTENT_PREFIX"], sc.ZEMBED_DOCUMENT_HEAD)
+
+    def test_a_placeholder_left_after_rendering_is_refused(self):
+        example = PROFILE_EXAMPLE.read_text(encoding="utf-8") + "WEBUI_URL=https://<name>.<tailnet>.ts.net\n"
+        with self.assertRaisesRegex(ValueError, "placeholders on lines 67$"):
+            sc.render_household_profile(example, sc.DEFAULT_LEMOND_URL)
+        self.assertEqual(sc.profile_placeholder_lines("# x=<lemond>\nA=<b>\nB=<|im_end|>\n"), [2])
+        with self.assertRaises(ValueError):
+            sc.render_household_profile("A=<lemond>\n", "lemond-host:13305")
+
+    def rendered_root(self, directory):
+        kit = make_kit(directory)
+        write_candidate_tree(directory)
+        kit.profile_path.parent.mkdir(parents=True, exist_ok=True)
+        kit.profile_path.write_text(kit.rendered_profile())
+        return kit
+
+    def test_every_start_needs_the_rendered_profile(self):
+        # The unit reads the profile with "-", so without this check a missing
+        # profile would start vanilla and the first start would persist that.
+        with tempfile.TemporaryDirectory() as directory:
+            kit = self.rendered_root(directory)
+            good = kit.profile_path.read_text()
+            cases = {
+                "missing": None,
+                "placeholder": good + "WEBUI_URL=https://<name>.<tailnet>.ts.net\n",
+                "drifted": good.replace("zerank-2-GGUF", "another-reranker"),
+            }
+            for name, text in cases.items():
+                with self.subTest(name):
+                    if text is None:
+                        kit.profile_path.unlink()
+                    else:
+                        kit.profile_path.write_text(text)
+                    with mock.patch.object(kit_module, "systemctl") as systemctl, \
+                            mock.patch.object(kit_module, "require_lemond_ready") as ready, \
+                            self.assertRaises(sc.Blocked):
+                        kit_module.start_open_webui(kit)
+                    systemctl.assert_not_called()
+                    ready.assert_not_called()
+            kit.profile_path.write_text(good)
+            kit_module.require_rendered_profile(kit)
+
+    def test_the_rehearsal_units_serve_the_profile_models_from_the_stub(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit = make_kit(directory, rehearsal=True)
+            write_candidate_tree(directory)
+            unit = kit.path("tree", "qdrant", "usr", "lib", "systemd", "system", "qdrant.service")
+            unit.parent.mkdir(parents=True)
+            unit.write_text(QDRANT_UNIT.read_text())
+            units = kit_module.render_units(kit)
+            stub = units[kit_module.UNITS["stub"]]
+            self.assertIn("--embedding-model zembed-1-Q4_K_M-GGUF-Q4_K_M --reranking-model zerank-2-GGUF", stub)
+            self.assertIn(f"EnvironmentFile=-{kit.root}/etc/household.env", units[kit_module.UNITS["open-webui"]])
+            self.assertEqual(kit.profile_env()["OPENAI_API_BASE_URLS"], "http://127.0.0.1:23305/api/v1")
+
+    def test_the_trial_refuses_a_missing_profile_before_it_spends_the_one_trial(self):
+        with tempfile.TemporaryDirectory() as directory:
+            staged = write_manifest(directory, six_archives(f"{directory}/inputs"))
+            kit = make_kit(directory)
+            kit.manifest_path = staged
+            (kit.root / kit_module.MARKER).write_text("marker\n")
+            kit.raw.mkdir(parents=True)
+            (kit.raw / "first-start.json").write_text(json.dumps({"started_at": 1.0}))
+            kit.save_state(mode="record", manifest={"sha256": kit_module.load_manifest(staged)["sha256"]})
+            args = kit_module.parser().parse_args(["trial", "--lemonade-receipt", "r"])
+            with mock.patch.object(kit_module, "unit_active", return_value=True), \
+                    mock.patch.object(kit_module, "require_lemond_ready") as ready, \
+                    self.assertRaisesRegex(sc.Blocked, "rendered household profile"):
+                kit_module.cmd_trial(kit, args)
+            ready.assert_not_called()
+            self.assertNotIn("trial_started", kit.state())
+
+    def test_the_production_expectation_comes_from_the_profile_example(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit = self.rendered_root(directory)
+            kit.save_state(archives=[{"name": "open-webui-0.11.4-1-x86_64.pkg.tar.zst", "sha256": "a" * 64}])
+            expectation = kit_module.production_expectation_for(kit)
+            assert expectation is not None
+            self.assertEqual(expectation["entry"]["RAG_EMBEDDING_MODEL"], "zembed-1-Q4_K_M-GGUF-Q4_K_M")
+            self.assertEqual(expectation["entry"]["RAG_RERANKING_MODEL"], "zerank-2-GGUF")
+            self.assertEqual(expectation["entry"]["RAG_EMBEDDING_QUERY_PREFIX"], sc.ZEMBED_QUERY_HEAD)
+            (kit.root / "tree" / "open-webui" / sc.HOUSEHOLD_EXAMPLE).unlink()
+            self.assertIsNone(kit_module.production_expectation_for(kit))
+
+    def test_the_candidate_fixture_is_the_0_11_4_package_files(self):
+        # The digests the 0.11.4-1 PKGBUILD pins for these three sources.
+        pinned = {
+            "open-webui.env": "b039eb10d67a8f59e3749296e57b895d1a36ed4f769fb1b56bcaa2aeb55aaeb3",
+            "household.env.example": "cc6f1e164e36e814778d1d0d441d2801b21f02401107ed0a875aa58cee308177",
+            "open-webui.service": "634e7f16c6ccf1e0e994e48adb978e8235d194153742ed73493be5851bf1b9be",
+        }
+        self.assertEqual({name: kit_module.sha256_file(CANDIDATE / name) for name in pinned}, pinned)
+
+    @unittest.skipUnless((REPO_ROOT / "packages" / "open-webui" / "household.env.example").is_file(),
+                         "the in-tree open-webui package predates the household profile split")
+    def test_the_candidate_fixture_matches_the_in_tree_package(self):
+        for name in ("open-webui.env", "household.env.example", "open-webui.service"):
+            with self.subTest(name):
+                self.assertEqual((CANDIDATE / name).read_bytes(),
+                                 (REPO_ROOT / "packages" / "open-webui" / name).read_bytes())
 
 
 class UnitDerivationTests(unittest.TestCase):
@@ -259,11 +431,26 @@ class UnitDerivationTests(unittest.TestCase):
                             "ExecStartPre", "ReadWritePaths", "ProtectHome", "PrivateTmp", "RestrictRealtime"):
                 self.assertNotIn(dropped, keys)
             self.assertIn(("Slice", "owui-acc.slice"), values)
+            # The packaged env, then the optional profile (the kit's rendering,
+            # still optional), then the overlay, which wins.
             files = [value for _, key, value in lines if key == "EnvironmentFile"]
             self.assertEqual(
                 files,
-                [str(kit.root / "tree/open-webui/etc/open-webui/open-webui.env"), str(kit.root / "etc/acceptance.env")],
+                [str(kit.root / "tree/open-webui/etc/open-webui/open-webui.env"), f"-{kit.root}/etc/household.env",
+                 str(kit.root / "etc/acceptance.env")],
             )
+            environment_rows = [row for row in rows if row["property"] == "EnvironmentFile"]
+            self.assertEqual([(row["packaged"], row["acceptance"]) for row in environment_rows], [
+                ("/etc/open-webui/open-webui.env",
+                 [f"EnvironmentFile={kit.root}/tree/open-webui/etc/open-webui/open-webui.env"]),
+                ("-/etc/open-webui/household.env", [f"EnvironmentFile=-{kit.root}/etc/household.env"]),
+            ])
+            # The unit's profile read guard is dropped with the privileged
+            # steps; the kit checks its rendered profile itself.
+            guard = [row for row in rows if row["property"] == "ExecStartPre"
+                     and "/etc/open-webui/household.env" in row["packaged"]]
+            self.assertEqual([row["status"] for row in guard], [kit_module.DROPPED])
+            self.assertNotIn("household.env exists but", text)
             encrypted = sorted(value.split(":", 1)[0] for _, key, value in lines if key == "LoadCredentialEncrypted")
             self.assertEqual(encrypted, sorted(kit_module.OPEN_WEBUI_SECRETS))
             self.assertIn(("LoadCredential", f"session-epoch:{kit.root}/ledger/current"), values)
@@ -495,14 +682,15 @@ class PreflightTests(unittest.TestCase):
             stack.enter_context(mock.patch.object(kit_module, "host_package_version", return_value="1-1"))
             stack.enter_context(mock.patch.object(kit_module, "port_in_use", return_value=False))
             stack.enter_context(mock.patch.object(kit_module, "LEGACY_OPT", legacy_path))
-            stack.enter_context(mock.patch.object(kit_module, "packaged_env_from_archive", return_value=packaged_env()))
+            stack.enter_context(mock.patch.object(kit_module, "candidate_env_from_archive",
+                                                  side_effect=lambda _archive, url: candidate_env(url)))
             snapshot = stack.enter_context(mock.patch.object(sc, "lemond_snapshot", return_value=(health, models)))
             report, refusals = kit_module.preflight_facts(kit, probe_only=True)
         snapshot.assert_called_once()
         return report, refusals
 
     def served(self, *extra):
-        env = packaged_env()
+        env = candidate_env()
         ids = [env["RAG_EMBEDDING_MODEL"], env["RAG_RERANKING_MODEL"], "resident-chat", *extra]
         return {"data": [{"id": item} for item in ids]}, {"all_models_loaded": [{"model_name": item} for item in ids]}
 
@@ -514,20 +702,20 @@ class PreflightTests(unittest.TestCase):
         self.assertEqual(sorted(report["archives"].values()), ["ok"] * 6)
 
     def test_readiness_accepts_the_bare_listing_of_a_user_prefixed_chat_model(self):
-        env = packaged_env()
+        env = candidate_env()
         ids = [env["RAG_EMBEDDING_MODEL"], env["RAG_RERANKING_MODEL"], "Qwen3.6-35B-A3B-MTP-GGUF-UD-Q4_K_XL"]
         models = {"data": [{"id": item} for item in ids]}
         health = {"all_models_loaded": [{"model_name": item} for item in ids]}
         with tempfile.TemporaryDirectory() as directory:
             kit = make_kit(directory)
             kit.chat_model = sc.DEFAULT_CHAT_MODEL
-            with mock.patch.object(kit_module.Kit, "packaged_env", return_value=env), \
+            with mock.patch.object(kit_module.Kit, "effective_env", return_value=env), \
                     mock.patch.object(sc, "lemond_snapshot", return_value=(health, models)):
                 kit_module.require_lemond_ready(kit)
 
     def test_preflight_refuses_instead_of_loading_a_model(self):
         models, _ = self.served()
-        env = packaged_env()
+        env = candidate_env()
         health = {"all_models_loaded": [{"model_name": env["RAG_EMBEDDING_MODEL"]}]}
         with tempfile.TemporaryDirectory() as directory:
             _, refusals = self.run_preflight(directory, health=health, models=models)
@@ -540,34 +728,52 @@ class PreflightTests(unittest.TestCase):
         self.assertTrue(any("missing pinned archive" in item for item in refusals), refusals)
         self.assertTrue(any("/opt/open-webui" in item or "absent" in item for item in refusals), refusals)
 
-    def test_a_lemonade_other_than_the_packaged_provider_is_refused(self):
+    def test_another_provider_origin_is_rendered_into_the_profile(self):
+        models, health = self.served()
+        with tempfile.TemporaryDirectory() as directory:
+            report, refusals = self.run_preflight(directory, health=health, models=models,
+                                                  lemond_url="http://127.0.0.1:13400")
+        self.assertEqual(refusals, [])
+        self.assertEqual(report["profile_models"], ["zembed-1-Q4_K_M-GGUF-Q4_K_M", "zerank-2-GGUF"])
+
+    def test_a_profile_that_points_elsewhere_than_the_provider_is_refused(self):
+        # A provider URL with a path is not the origin the profile renders, so
+        # the kit would check one Lemonade while Open WebUI talks to another.
         models, health = self.served()
         with tempfile.TemporaryDirectory() as directory:
             _, refusals = self.run_preflight(directory, health=health, models=models,
-                                             lemond_url="http://127.0.0.1:13400")
-        self.assertTrue(any("differs from the packaged provider" in item for item in refusals), refusals)
+                                             lemond_url="http://127.0.0.1:13305/lemonade")
+        self.assertTrue(any("do not point Open WebUI at --lemond-url (OPENAI_API_BASE_URLS, RAG_OPENAI_API_BASE_URL)"
+                            in item for item in refusals), refusals)
         with tempfile.TemporaryDirectory() as directory:
             kit = make_kit(directory)
             kit.lemond_url = "http://127.0.0.1:13400"
-            with mock.patch.object(kit_module.Kit, "packaged_env", return_value=packaged_env()), \
+            elsewhere = candidate_env("http://127.0.0.1:13305")
+            with mock.patch.object(kit_module.Kit, "effective_env", return_value=elsewhere), \
                     mock.patch.object(sc, "lemond_snapshot") as snapshot:
-                with self.assertRaises(sc.Blocked):
+                with self.assertRaisesRegex(sc.Blocked, "RAG_EXTERNAL_RERANKER_URL"):
                     kit_module.require_lemond_ready(kit)
             snapshot.assert_not_called()
+            write_candidate_tree(directory)
+            kit.profile_path.parent.mkdir(parents=True)
+            kit.profile_path.write_text(kit.rendered_profile())
             (kit.root / kit_module.MARKER).write_text("marker\n")
             (kit.root / "kit.json").write_text(json.dumps({"mode": "record", "credential_route": "systemd-creds",
                                                            "commissioned": False}))
             args = kit_module.parser().parse_args(["trial", "--root", directory, "--chat-model", "resident-chat",
                                                    "--lemond-url", "http://127.0.0.1:13400"])
             with mock.patch.object(kit_module, "kit_from_args", return_value=kit), \
-                    mock.patch.object(kit_module.Kit, "packaged_env", return_value=packaged_env()), \
+                    mock.patch.object(kit_module.Kit, "effective_env", return_value=elsewhere), \
                     mock.patch.object(kit_module, "unit_active", return_value=True), \
                     contextlib.redirect_stderr(io.StringIO()):
                 (kit.root / "evidence" / "raw").mkdir(parents=True)
                 (kit.root / "evidence" / "raw" / "first-start.json").write_text("{}")
+                kit.manifest_path = write_manifest(directory, six_archives(f"{directory}/inputs"))
+                kit.save_state(manifest={"sha256": kit_module.load_manifest(kit.manifest_path)["sha256"]})
                 code = kit_module.main(["trial", "--root", directory, "--chat-model", "resident-chat",
                                         "--lemonade-receipt", "r", "--lemond-url", "http://127.0.0.1:13400"])
             self.assertEqual(code, sc.EXIT_PRECONDITION)
+            self.assertNotIn("trial_started", kit.state())
         self.assertEqual(args.lemond_url, "http://127.0.0.1:13400")
 
     def test_the_trial_checks_the_manifest_before_it_spends_the_one_trial(self):
@@ -705,9 +911,9 @@ class PreflightTests(unittest.TestCase):
             models, health = self.served()
             health = {"all_models_loaded": health["all_models_loaded"][:2]}
             with mock.patch.object(sc, "lemond_snapshot", return_value=(health, models)), \
-                    mock.patch.object(kit_module.Kit, "packaged_env", return_value=packaged_env()), \
+                    mock.patch.object(kit_module.Kit, "effective_env", return_value=candidate_env()), \
                     mock.patch.object(kit_module, "effective_models",
-                                      return_value=(packaged_env()["RAG_EMBEDDING_MODEL"], packaged_env()["RAG_RERANKING_MODEL"])):
+                                      return_value=(candidate_env()["RAG_EMBEDDING_MODEL"], candidate_env()["RAG_RERANKING_MODEL"])):
                 with self.assertRaises(sc.Blocked):
                     kit_module.require_lemond_ready(kit)
 
@@ -809,13 +1015,10 @@ class PreflightTests(unittest.TestCase):
             (root / "etc" / "Caddyfile").write_text("old")
 
             def fake_tree(_kit, _archives):
-                for package, packaged in (("open-webui", OPEN_WEBUI_UNIT), ("qdrant", QDRANT_UNIT)):
-                    unit = root / "tree" / package / "usr" / "lib" / "systemd" / "system" / packaged.name
-                    unit.parent.mkdir(parents=True)
-                    unit.write_text(packaged.read_text())
-                env = root / "tree" / "open-webui" / "etc" / "open-webui" / "open-webui.env"
-                env.parent.mkdir(parents=True)
-                env.write_text(PACKAGED_ENV.read_text())
+                write_candidate_tree(root)
+                unit = root / "tree" / "qdrant" / "usr" / "lib" / "systemd" / "system" / QDRANT_UNIT.name
+                unit.parent.mkdir(parents=True)
+                unit.write_text(QDRANT_UNIT.read_text())
 
             args = kit_module.parser().parse_args(["teardown", "--keep-anchor", "--evidence-out", f"{directory}/out"])
             with mock.patch.object(kit_module, "systemctl"), contextlib.redirect_stdout(io.StringIO()):
@@ -834,10 +1037,12 @@ class PreflightTests(unittest.TestCase):
                 referenced.update(re.findall(re.escape(str(root / "etc")) + r"/[\w.-]+", text))
             self.assertEqual(
                 {Path(item).name for item in referenced},
-                {"acceptance.env", "Caddyfile", "valkey-open-webui.conf", "qdrant-credential-shim"},
+                {"household.env", "acceptance.env", "Caddyfile", "valkey-open-webui.conf", "qdrant-credential-shim"},
             )
             for item in referenced:
                 self.assertTrue(Path(item).is_file(), item)
+            self.assertEqual((root / "etc" / "household.env").read_text(), kit.rendered_profile())
+            kit_module.require_rendered_profile(kit)
             acl = (root / "etc" / "valkey-open-webui.acl").read_text()
             self.assertIn(sc.valkey_password_hash("valkey-password"), acl)
             self.assertNotIn("valkey-password", acl)
@@ -1190,7 +1395,7 @@ class CredentialTests(unittest.TestCase):
         self.assertEqual(kit_module.jwt_claims(kit_module.mint_jwt("k", "r", 300, now=1000))["exp"], 1300)
 
     def test_stored_secret_check_ignores_toggles_and_flags_key_material_in_admin_exports(self):
-        env = packaged_env()
+        env = candidate_env()
         self.assertEqual(kit_module.nonempty_key_paths(env, {"OPENAI_API_KEYS": ""}), [])
         # The nested shapes of Open WebUI 0.11's GET /openai/config and /api/v1/retrieval/config.
         openai = {"ENABLE_OPENAI_API": True, "OPENAI_API_KEYS": [""], "OPENAI_API_CONFIGS": {"0": {}}}
@@ -1212,9 +1417,8 @@ class CredentialTests(unittest.TestCase):
         """
 
         kit = make_kit(directory)
-        env = kit.path("tree", "open-webui", "etc", "open-webui", "open-webui.env")
-        env.parent.mkdir(parents=True)
-        env.write_text(PACKAGED_ENV.read_text())
+        if not kit.path("tree").is_dir():
+            write_candidate_tree(directory)
         kit.unit_dir.mkdir(parents=True)
         unit, _ = kit_module.open_webui_unit(kit, OPEN_WEBUI_UNIT.read_text())
         (kit.unit_dir / kit_module.UNITS["open-webui"]).write_text(unit)
@@ -1242,6 +1446,9 @@ class CredentialTests(unittest.TestCase):
             "rag.external_reranker_api_key": "",
             "auth.enable_api_keys": False,
             "auth.api_key.endpoint_restrictions": False,
+            # SQLite stores a JSON number in this column as an INTEGER or REAL.
+            "rag.top_k": 3,
+            "rag.relevance_threshold": 0.0,
         }
         with tempfile.TemporaryDirectory() as directory:
             values = self.no_stored_secret(directory, config)
@@ -1252,6 +1459,115 @@ class CredentialTests(unittest.TestCase):
             with self.assertRaises(sc.ScenarioFailure) as raised:
                 self.no_stored_secret(directory, {"rag.openai.api_key": "sk-x", "openai.api_keys": [""]})
         self.assertEqual(json.loads(str(raised.exception))["nonempty_key_fields"], ["rag.openai.api_key"])
+
+    def test_stored_secret_check_flags_a_key_in_the_rendered_profile(self):
+        with tempfile.TemporaryDirectory() as directory:
+            example = write_candidate_tree(directory) / sc.HOUSEHOLD_EXAMPLE
+            example.write_text(example.read_text().replace("OPENAI_API_KEYS=\n", "OPENAI_API_KEYS=sk-x\n"))
+            with self.assertRaises(sc.ScenarioFailure) as raised:
+                self.no_stored_secret(directory, {"openai.api_keys": [""]})
+        self.assertEqual(json.loads(str(raised.exception))["nonempty_key_fields"], ["OPENAI_API_KEYS"])
+
+
+class ProfilePersistedTests(unittest.TestCase):
+    """open-webui.acceptance.profile.persisted: the first start stored the profile, not the vanilla values."""
+
+    # What Open WebUI 0.11.4 persists for the rendered example under the
+    # acceptance overlay, as JSON config rows: the profile's values parsed as
+    # config.py parses them, and the relay's reranker URL.
+    PROFILE_ROWS = {
+        "openai.enable": True,
+        "openai.api_base_urls": ["http://127.0.0.1:13305/api/v1"],
+        "openai.api_keys": [""],
+        "rag.embedding_engine": "openai",
+        "rag.openai.api_base_url": "http://127.0.0.1:13305/api/v1",
+        "rag.embedding_model": "zembed-1-Q4_K_M-GGUF-Q4_K_M",
+        "rag.embedding_batch_size": 1,
+        "rag.embedding_concurrent_requests": 1,
+        "rag.reranking_model": "zerank-2-GGUF",
+        "rag.external_reranker_url": "http://127.0.0.1:13306/api/v1/rerank",
+        "rag.reranking_batch_size": 3,
+        "calendar.enable": False,
+        "evaluation.arena.enable": False,
+        "task.query.retrieval.enable": False,
+    }
+    # Open WebUI 0.11.4's defaults for the same keys (open_webui/config.py) with
+    # the vanilla open-webui.env and the overlay: what a first start without the
+    # profile persists.
+    VANILLA_ROWS = {
+        "openai.enable": False,
+        "openai.api_base_urls": ["https://api.openai.com/v1"],
+        "openai.api_keys": [""],
+        "rag.embedding_engine": "",
+        "rag.openai.api_base_url": "https://api.openai.com/v1",
+        "rag.embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+        "rag.embedding_batch_size": 1,
+        "rag.embedding_concurrent_requests": 0,
+        "rag.reranking_model": "",
+        "rag.external_reranker_url": "http://127.0.0.1:13306/api/v1/rerank",
+        "rag.reranking_batch_size": 32,
+        "calendar.enable": True,
+        "evaluation.arena.enable": True,
+        "task.query.retrieval.enable": True,
+    }
+
+    def persisted(self, directory, rows):
+        kit = make_kit(directory)
+        if not kit.path("tree").is_dir():
+            write_candidate_tree(directory)
+        with mock.patch.object(kit_module, "valkey_password", return_value="valkey-password"):
+            kit_module.render_etc(kit)
+        data = kit_module.data_dir(kit)
+        data.mkdir(parents=True)
+        with contextlib.closing(sqlite3.connect(data / "webui.db")) as db:
+            db.execute("CREATE TABLE config (key TEXT PRIMARY KEY, value JSON NOT NULL, updated_at BIGINT)")
+            db.executemany("INSERT INTO config VALUES (?, ?, 0)", [(key, json.dumps(value)) for key, value in rows.items()])
+            db.commit()
+        return kit_module.Trial(kit).profile_persisted()
+
+    def test_a_first_start_with_the_profile_persists_its_values(self):
+        with tempfile.TemporaryDirectory() as directory:
+            values = self.persisted(directory, {**self.PROFILE_ROWS, "ui.default_models": ""})
+        self.assertEqual(values["persisted_keys"], sorted([
+            "ENABLE_OPENAI_API", "OPENAI_API_BASE_URLS", "OPENAI_API_KEYS", "RAG_EMBEDDING_ENGINE",
+            "RAG_OPENAI_API_BASE_URL", "RAG_EMBEDDING_MODEL", "RAG_EMBEDDING_BATCH_SIZE",
+            "RAG_EMBEDDING_CONCURRENT_REQUESTS", "RAG_RERANKING_MODEL", "RAG_EXTERNAL_RERANKER_URL",
+            "RAG_RERANKING_BATCH_SIZE", "ENABLE_CALENDAR", "ENABLE_EVALUATION_ARENA_MODELS",
+            "ENABLE_RETRIEVAL_QUERY_GENERATION",
+        ]))
+        self.assertEqual(values["overlay_keys"], ["RAG_EXTERNAL_RERANKER_URL"])
+        self.assertEqual(values["environment_keys"], ["RAG_EMBEDDING_CONTENT_PREFIX", "RAG_EMBEDDING_QUERY_PREFIX"])
+        self.assertEqual((values["absent"], values["mismatched"], values["unclassified"]), ([], [], []))
+
+    def test_vanilla_values_persisted_before_the_profile_existed_fail_by_name(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(sc.ScenarioFailure) as raised:
+                self.persisted(directory, self.VANILLA_ROWS)
+        detail = str(raised.exception)
+        recorded = json.loads(detail)
+        self.assertEqual(recorded["mismatched"], [
+            "ENABLE_CALENDAR", "ENABLE_EVALUATION_ARENA_MODELS", "ENABLE_OPENAI_API",
+            "ENABLE_RETRIEVAL_QUERY_GENERATION", "OPENAI_API_BASE_URLS", "RAG_EMBEDDING_CONCURRENT_REQUESTS",
+            "RAG_EMBEDDING_ENGINE", "RAG_EMBEDDING_MODEL", "RAG_OPENAI_API_BASE_URL", "RAG_RERANKING_BATCH_SIZE",
+            "RAG_RERANKING_MODEL",
+        ])
+        self.assertEqual(recorded["absent"], [])
+        # Names only: no value, persisted or expected, reaches the record.
+        for value in ("zembed", "zerank", "MiniLM", "api.openai.com", "13305", "13306", "true", "false"):
+            self.assertNotIn(value, detail.lower())
+
+    def test_a_missing_row_and_an_unknown_profile_key_fail(self):
+        rows = {key: value for key, value in self.PROFILE_ROWS.items() if key != "rag.reranking_model"}
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(sc.ScenarioFailure) as raised:
+                self.persisted(directory, rows)
+        self.assertEqual(json.loads(str(raised.exception))["absent"], ["RAG_RERANKING_MODEL"])
+        with tempfile.TemporaryDirectory() as directory:
+            example = write_candidate_tree(directory) / sc.HOUSEHOLD_EXAMPLE
+            example.write_text(example.read_text() + "RAG_TOP_K=5\n")
+            with self.assertRaises(sc.ScenarioFailure) as raised:
+                self.persisted(directory, self.PROFILE_ROWS)
+        self.assertEqual(json.loads(str(raised.exception))["unclassified"], ["RAG_TOP_K"])
 
     def test_user_credentials_need_the_units_to_load_them_too(self):
         def fake_run(command, **_kwargs):
@@ -2209,8 +2525,12 @@ class ResourceTests(unittest.TestCase):
 class EvidenceTests(unittest.TestCase):
     def test_trial_map_is_one_pass_with_the_frozen_resmoke_ids_in_order(self):
         steps = kit_module.TRIAL_STEPS
-        self.assertEqual(len(steps), 24)
-        self.assertEqual(len(set(steps)), 24)
+        self.assertEqual(len(steps), 25)
+        self.assertEqual(len(set(steps)), 25)
+        # The persisted-profile check reads the first start's database before
+        # commissioning's configure call rewrites the connection.
+        self.assertEqual(steps[2:5], ("open-webui.acceptance.ready.first-start", "open-webui.acceptance.profile.persisted",
+                                      "open-webui.acceptance.auth.one-admin"))
         # The paging corpus and the planted hybrid-search fault run after both
         # drills, so their anchor and timings never carry those points.
         rollback = steps.index("open-webui.acceptance.drill.rollback")
@@ -2232,8 +2552,8 @@ class EvidenceTests(unittest.TestCase):
                          tuple(item for item in steps if ".drill." in item))
         # A changed step gets a new id and an evidence schema bump, never a
         # rewritten id; new steps bump the schema too.
-        self.assertEqual(steps[6], "open-webui.acceptance.connections.no-stored-secret")
-        self.assertEqual(kit_module.SCHEMA, "open-webui-household-acceptance/v3")
+        self.assertEqual(steps[7], "open-webui.acceptance.connections.no-stored-secret")
+        self.assertEqual(kit_module.SCHEMA, "open-webui-household-acceptance/v4")
 
     def test_the_runbook_scenario_map_is_the_trial_map(self):
         runbook = (REPO_ROOT / "docs" / "maintainers" / "open-webui-household-acceptance.md").read_text(encoding="utf-8")
@@ -2296,7 +2616,7 @@ class EvidenceTests(unittest.TestCase):
             kit, trial = self.trial(directory, rehearsal=False)
             evidence = kit_module.build_evidence(kit, trial, 0, False)
             v1.assert_public_safe(evidence)
-            self.assertEqual(evidence["schema"], "open-webui-household-acceptance/v3")
+            self.assertEqual(evidence["schema"], "open-webui-household-acceptance/v4")
             self.assertEqual(
                 (evidence["trial_set_count"], evidence["restore_drills"], evidence["rollback_drills"]), (1, 1, 1)
             )
@@ -2359,10 +2679,10 @@ class EvidenceTests(unittest.TestCase):
                     mock.patch.object(kit_module, "journal", return_value="") as read, \
                     mock.patch.object(kit_module, "upload_handbook", return_value="file-1"), \
                     mock.patch.object(kit_module.sc, "open_webui_pid", return_value=1), \
-                    mock.patch.object(kit_module.sc, "read_process_environ", return_value=packaged_env()), \
+                    mock.patch.object(kit_module.sc, "read_process_environ", return_value=candidate_env()), \
                     mock.patch.object(kit_module, "effective_models",
-                                      return_value=(packaged_env()["RAG_EMBEDDING_MODEL"],
-                                                    packaged_env()["RAG_RERANKING_MODEL"])), \
+                                      return_value=(candidate_env()["RAG_EMBEDDING_MODEL"],
+                                                    candidate_env()["RAG_RERANKING_MODEL"])), \
                     mock.patch.object(kit_module.Kit, "caddy"), mock.patch.object(kit_module.Kit, "lemond"), \
                     mock.patch.object(kit_module.Kit, "qdrant"), \
                     mock.patch.object(kit_module, "a_id2_rows", return_value=[]), \
@@ -2454,7 +2774,8 @@ class EvidenceTests(unittest.TestCase):
                 ran.append("restore")
                 raise sc.ScenarioFailure('{"restore_s": 41.0}')
 
-            for name in ("identity", "unit_properties", "first_start", "commission", "restart", "g4", "no_stored_secret",
+            for name in ("identity", "unit_properties", "first_start", "profile_persisted", "commission", "restart", "g4",
+                         "no_stored_secret",
                          "reranker_down", "full_context", "native_tools", "recovery", "explicit_reads", "privacy",
                          "rollback_drill", "qdrant_paging", "hybrid_error", "resources"):
                 setattr(trial, name, ok(name))

@@ -3,9 +3,10 @@
 
 The kit deploys the exact candidate bytes named by the build ticket's manifest
 as user-level services under one disposable, marked root, wires them to the
-shared Lemonade provider, and runs exactly one integrated trial set: one pass
-over the scenario map, one restore drill, and one rollback drill.  Evidence
-schema: ``open-webui-household-acceptance/v3``.
+shared Lemonade provider through the candidate's household profile example,
+rendered for that provider, and runs exactly one integrated trial set: one
+pass over the scenario map, one restore drill, and one rollback drill.
+Evidence schema: ``open-webui-household-acceptance/v4``.
 
 Subcommands: preflight [--probe-only], stage, up, down, trial, resmoke,
 teardown [--keep-anchor].  The stub rehearsal (``--provider stub
@@ -58,7 +59,7 @@ sys.path.insert(0, str(TOOLS))
 import measure_open_webui_household as v1  # noqa: E402
 import open_webui_household_scenarios as sc  # noqa: E402
 
-SCHEMA = "open-webui-household-acceptance/v3"
+SCHEMA = "open-webui-household-acceptance/v4"
 MARKER = ".owui-acceptance"
 KIT_STATE = "kit.json"
 DEFAULT_ROOT = Path("/srv/build/arch-pkgs-owui-acceptance")
@@ -184,6 +185,7 @@ TRIAL_STEPS: tuple[str, ...] = (
     "open-webui.acceptance.identity.archives",
     "open-webui.acceptance.identity.unit-properties",
     "open-webui.acceptance.ready.first-start",
+    "open-webui.acceptance.profile.persisted",
     "open-webui.acceptance.auth.one-admin",
     "open-webui.acceptance.ready.restart",
     "open-webui.acceptance.qdrant.g4",
@@ -485,7 +487,11 @@ _UNIT_POLICY: Mapping[tuple[str, str], tuple[str, str]] = MappingProxyType(
         ("Service", "MemoryMax"): (KEEP, ""),
         ("Service", "IPAddressDeny"): (UNENFORCED, "the user manager cannot attach the BPF address filter"),
         ("Service", "IPAddressAllow"): (UNENFORCED, "the user manager cannot attach the BPF address filter"),
-        ("Service", "EnvironmentFile"): (REWRITTEN, "the packaged file is read from the extracted candidate tree"),
+        ("Service", "EnvironmentFile"): (
+            REWRITTEN,
+            "the packaged file is read from the extracted candidate tree, and the optional host profile "
+            "from the kit's rendering of the candidate's example; the acceptance overlay is read after both",
+        ),
         ("Service", "LoadCredentialEncrypted"): (REWRITTEN, "sources live in the acceptance credstore"),
         ("Service", "LoadCredential"): (REWRITTEN, "sources live under the acceptance root"),
         ("Service", "WorkingDirectory"): (REWRITTEN, "state lives under the acceptance root"),
@@ -498,7 +504,11 @@ _UNIT_POLICY: Mapping[tuple[str, str], tuple[str, str]] = MappingProxyType(
         ("Service", "StateDirectoryMode"): (DROPPED, "the kit creates state under the acceptance root"),
         ("Service", "RuntimeDirectory"): (DROPPED, "the socket lives under $XDG_RUNTIME_DIR/owui-acc"),
         ("Service", "RuntimeDirectoryMode"): (DROPPED, "the socket lives under $XDG_RUNTIME_DIR/owui-acc"),
-        ("Service", "ExecStartPre"): (DROPPED, "a privileged or root-secret preflight step"),
+        ("Service", "ExecStartPre"): (
+            DROPPED,
+            "a privileged runtime-directory step, or the host-profile read guard; the kit checks its "
+            "rendered profile itself before every start",
+        ),
         ("Service", "ReadWritePaths"): (DROPPED, "belongs to the dropped ProtectSystem sandbox"),
         ("Service", "MemoryDenyWriteExecute"): (DROPPED, "sandboxing the user manager cannot apply"),
         ("Service", "CapabilityBoundingSet"): (DROPPED, "capability sets need the system manager"),
@@ -929,6 +939,12 @@ class Kit:
         return self.unit_dir / f"{UNITS['open-webui']}.d" / "10-bootstrap.conf"
 
     @property
+    def profile_path(self) -> Path:
+        """The trial's household profile, rendered from the candidate's example."""
+
+        return self.path("etc", "household.env")
+
+    @property
     def lemond_port(self) -> int:
         parsed = urllib.parse.urlsplit(self.lemond_url)
         return parsed.port or (443 if parsed.scheme == "https" else 80)
@@ -1021,14 +1037,26 @@ class Kit:
             self.path("tree", "open-webui", "etc", "open-webui", "open-webui.env").read_text(encoding="utf-8")
         )
 
-    def overlay(self, packaged_env: Mapping[str, str] | None = None) -> dict[str, str]:
+    def rendered_profile(self) -> str:
+        """The candidate's household profile example with ``<lemond>`` set to this kit's provider."""
+
+        example = self.path("tree", "open-webui", sc.HOUSEHOLD_EXAMPLE).read_text(encoding="utf-8")
+        return sc.render_household_profile(example, self.lemond_url)
+
+    def profile_env(self) -> dict[str, str]:
+        return sc.parse_env_file(self.rendered_profile())
+
+    def effective_env(self) -> dict[str, str]:
+        """What the unit's two packaged env files give Open WebUI: the profile wins."""
+
+        return {**self.packaged_env(), **self.profile_env()}
+
+    def overlay(self, env: Mapping[str, str] | None = None) -> dict[str, str]:
         return sc.acceptance_overlay(
-            packaged_env if packaged_env is not None else self.packaged_env(),
+            env if env is not None else self.effective_env(),
             self.root,
-            lemond_url=self.lemond_url,
             qdrant_port=PORTS["qdrant"],
             relay_port=PORTS["relay"],
-            rehearsal=self.rehearsal,
         )
 
     def site_packages(self, package: str) -> Path | None:
@@ -1269,10 +1297,14 @@ def open_webui_unit(kit: Kit, packaged: str) -> tuple[str, list[dict[str, Any]]]
 
     def rewrite(key: str, value: str) -> list[tuple[str, str]]:
         if key == "EnvironmentFile":
-            return [
-                ("EnvironmentFile", str(kit.path("tree", "open-webui") / value.lstrip("/"))),
-                ("EnvironmentFile", str(kit.path("etc", "acceptance.env"))),
-            ]
+            # A leading "-" makes the file optional; keep it.
+            optional = "-" if value.startswith("-") else ""
+            path = value.removeprefix("-")
+            if path == sc.HOUSEHOLD_PROFILE:
+                target = kit.profile_path
+            else:
+                target = kit.path("tree", "open-webui") / path.lstrip("/")
+            return [("EnvironmentFile", f"{optional}{target}")]
         if key in {"LoadCredentialEncrypted", "LoadCredential"}:
             name = value.split(":", 1)[0]
             if name == "session-epoch":
@@ -1292,7 +1324,10 @@ def open_webui_unit(kit: Kit, packaged: str) -> tuple[str, list[dict[str, Any]]]
             )]
         raise ValueError(f"no rewrite for {key}")
 
-    extra = [line for line in containment_environment(kit, "open-webui", state) if not line[1].startswith("HOME=")]
+    # The overlay is the last environment file, so it wins over the packaged
+    # env and the rendered profile.
+    extra = [("EnvironmentFile", str(kit.path("etc", "acceptance.env")))]
+    extra += [line for line in containment_environment(kit, "open-webui", state) if not line[1].startswith("HOME=")]
     extra.append(("Environment", f"PYTHONPATH={kit.pythonpath()}"))
     extra += [("Environment", f"{key}={value}") for key, value in sc.speech_environment(kit.whisper_model).items()]
     return derive_unit("open-webui.service", packaged, rewrite, extra, kit.slice)
@@ -1372,11 +1407,11 @@ def render_units(kit: Kit) -> dict[str, str]:
         ),
     }
     if kit.provider == "stub":
-        packaged = kit.packaged_env()
+        env = kit.effective_env()
         units[UNITS["stub"]] = kit_unit(
             kit, "stub", "deterministic rehearsal provider",
             f"/usr/bin/python3 {STUB_SCRIPT} --host 127.0.0.1 --port {PORTS['stub']} "
-            f"--embedding-model {packaged['RAG_EMBEDDING_MODEL']} --reranking-model {packaged['RAG_RERANKING_MODEL']}",
+            f"--embedding-model {env['RAG_EMBEDDING_MODEL']} --reranking-model {env['RAG_RERANKING_MODEL']}",
         )
     return units
 
@@ -1401,14 +1436,19 @@ def a_id2_rows(kit: Kit) -> list[dict[str, Any]]:
     _, qdrant_rows = qdrant_unit(
         kit, kit.path("tree", "qdrant", "usr", "lib", "systemd", "system", "qdrant.service").read_text()
     )
-    packaged_env = kit.packaged_env()
+    packaged_env, profile = kit.packaged_env(), kit.profile_env()
+    env = {**packaged_env, **profile}
     overlay_rows = [
-        {"unit": "open-webui.service", "property": f"acceptance.env {key}", "packaged": packaged_env.get(key),
-         "acceptance": value, "status": "overlay", "reason": "allowlisted acceptance overlay key"}
-        for key, value in sorted(kit.overlay(packaged_env).items())
+        {"unit": "open-webui.service", "property": f"acceptance.env {key}", "packaged": env.get(key),
+         "acceptance": value, "status": "overlay",
+         "reason": "allowlisted acceptance overlay key" + (", over the rendered profile" if key in profile else "")}
+        for key, value in sorted(kit.overlay(env).items())
     ]
     route = kit.credential_route()
     fixed = [
+        ("household profile", f"{sc.HOUSEHOLD_PROFILE} (host-owned, optional; filled from /{sc.HOUSEHOLD_EXAMPLE})",
+         f"{kit.profile_path}: the candidate's example with {sc.LEMOND_PLACEHOLDER} set to the kit's provider origin",
+         "one rendered profile; a placeholder left or a drifted file refuses every start"),
         ("session-epoch ledger", "/var/lib/open-webui-session-epoch/current (root)",
          f"{kit.ledger} through unshare -r", "the root ledger is exercised only in the production install"),
         ("socket", "/run/open-webui/open-webui.sock", str(kit.socket_path), "user runtime directory"),
@@ -1447,31 +1487,60 @@ def ledger(kit: Kit, command: str) -> int:
 # Lemonade safety (ruling 8): read-only snapshots, and a refusal instead of a load
 
 
-def provider_mismatch(kit: Kit, packaged_env: Mapping[str, str]) -> str | None:
-    """Record mode: the kit's Lemonade must be the one the packaged env embeds against.
+def provider_mismatch(kit: Kit, env: Mapping[str, str]) -> str | None:
+    """The provider the kit checks must be the one Open WebUI talks to.
 
-    The record-mode overlay keeps the packaged ``RAG_OPENAI_API_BASE_URL``, so
-    a different ``--lemond-url`` would check one Lemonade while Open WebUI
-    embeds against another (and loads models there implicitly).
+    ``env`` is the packaged env with the rendered profile over it.  It must
+    enable exactly the one credential-free OpenAI-compatible connection at
+    ``--lemond-url`` and embed and rerank there, or the kit would check one
+    Lemonade while Open WebUI embeds against another (and loads models there
+    implicitly).  The overlay never widens to repair it.
     """
 
-    if kit.provider != "lemond":
-        return None
-    expected = kit.lemond_url.rstrip("/") + "/api/v1"
-    embed = packaged_env.get("RAG_OPENAI_API_BASE_URL", "").rstrip("/")
-    reranker = urllib.parse.urlsplit(packaged_env.get("RAG_EXTERNAL_RERANKER_URL", ""))
-    if embed != expected or f"{reranker.scheme}://{reranker.netloc}" != kit.lemond_origin:
+    api = kit.lemond_url.rstrip("/") + "/api/v1"
+    wrong = [key for key, value in sc.expected_connection(kit.lemond_url).items() if env.get(key) != value]
+    if env.get("RAG_OPENAI_API_BASE_URL", "").rstrip("/") != api:
+        wrong.append("RAG_OPENAI_API_BASE_URL")
+    reranker = urllib.parse.urlsplit(env.get("RAG_EXTERNAL_RERANKER_URL", ""))
+    if f"{reranker.scheme}://{reranker.netloc}" != kit.lemond_origin:
+        wrong.append("RAG_EXTERNAL_RERANKER_URL")
+    if wrong:
         return (
-            "NEEDS LEAD: --lemond-url differs from the packaged provider "
-            "(RAG_OPENAI_API_BASE_URL and RAG_EXTERNAL_RERANKER_URL); the kit never widens the overlay"
+            f"NEEDS LEAD: the packaged env and the rendered household profile do not point Open WebUI at "
+            f"--lemond-url ({', '.join(sorted(wrong))}); the kit never widens the overlay"
         )
     return None
+
+
+def require_rendered_profile(kit: Kit) -> None:
+    """Refuse (exit 75) unless the trial's profile exists, holds no placeholder, and is the kit's rendering.
+
+    The unit reads the profile with a "-" prefix, so a missing one would start
+    Open WebUI with the vanilla values, and the first start would persist
+    them into the database.
+    """
+
+    try:
+        text = kit.profile_path.read_text(encoding="utf-8")
+    except OSError as error:
+        raise sc.Blocked(
+            f"the rendered household profile is unreadable ({type(error).__name__}); rerun stage"
+        ) from error
+    left = sc.profile_placeholder_lines(text)
+    if left:
+        raise sc.Blocked(f"the rendered household profile keeps placeholders on lines {', '.join(map(str, left))}")
+    try:
+        rendered = kit.rendered_profile()
+    except (OSError, ValueError) as error:
+        raise sc.Blocked(f"the candidate's household profile example cannot be rendered ({error})") from error
+    if text != rendered:
+        raise sc.Blocked("the household profile differs from the kit's rendering of the candidate's example")
 
 
 def require_lemond_ready(kit: Kit) -> Any:
     """Refuse (exit 75) unless zembed, zerank, and the chat model are already loaded."""
 
-    mismatch = provider_mismatch(kit, kit.packaged_env())
+    mismatch = provider_mismatch(kit, kit.effective_env())
     if mismatch:
         raise sc.Blocked(mismatch)
     try:
@@ -1486,14 +1555,14 @@ def require_lemond_ready(kit: Kit) -> Any:
 
 
 def effective_models(kit: Kit) -> tuple[str, str]:
-    packaged = kit.packaged_env()
-    embedding, reranking = packaged["RAG_EMBEDDING_MODEL"], packaged["RAG_RERANKING_MODEL"]
+    env = kit.effective_env()
+    embedding, reranking = env["RAG_EMBEDDING_MODEL"], env["RAG_RERANKING_MODEL"]
     for given, effective, label in (
         (kit.embedding_model, embedding, "embedding"),
         (kit.reranking_model, reranking, "reranking"),
     ):
         if given is not None and given != effective:
-            raise sc.Blocked(f"NEEDS LEAD: {label} model {given} differs from the packaged {effective}")
+            raise sc.Blocked(f"NEEDS LEAD: {label} model {given} differs from the profile's {effective}")
     return embedding, reranking
 
 
@@ -1593,8 +1662,9 @@ def wait_open_webui(kit: Kit, timeout: float) -> float:
 
 
 def start_open_webui(kit: Kit, *, restart: bool = False, timeout: float = 180.0) -> float:
-    """Re-check Lemonade (ruling 8), then start and wait for /ready; returns seconds."""
+    """Re-check the profile and Lemonade (ruling 8), then start and wait for /ready; returns seconds."""
 
+    require_rendered_profile(kit)
     require_lemond_ready(kit)
     if not unit_active(UNITS["open-webui"]) and kit.socket_path.exists():
         kit.socket_path.unlink()
@@ -2633,6 +2703,91 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
+# The persisted household profile
+
+# Each household profile key Open WebUI 0.11.4 persists: its config key and
+# how config.py parses the environment value (open_webui/config.py,
+# DEFAULT_CONFIG).  WEBUI_URL is commented in the example; it is checked when
+# a profile sets it.
+PROFILE_PERSISTENT_KEYS: Mapping[str, tuple[str, str]] = MappingProxyType(
+    {
+        "ENABLE_OPENAI_API": ("openai.enable", "bool"),
+        "OPENAI_API_BASE_URLS": ("openai.api_base_urls", "list"),
+        "OPENAI_API_KEYS": ("openai.api_keys", "list"),
+        "RAG_EMBEDDING_ENGINE": ("rag.embedding_engine", "str"),
+        "RAG_OPENAI_API_BASE_URL": ("rag.openai.api_base_url", "str"),
+        "RAG_EMBEDDING_MODEL": ("rag.embedding_model", "str"),
+        "RAG_EMBEDDING_BATCH_SIZE": ("rag.embedding_batch_size", "int"),
+        "RAG_EMBEDDING_CONCURRENT_REQUESTS": ("rag.embedding_concurrent_requests", "int"),
+        "RAG_RERANKING_MODEL": ("rag.reranking_model", "str"),
+        "RAG_EXTERNAL_RERANKER_URL": ("rag.external_reranker_url", "str"),
+        "RAG_RERANKING_BATCH_SIZE": ("rag.reranking_batch_size", "int"),
+        "ENABLE_CALENDAR": ("calendar.enable", "bool"),
+        "ENABLE_EVALUATION_ARENA_MODELS": ("evaluation.arena.enable", "bool"),
+        "ENABLE_RETRIEVAL_QUERY_GENERATION": ("task.query.retrieval.enable", "bool"),
+        "WEBUI_URL": ("webui.url", "str"),
+    }
+)
+# Profile keys Open WebUI reads from the environment at every start and never
+# persists; the zembed prefixes are checked in the process environ instead.
+PROFILE_ENVIRONMENT_KEYS = frozenset(
+    {"RAG_EMBEDDING_QUERY_PREFIX", "RAG_EMBEDDING_CONTENT_PREFIX", "CORS_ALLOW_ORIGIN"}
+)
+
+
+def config_rows(kit: Kit) -> dict[str, Any]:
+    """Open WebUI 0.11's config table, read-only: one row per dotted key, its value as JSON.
+
+    The column's declared type JSON gives it SQLite's NUMERIC affinity, so a
+    number is stored, and read back, as an INTEGER or REAL rather than as
+    JSON text.
+    """
+
+    with sqlite3.connect(f"file:{data_dir(kit) / 'webui.db'}?mode=ro", uri=True) as connection:
+        return {key: json.loads(value) if isinstance(value, (str, bytes)) else value
+                for key, value in connection.execute("SELECT key, value FROM config")}
+
+
+def persisted_value(value: str, kind: str) -> Any:
+    """The JSON value Open WebUI 0.11.4 persists for one environment value."""
+
+    if kind == "bool":
+        return value.lower() == "true"
+    if kind == "int":
+        return int(value)
+    if kind == "list":
+        return [item.strip() for item in value.split(";")]
+    return value
+
+
+def profile_persistence(profile: Mapping[str, str], overlay: Mapping[str, str],
+                        rows: Mapping[str, Any]) -> dict[str, list[str]]:
+    """Compare the database's config rows with the profile's persistent keys, by name only.
+
+    The acceptance overlay is read after the profile, so where it sets a key
+    (the relayed reranker URL) the database must hold the overlay's value.
+    """
+
+    persisted = sorted(key for key in profile if key in PROFILE_PERSISTENT_KEYS)
+    absent, mismatched = [], []
+    for key in persisted:
+        config_key, kind = PROFILE_PERSISTENT_KEYS[key]
+        if config_key not in rows:
+            absent.append(key)
+        elif rows[config_key] != persisted_value(overlay.get(key, profile[key]), kind):
+            mismatched.append(key)
+    return {
+        "persisted_keys": persisted,
+        "overlay_keys": sorted(key for key in persisted if key in overlay),
+        "environment_keys": sorted(key for key in profile if key in PROFILE_ENVIRONMENT_KEYS),
+        "unclassified": sorted(key for key in profile
+                               if key not in PROFILE_PERSISTENT_KEYS and key not in PROFILE_ENVIRONMENT_KEYS),
+        "absent": absent,
+        "mismatched": mismatched,
+    }
+
+
+# ---------------------------------------------------------------------------
 # The single trial set
 
 
@@ -2751,8 +2906,8 @@ class Trial:
             "jfk_flac_sha256": sc.JFK_FLAC_SHA256,
             "speech": {
                 "provider": f"{sc.SPEECH_PROVIDER_PACKAGE} {host_package_version(sc.SPEECH_PROVIDER_PACKAGE)}",
-                "device": "cpu" if "USE_CUDA_DOCKER" not in kit.packaged_env() else "see USE_CUDA_DOCKER",
-                "compute_type": kit.packaged_env().get("WHISPER_COMPUTE_TYPE", "int8 (upstream default)"),
+                "device": "cpu" if "USE_CUDA_DOCKER" not in kit.effective_env() else "see USE_CUDA_DOCKER",
+                "compute_type": kit.effective_env().get("WHISPER_COMPUTE_TYPE", "int8 (upstream default)"),
                 "hf_hub_offline": sc.speech_environment(kit.whisper_model)["HF_HUB_OFFLINE"],
             },
         }
@@ -2776,6 +2931,23 @@ class Trial:
         values = {"ready_s": first["ready_s"], "alembic_head": head, "migration_errors": len(errors),
                   "qdrant_fresh": first["qdrant_fresh"]}
         if head != ALEMBIC_HEAD or errors:
+            raise sc.ScenarioFailure(json.dumps(values, sort_keys=True))
+        return values
+
+    def profile_persisted(self) -> dict[str, Any]:
+        """The first start persisted the profile's values, not the vanilla ones.
+
+        With persistent config on, the first start copies each persistent
+        setting into the database and the stored value wins after that, so a
+        first start without the profile would keep the vanilla values.  The
+        record names keys only, never values.
+        """
+
+        kit = self.kit
+        profile = sc.parse_env_file(kit.profile_path.read_text(encoding="utf-8"))
+        overlay = sc.parse_env_file(kit.path("etc", "acceptance.env").read_text(encoding="utf-8"))
+        values = profile_persistence(profile, overlay, config_rows(kit))
+        if values["absent"] or values["mismatched"] or values["unclassified"]:
             raise sc.ScenarioFailure(json.dumps(values, sort_keys=True))
         return values
 
@@ -2866,13 +3038,11 @@ class Trial:
             value.split(":", 1)[0] for _, key, value in owui_lines
             if key in {"LoadCredential", "LoadCredentialEncrypted"}
         )
-        # Open WebUI 0.11 keeps one config row per dotted key, with the value as JSON.
-        with sqlite3.connect(f"file:{data_dir(kit) / 'webui.db'}?mode=ro", uri=True) as connection:
-            rows = [{key: json.loads(value) for key, value in connection.execute("SELECT key, value FROM config")}]
+        rows = [config_rows(kit)]
         uds = kit.uds()
         exports = [uds.json("GET", sc.API["rag_config"], token=self.token),
                    uds.json("GET", sc.API["openai_config"], token=self.token)]
-        findings = nonempty_key_paths(kit.packaged_env(), kit.overlay(), *rows, *exports)
+        findings = nonempty_key_paths(kit.packaged_env(), kit.profile_env(), kit.overlay(), *rows, *exports)
         values: dict[str, Any] = {
             "runtime_credentials": credentials,
             "nonempty_key_fields": findings,
@@ -3020,7 +3190,8 @@ class Trial:
         haystack = {
             "unit_in_slice": bool(re.search(r"hayhooks|haystack", slice_units)),
             "module_mapped": "haystack" in maps,
-            "env_keys": sorted(key for key in {**kit.packaged_env(), **kit.overlay()} if "HAYSTACK" in key or "HAYHOOKS" in key),
+            "env_keys": sorted(key for key in {**kit.effective_env(), **kit.overlay()}
+                               if "HAYSTACK" in key or "HAYHOOKS" in key),
             "host_service_active": run(["systemctl", "is-active", "hayhooks.service"], check=False).stdout.decode().strip() == "active",
             "host_service_enabled": run(["systemctl", "is-enabled", "hayhooks.service"], check=False).stdout.decode().strip() == "enabled",
         }
@@ -3217,6 +3388,8 @@ class Trial:
             self.step("open-webui.acceptance.identity.archives", self.identity, critical=True)
             self.step("open-webui.acceptance.identity.unit-properties", self.unit_properties)
             self.step("open-webui.acceptance.ready.first-start", self.first_start, critical=True)
+            # Before commissioning, whose configure call rewrites the connection.
+            self.step("open-webui.acceptance.profile.persisted", self.profile_persisted, critical=True)
             self.step("open-webui.acceptance.auth.one-admin", self.commission, critical=True)
             self.step("open-webui.acceptance.ready.restart", self.restart)
             self.step("open-webui.acceptance.qdrant.g4", self.g4)
@@ -3455,10 +3628,11 @@ def production_expectation_for(kit: Kit) -> dict[str, Any] | None:
         (item for item in kit.state().get("archives", []) if archive_package(item.get("name", "")) == "open-webui"),
         None,
     )
-    env_file = kit.path("tree", "open-webui", "etc", "open-webui", "open-webui.env")
-    if record is None or not env_file.is_file():
+    tree = kit.path("tree", "open-webui")
+    if record is None or not (tree / "etc" / "open-webui" / "open-webui.env").is_file() \
+            or not (tree / sc.HOUSEHOLD_EXAMPLE).is_file():
         return None
-    return sc.production_expectation(record["name"], record["sha256"], kit.packaged_env())
+    return sc.production_expectation(record["name"], record["sha256"], kit.effective_env())
 
 
 # ---------------------------------------------------------------------------
@@ -3502,8 +3676,8 @@ def preflight_facts(kit: Kit, *, probe_only: bool) -> tuple[dict[str, Any], list
                 verify_archive(path, record)
                 located[record["name"]] = "ok"
             report["archives"] = located
-            packaged = packaged_env_from_archive(locate_archive(kit, manifest["deployed"][0]))
-            report["packaged_models"] = [packaged["RAG_EMBEDDING_MODEL"], packaged["RAG_RERANKING_MODEL"]]
+            packaged = candidate_env_from_archive(locate_archive(kit, manifest["deployed"][0]), kit.lemond_url)
+            report["profile_models"] = [packaged["RAG_EMBEDDING_MODEL"], packaged["RAG_RERANKING_MODEL"]]
             mismatch = provider_mismatch(kit, packaged)
             if mismatch:
                 refusals.append(mismatch)
@@ -3533,7 +3707,7 @@ def preflight_facts(kit: Kit, *, probe_only: bool) -> tuple[dict[str, Any], list
                 reranking = kit.reranking_model or packaged["RAG_RERANKING_MODEL"]
                 for given, effective in ((embedding, packaged["RAG_EMBEDDING_MODEL"]), (reranking, packaged["RAG_RERANKING_MODEL"])):
                     if given != effective:
-                        refusals.append(f"NEEDS LEAD: {given} differs from the packaged {effective}")
+                        refusals.append(f"NEEDS LEAD: {given} differs from the profile's {effective}")
                 sc.require_models_ready(models, health, [item for item in (embedding, reranking, kit.chat_model) if item])
         except sc.Blocked as error:
             refusals.append(str(error))
@@ -3567,11 +3741,17 @@ def locate_archive(kit: Kit, record: Mapping[str, Any]) -> Path | None:
     return matches[0] if matches else None
 
 
-def packaged_env_from_archive(archive: Path | None) -> dict[str, str]:
+def candidate_env_from_archive(archive: Path | None, lemond_url: str) -> dict[str, str]:
+    """The archive's packaged env with its household profile example, rendered for ``lemond_url``, over it."""
+
     if archive is None:
         raise ValueError("the open-webui archive is unavailable")
-    text = run(["bsdtar", "-xOf", str(archive), "etc/open-webui/open-webui.env"]).stdout.decode("utf-8")
-    return sc.parse_env_file(text)
+    packaged = run(["bsdtar", "-xOf", str(archive), "etc/open-webui/open-webui.env"]).stdout.decode("utf-8")
+    example = run(["bsdtar", "-xOf", str(archive), sc.HOUSEHOLD_EXAMPLE], check=False)
+    if example.returncode != 0 or not example.stdout:
+        raise ValueError(f"the open-webui archive carries no /{sc.HOUSEHOLD_EXAMPLE}")
+    profile = sc.render_household_profile(example.stdout.decode("utf-8"), lemond_url)
+    return {**sc.parse_env_file(packaged), **sc.parse_env_file(profile)}
 
 
 def cmd_preflight(kit: Kit, args: argparse.Namespace) -> int:
@@ -3645,7 +3825,7 @@ def probe_systemd_creds(slice_unit: str) -> bool:
 
 
 def render_etc(kit: Kit) -> None:
-    """Render ``<root>/etc``: the overlay, Caddyfile, Valkey config and ACL, and the Qdrant shim.
+    """Render ``<root>/etc``: the household profile, the overlay, Caddyfile, Valkey config and ACL, and the Qdrant shim.
 
     Stage calls it after minting credentials; the keep-anchor revive calls it
     after restoring the credstore, because teardown removes ``etc/``.  The ACL
@@ -3655,6 +3835,7 @@ def render_etc(kit: Kit) -> None:
 
     etc = kit.path("etc")
     etc.mkdir(parents=True, exist_ok=True)
+    kit.profile_path.write_text(kit.rendered_profile(), encoding="utf-8")
     (etc / "acceptance.env").write_text(sc.render_overlay(kit.overlay()))
     (etc / "Caddyfile").write_text(sc.render_acceptance_caddyfile(kit.root, kit.socket_path, PORTS["caddy"]))
     (etc / "valkey-open-webui.conf").write_text(
@@ -3854,6 +4035,7 @@ def cmd_trial(kit: Kit, args: argparse.Namespace) -> int:
         raise sc.Blocked("the manifest differs from the one staged")
     if not unit_active(UNITS["open-webui"]):
         raise sc.Blocked("the acceptance environment is not up")
+    require_rendered_profile(kit)
     lemond_pre = require_lemond_ready(kit)
     kit.save_state(trial_started=True, lemonade_receipts=list(args.lemonade_receipt))
     return Trial(kit, lemond_pre).run()

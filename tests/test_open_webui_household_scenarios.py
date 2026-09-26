@@ -18,7 +18,11 @@ from unittest import mock
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SCENARIOS = REPO_ROOT / "tools" / "open_webui_household_scenarios.py"
 STUB = REPO_ROOT / "tools" / "fixtures" / "open-webui-household-acceptance" / "stub_provider.py"
-PACKAGED_ENV = REPO_ROOT / "packages" / "open-webui" / "open-webui.env"
+# The trial candidate's open-webui.env and household profile example (exact
+# copies of the 0.11.4-1 package files; the kit tests pin their digests).
+CANDIDATE = REPO_ROOT / "tools" / "fixtures" / "open-webui-household-acceptance" / "open-webui-0.11.4-1"
+PACKAGED_ENV = CANDIDATE / "open-webui.env"
+PROFILE_EXAMPLE = CANDIDATE / "household.env.example"
 RAG_GATE = REPO_ROOT / "packages" / "open-webui" / "open-webui-rag-gate.py"
 
 
@@ -51,7 +55,17 @@ def running_stub():
 
 
 def packaged_env():
+    """The candidate's vanilla open-webui.env."""
+
     return scenarios.parse_env_file(PACKAGED_ENV.read_text(encoding="utf-8"))
+
+
+def candidate_env():
+    """The candidate's open-webui.env with its example profile, rendered for the default provider, over it."""
+
+    profile = scenarios.render_household_profile(PROFILE_EXAMPLE.read_text(encoding="utf-8"),
+                                                 scenarios.DEFAULT_LEMOND_URL)
+    return {**packaged_env(), **scenarios.parse_env_file(profile)}
 
 
 class RegistryTests(unittest.TestCase):
@@ -131,7 +145,7 @@ class ExitCodeTests(unittest.TestCase):
     def acceptance_process(self):
         stack = contextlib.ExitStack()
         stack.enter_context(mock.patch.object(scenarios, "open_webui_pid", return_value=1))
-        stack.enter_context(mock.patch.object(scenarios, "read_process_environ", return_value=packaged_env()))
+        stack.enter_context(mock.patch.object(scenarios, "read_process_environ", return_value=candidate_env()))
         return stack
 
     def test_an_interrupted_resmoke_leaves_a_failing_receipt(self):
@@ -165,7 +179,7 @@ class ExitCodeTests(unittest.TestCase):
         self.assertIn("Lemonade is unreachable", receipt["precondition"])
 
     def test_an_unreachable_open_webui_is_a_precondition_with_a_receipt(self):
-        env = packaged_env()
+        env = candidate_env()
         models, health = (
             {"data": [{"id": item} for item in (env["RAG_EMBEDDING_MODEL"], env["RAG_RERANKING_MODEL"], "m")]},
             {"all_models_loaded": [{"model_name": item} for item in (env["RAG_EMBEDDING_MODEL"], env["RAG_RERANKING_MODEL"], "m")]},
@@ -234,9 +248,9 @@ class EnvironTests(unittest.TestCase):
         self.assertNotIn("WEBUI_SECRET_KEY", kept)
 
     def test_settings_come_from_the_filtered_environ(self):
-        settings = scenarios.settings_from_environ(packaged_env())
-        self.assertEqual(settings.embedding_model, packaged_env()["RAG_EMBEDDING_MODEL"])
-        self.assertEqual(settings.reranking_model, packaged_env()["RAG_RERANKING_MODEL"])
+        settings = scenarios.settings_from_environ(candidate_env())
+        self.assertEqual(settings.embedding_model, candidate_env()["RAG_EMBEDDING_MODEL"])
+        self.assertEqual(settings.reranking_model, candidate_env()["RAG_RERANKING_MODEL"])
         self.assertTrue(settings.reranking_model.startswith("zerank-2-"))
         with self.assertRaises(scenarios.Blocked):
             scenarios.settings_from_environ({"RAG_EMBEDDING_MODEL": "zembed"})
@@ -267,7 +281,7 @@ class EnvironTests(unittest.TestCase):
             scenarios.settings_for_production("0.11.0-3")
 
     def test_the_trial_derives_the_production_entry_from_the_deployed_archive(self):
-        env = packaged_env()
+        env = candidate_env()
         derived = scenarios.production_expectation("open-webui-0.11.4-1-x86_64.pkg.tar.zst", "a" * 64, env)
         self.assertEqual(derived["version"], "0.11.4-1")
         self.assertEqual(derived["entry"]["archive_sha256"], "a" * 64)
@@ -277,7 +291,7 @@ class EnvironTests(unittest.TestCase):
             scenarios.production_expectation("qdrant-1.19.1-1-x86_64.pkg.tar.zst", "a" * 64, env)
 
     def test_production_settings_claim_the_digest_only_when_the_cached_archive_matched(self):
-        env = packaged_env()
+        env = candidate_env()
         with tempfile.TemporaryDirectory() as cache:
             name = "open-webui-0.11.4-1-x86_64.pkg.tar.zst"
             (Path(cache) / name).write_bytes(b"exact")
@@ -399,27 +413,29 @@ class TemplateTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             scenarios.render_valkey_acl("correct horse")
 
-    def test_connection_seed_is_exactly_the_three_credential_free_keys(self):
-        seed = scenarios.connection_seed()
-        self.assertEqual(set(seed), {"ENABLE_OLLAMA_API", "OPENAI_API_BASE_URLS", "OPENAI_API_KEYS"})
-        self.assertEqual(set(seed), scenarios.CONNECTION_SEED_KEYS)
-        self.assertEqual(seed["ENABLE_OLLAMA_API"], "false")
-        self.assertEqual(seed["OPENAI_API_BASE_URLS"], "http://127.0.0.1:13305/api/v1")
-        self.assertEqual(seed["OPENAI_API_KEYS"], "")
+    def test_the_expected_connection_is_one_credential_free_provider(self):
+        expected = scenarios.expected_connection()
+        self.assertEqual(expected, {
+            "ENABLE_OLLAMA_API": "false",
+            "ENABLE_OPENAI_API": "true",
+            "OPENAI_API_BASE_URLS": "http://127.0.0.1:13305/api/v1",
+            "OPENAI_API_KEYS": "",
+        })
         self.assertEqual(scenarios.speech_environment(), {"WHISPER_MODEL": "base", "HF_HUB_OFFLINE": "1"})
         self.assertEqual(scenarios.speech_environment("tiny")["WHISPER_MODEL"], "tiny")
-        env = packaged_env()
-        self.assertEqual({key: env[key] for key in scenarios.CONNECTION_SEED_KEYS}, seed)
+        # The packaged env turns both APIs off; the rendered profile turns the
+        # OpenAI-compatible one back on for the provider.
+        env = candidate_env()
+        self.assertEqual({key: env[key] for key in expected}, expected)
+        self.assertEqual((packaged_env()["ENABLE_OLLAMA_API"], packaged_env()["ENABLE_OPENAI_API"]), ("false", "false"))
 
 
 class OverlayTests(unittest.TestCase):
     def test_overlay_keys_equal_the_allowlist(self):
-        env = packaged_env()
+        env = candidate_env()
         root = Path("/srv/build/arch-pkgs-owui-acceptance")
         overlay = scenarios.acceptance_overlay(env, root)
-        self.assertEqual(
-            set(overlay), scenarios.overlay_allowlist(env, rehearsal=False) - scenarios.CONNECTION_SEED_KEYS
-        )
+        self.assertEqual(set(overlay), scenarios.overlay_allowlist(env))
         path_keys = {key for key, value in env.items() if "/var/lib/open-webui" in value}
         self.assertEqual(scenarios.packaged_state_path_keys(env), path_keys)
         self.assertEqual(
@@ -443,26 +459,19 @@ class OverlayTests(unittest.TestCase):
         rendered = scenarios.render_overlay(overlay)
         self.assertEqual(scenarios.parse_env_file(rendered), overlay)
 
-    def test_rehearsal_overlay_points_every_provider_url_at_the_stub(self):
-        env = packaged_env()
-        overlay = scenarios.acceptance_overlay(
-            env, Path("/r"), lemond_url="http://127.0.0.1:23305", relay_port=13306, rehearsal=True
-        )
-        self.assertEqual(
-            set(overlay),
-            scenarios.overlay_allowlist(env, rehearsal=True) - {"ENABLE_OLLAMA_API", "OPENAI_API_KEYS"},
-        )
-        self.assertEqual(overlay["RAG_OPENAI_API_BASE_URL"], "http://127.0.0.1:23305/api/v1")
-        self.assertEqual(overlay["OPENAI_API_BASE_URLS"], "http://127.0.0.1:23305/api/v1")
-
-    def test_overlay_adds_the_whole_seed_for_a_package_without_it(self):
-        env = {key: value for key, value in packaged_env().items() if key not in scenarios.CONNECTION_SEED_KEYS}
-        overlay = scenarios.acceptance_overlay(env, Path("/r"))
-        self.assertEqual({key: overlay[key] for key in scenarios.CONNECTION_SEED_KEYS}, scenarios.connection_seed())
+    def test_overlay_never_sets_the_provider_connection(self):
+        # The rendered profile carries the provider for both modes; the overlay
+        # only relays the reranker.
+        overlay = scenarios.acceptance_overlay(candidate_env(), Path("/r"), relay_port=13306)
+        for key in ("ENABLE_OLLAMA_API", "ENABLE_OPENAI_API", "OPENAI_API_BASE_URLS", "OPENAI_API_KEYS",
+                    "RAG_OPENAI_API_BASE_URL"):
+            self.assertNotIn(key, overlay)
+        self.assertEqual(overlay["RAG_EXTERNAL_RERANKER_URL"], "http://127.0.0.1:13306/api/v1/rerank")
 
     def test_overlay_never_touches_secret_or_telemetry_keys(self):
-        allowed = scenarios.overlay_allowlist(packaged_env(), rehearsal=True)
-        for key in ("WEBUI_SECRET_KEY", "REDIS_URL", "QDRANT_API_KEY", "DO_NOT_TRACK", "OFFLINE_MODE", "ENABLE_SIGNUP"):
+        allowed = scenarios.overlay_allowlist(candidate_env())
+        for key in ("WEBUI_SECRET_KEY", "REDIS_URL", "QDRANT_API_KEY", "DO_NOT_TRACK", "OFFLINE_MODE", "ENABLE_SIGNUP",
+                    "ENABLE_OPENAI_API", "OPENAI_API_BASE_URLS", "OPENAI_API_KEYS"):
             self.assertNotIn(key, allowed)
 
 
@@ -619,7 +628,7 @@ class CitedAnswerTests(unittest.TestCase):
 
         webui = mock.Mock(request=mock.Mock(side_effect=request))
         ctx = scenarios.Context(target="production", webui=webui, lemond=mock.Mock(), token="t",
-                                settings=scenarios.settings_from_environ(packaged_env()), chat_model="m")
+                                settings=scenarios.settings_from_environ(candidate_env()), chat_model="m")
         return ctx, deletes
 
     def test_cited_answer_deletes_its_upload_and_fails_when_the_delete_fails(self):
@@ -717,7 +726,7 @@ class SpeechTests(unittest.TestCase):
 
 class ReceiptTests(unittest.TestCase):
     def test_receipt_is_public_safe_and_carries_the_exit_code(self):
-        settings = scenarios.settings_from_environ(packaged_env())
+        settings = scenarios.settings_from_environ(candidate_env())
         results = [
             scenarios.ScenarioResult("open-webui.resmoke.zembed-canary", "PASS", "ok", 1.0, {"margin": 0.3}),
             scenarios.ScenarioResult("open-webui.resmoke.zerank-qualification", "FAIL", "HTTP 500", 0.1),
@@ -760,8 +769,8 @@ class StubProviderTests(unittest.TestCase):
         self.assertTrue(scenarios.v1.embedding_canary_passes(query, relevant, unrelated))
         self.assertEqual(stub.QUERY_HEAD, scenarios.ZEMBED_QUERY_HEAD)
         self.assertEqual(stub.DOCUMENT_HEAD, scenarios.ZEMBED_DOCUMENT_HEAD)
-        self.assertEqual(packaged_env()["RAG_EMBEDDING_QUERY_PREFIX"], scenarios.ZEMBED_QUERY_HEAD)
-        self.assertEqual(packaged_env()["RAG_EMBEDDING_CONTENT_PREFIX"], scenarios.ZEMBED_DOCUMENT_HEAD)
+        self.assertEqual(candidate_env()["RAG_EMBEDDING_QUERY_PREFIX"], scenarios.ZEMBED_QUERY_HEAD)
+        self.assertEqual(candidate_env()["RAG_EMBEDDING_CONTENT_PREFIX"], scenarios.ZEMBED_DOCUMENT_HEAD)
 
     def test_stub_rerank_qualifies_the_packaged_gate(self):
         query, documents = scenarios.rag_gate_constants()
@@ -859,7 +868,7 @@ class StubProviderTests(unittest.TestCase):
             scenarios.require_models_ready(
                 models, health, (stub.EMBEDDING_MODEL, stub.RERANKING_MODEL, stub.CHAT_MODEL)
             )
-            settings = scenarios.settings_from_environ(packaged_env())
+            settings = scenarios.settings_from_environ(candidate_env())
             ctx = scenarios.Context(
                 target="acceptance", webui=lemond, lemond=lemond, token="", settings=settings, chat_model=stub.CHAT_MODEL
             )

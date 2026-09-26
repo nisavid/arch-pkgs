@@ -113,8 +113,11 @@ ZEMBED_QUERY_HEAD = "<|im_start|>system\nquery<|im_end|>\n<|im_start|>user\n"
 ZEMBED_DOCUMENT_HEAD = "<|im_start|>system\ndocument<|im_end|>\n<|im_start|>user\n"
 
 # Expected production settings, keyed by the promoted open-webui package
-# version and bound to its archive SHA-256.  The installed env is root-only,
-# so production re-smoke uses these frozen values instead of reading it.
+# version and bound to its archive SHA-256.  From 0.11.4-1 the values come
+# from the archive's household profile example, which the owner copies to the
+# root-only /etc/open-webui/household.env and fills in only at its
+# placeholders, so production re-smoke uses these frozen values instead of
+# reading the live profile.
 #
 # Entries come only from the candidate of record: the acceptance trial prints
 # the entry for the open-webui archive it deployed (and records it in the
@@ -256,11 +259,19 @@ RAG_GATE = REPO_ROOT / "packages" / "open-webui" / "open-webui-rag-gate.py"
 OVERLAY_FIXED_KEYS: frozenset[str] = frozenset(
     {"QDRANT_URI", "RAG_EXTERNAL_RERANKER_URL"}
 )
-CONNECTION_SEED_KEYS: frozenset[str] = frozenset(
-    {"ENABLE_OLLAMA_API", "OPENAI_API_BASE_URLS", "OPENAI_API_KEYS"}
-)
-REHEARSAL_ONLY_KEYS: frozenset[str] = frozenset({"RAG_OPENAI_API_BASE_URL"})
 PACKAGED_STATE_ROOT = "/var/lib/open-webui"
+
+# From 0.11.4-1 the packaged open-webui.env carries only generic, security,
+# and RAG-gate defaults.  open-webui.service reads the host-owned household
+# profile after it, through ``EnvironmentFile=-`` so a host without one still
+# starts, and the package installs a documented example with ``<lemond>`` for
+# the model server's origin.  The kit renders the example for its trial.
+HOUSEHOLD_PROFILE = "/etc/open-webui/household.env"
+HOUSEHOLD_EXAMPLE = "usr/share/open-webui/household.env.example"
+LEMOND_PLACEHOLDER = "<lemond>"
+# The operator's placeholder check, ``grep -nE '^[^#]*<[a-z]+>'``, one line at
+# a time.  The zembed prefixes' ``<|im_start|>`` markers never match.
+_PROFILE_PLACEHOLDER = re.compile(r"[^#]*<[a-z]+>")
 
 
 class Blocked(RuntimeError):
@@ -619,19 +630,43 @@ def render_valkey_acl(password_sha256: str) -> str:
     return render_template("valkey-open-webui.acl.in", {"PASSWORD_SHA256": password_sha256})
 
 
-def connection_seed(lemond_url: str = DEFAULT_LEMOND_URL) -> dict[str, str]:
-    """The single chat connection seed for one provider origin, with Ollama off.
+def expected_connection(lemond_url: str = DEFAULT_LEMOND_URL) -> dict[str, str]:
+    """The chat connection the packaged env and the rendered profile must give Open WebUI.
 
-    The packaged ``open-webui.env`` carries this seed for the default origin
-    from 0.11.0-5 on, so the acceptance overlay sets only the keys whose
-    packaged value differs (the rehearsal stub origin, or an older package).
+    One OpenAI-compatible provider at ``lemond_url``, with no stored key and
+    the Ollama API off.  The packaged env turns both APIs off; the profile
+    turns the OpenAI-compatible one back on for the household's provider.
     """
 
     return {
         "ENABLE_OLLAMA_API": "false",
+        "ENABLE_OPENAI_API": "true",
         "OPENAI_API_BASE_URLS": lemond_url.rstrip("/") + "/api/v1",
         "OPENAI_API_KEYS": "",
     }
+
+
+def profile_placeholder_lines(text: str) -> list[int]:
+    """The 1-based numbers of lines that still hold a ``<...>`` placeholder outside a comment."""
+
+    return [number for number, line in enumerate(text.splitlines(), 1) if _PROFILE_PLACEHOLDER.match(line)]
+
+
+def render_household_profile(example: str, lemond_url: str) -> str:
+    """The household profile for one provider: the example with ``<lemond>`` set to its origin.
+
+    Only ``<lemond>`` is filled; a placeholder left on an uncommented line is
+    refused, as the operator's check refuses it before the first start.
+    """
+
+    parsed = urllib.parse.urlsplit(lemond_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("the provider URL must be an http or https origin")
+    rendered = example.replace(LEMOND_PLACEHOLDER, f"{parsed.scheme}://{parsed.netloc}")
+    left = profile_placeholder_lines(rendered)
+    if left:
+        raise ValueError(f"the rendered household profile keeps placeholders on lines {', '.join(map(str, left))}")
+    return rendered
 
 
 def speech_environment(whisper_model: str = DEFAULT_WHISPER_MODEL) -> dict[str, str]:
@@ -672,37 +707,33 @@ def packaged_state_path_keys(packaged_env: Mapping[str, str]) -> frozenset[str]:
     )
 
 
-def overlay_allowlist(packaged_env: Mapping[str, str], *, rehearsal: bool) -> frozenset[str]:
-    allowed = packaged_state_path_keys(packaged_env) | OVERLAY_FIXED_KEYS | CONNECTION_SEED_KEYS
-    return allowed | REHEARSAL_ONLY_KEYS if rehearsal else allowed
+def overlay_allowlist(env: Mapping[str, str]) -> frozenset[str]:
+    return packaged_state_path_keys(env) | OVERLAY_FIXED_KEYS
 
 
 def acceptance_overlay(
-    packaged_env: Mapping[str, str],
+    env: Mapping[str, str],
     root: Path,
     *,
-    lemond_url: str = DEFAULT_LEMOND_URL,
     qdrant_port: int = 16333,
     relay_port: int = 13306,
-    rehearsal: bool = False,
 ) -> dict[str, str]:
-    """The acceptance overlay; the only deviation from the packaged env bytes."""
+    """The acceptance overlay over the packaged env and the rendered profile.
+
+    It moves state under the acceptance root, points Qdrant at the kit's
+    instance, and routes the reranker through the kit's relay.  The provider
+    connection comes from the rendered profile in both modes, so the overlay
+    never sets it.
+    """
 
     state = str(root / "state" / "open-webui")
     overlay = {
-        key: packaged_env[key].replace(PACKAGED_STATE_ROOT, state)
-        for key in sorted(packaged_state_path_keys(packaged_env))
+        key: env[key].replace(PACKAGED_STATE_ROOT, state)
+        for key in sorted(packaged_state_path_keys(env))
     }
     overlay["QDRANT_URI"] = f"http://127.0.0.1:{int(qdrant_port)}"
     overlay["RAG_EXTERNAL_RERANKER_URL"] = f"http://127.0.0.1:{int(relay_port)}/api/v1/rerank"
-    overlay.update(
-        (key, value)
-        for key, value in connection_seed(lemond_url).items()
-        if packaged_env.get(key) != value
-    )
-    if rehearsal:
-        overlay["RAG_OPENAI_API_BASE_URL"] = lemond_url.rstrip("/") + "/api/v1"
-    extra = set(overlay) - overlay_allowlist(packaged_env, rehearsal=rehearsal)
+    extra = set(overlay) - overlay_allowlist(env)
     if extra:
         raise ValueError(f"overlay keys outside the allowlist: {sorted(extra)}")
     return overlay
@@ -942,18 +973,19 @@ def installed_open_webui_version() -> str:
 _OPEN_WEBUI_ARCHIVE = re.compile(r"^open-webui-(?P<version>[^-]+-[^-]+)-x86_64\.pkg\.tar\.zst$")
 
 
-def production_expectation(archive: str, archive_sha256: str, packaged_env: Mapping[str, str]) -> dict[str, Any]:
+def production_expectation(archive: str, archive_sha256: str, env: Mapping[str, str]) -> dict[str, Any]:
     """The ``PRODUCTION_EXPECTATIONS`` entry for one deployed open-webui archive.
 
-    The trial derives it from the candidate of record it deployed; the
-    evidence commit pastes it into this module.
+    ``env`` is the archive's packaged env with its rendered household profile
+    over it.  The trial derives the entry from the candidate of record it
+    deployed; the evidence commit pastes it into this module.
     """
 
     match = _OPEN_WEBUI_ARCHIVE.match(archive)
     if match is None or not re.fullmatch(r"[0-9a-f]{64}", archive_sha256):
         raise ValueError(f"not an open-webui archive record: {archive}")
     entry = {"archive": archive, "archive_sha256": archive_sha256}
-    entry.update({key: packaged_env[key] for key in PRODUCTION_EXPECTATION_KEYS})
+    entry.update({key: env[key] for key in PRODUCTION_EXPECTATION_KEYS})
     return {"version": match.group("version"), "entry": entry}
 
 
