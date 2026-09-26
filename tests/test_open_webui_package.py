@@ -730,8 +730,10 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
         ):
             self.assertNotIn("uses no credential", read(path), path.name)
         # The README scopes the generic phrase to an empty key, and the
-        # example's key comment says where a key set there is stored. Both are
-        # generic: neither names the model server or states its key needs.
+        # example's key comment says where a key set there is stored and names
+        # the environment-only RAG key variables for a provider that requires a
+        # key. Both are generic: neither names the model server or states its
+        # key needs.
         readme = read(OPEN_WEBUI / "README.md")
         secret_bullet = next(
             bullet for bullet in readme.split("\n- ") if "stores no secret" in bullet
@@ -751,6 +753,10 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
                 " one; otherwise\n# leave empty. A key set here is a persistent"
                 " setting: the first start stores\n# it in Open WebUI's database,"
                 " not in a systemd credential.\n"
+                "# If the embedding or reranking provider requires a key, set\n"
+                "# RAG_OPENAI_API_KEY or RAG_EXTERNAL_RERANKER_API_KEY here,"
+                " respectively\n# (environment-only: Open WebUI never stores them"
+                " in its database or shows\n# them in its document settings form).\n"
             ],
         )
         for text in (secret_bullet, *key_comments):
