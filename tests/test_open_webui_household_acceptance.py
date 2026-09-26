@@ -1851,14 +1851,20 @@ class HybridErrorTests(unittest.TestCase):
 
         def __init__(self, *, fault="refuse", recovery="answer", hybrid=True, health=200, file_points=4,
                      knowledge_points=None, delete_status=200, remaining=0, marker=True, plant_status=200,
-                     recount_status=200):
+                     recount_status=200, landed=True, stored=None, lingering=False):
             self.fault, self.recovery, self.hybrid = fault, recovery, hybrid
             self.health, self.file_points = health, file_points
             self.copied = file_points if knowledge_points is None else knowledge_points
             self.delete_status, self.remaining, self.marker = delete_status, remaining, marker
             self.plant_status, self.recount_status = plant_status, recount_status
+            # ``landed`` False: Qdrant accepts the plant but the knowledge
+            # tenant never holds it.  ``stored`` replaces the payload Qdrant
+            # reads back; ``lingering`` keeps the point in the tenant's count
+            # after its delete.
+            self.landed, self.stored, self.lingering = landed, stored, lingering
             self.knowledge_points = 0
             self.planted = None
+            self.in_tenant = False
             self.latched = False
             self.chats, self.qdrant_calls, self.deleted = [], [], []
 
@@ -1926,14 +1932,22 @@ class HybridErrorTests(unittest.TestCase):
                     if tenant == "k1" and self.deleted and self.recount_status != 200:
                         return sc.Response(self.recount_status, "application/json", b"{}")
                     count = self.file_points if tenant == "file-f1" else self.knowledge_points
-                    count += 1 if tenant == "k1" and self.planted is not None else 0
+                    count += 1 if tenant == "k1" and self.in_tenant else 0
                     return sc.Response(200, "application/json", json.dumps({"result": {"count": count}}).encode())
                 if method == "PUT" and path.endswith("/points?wait=true"):
                     if self.plant_status == 200:
                         self.planted = payload["points"][0]
+                        self.in_tenant = self.landed
                     return sc.Response(self.plant_status, "application/json", b'{"result": {}}')
+                if method == "GET" and path == f"/collections/{kit_module.COLLECTIONS[1]}/points/{kit_module.HYBRID_FAULT_POINT}":
+                    if not self.in_tenant:
+                        return sc.Response(404, "application/json", b'{"status": {"error": "Not found"}}')
+                    stored = self.stored if self.stored is not None else (self.planted or {}).get("payload")
+                    point = {"id": kit_module.HYBRID_FAULT_POINT, "payload": stored}
+                    return sc.Response(200, "application/json", json.dumps({"result": point}).encode())
                 if path.endswith("/points/delete?wait=true"):
                     self.planted = None
+                    self.in_tenant = self.in_tenant and self.lingering
                     return sc.Response(200, "application/json", b'{"result": {}}')
                 raise AssertionError(f"unexpected Qdrant request {method} {path}")
 
@@ -1958,6 +1972,11 @@ class HybridErrorTests(unittest.TestCase):
         self.assertEqual(values["recovery"], {"status": 200, "sources": 1, "fact_in_sources": True,
                                               "finite_scores": True})
         self.assertEqual(values["points"], {"file": 4, "knowledge": 4})
+        # The legacy hybrid path reads the whole knowledge tenant, so the
+        # read-back proves the fault point was among the points it merged.
+        self.assertEqual(values["fault_point"], {"id": kit_module.HYBRID_FAULT_POINT, "in_knowledge_tenant": True,
+                                                 "metadata_null": True, "tenant_points_with_fault": 5})
+        self.assertEqual(values["tenant_points_after_fault_delete"], 4)
         self.assertTrue(values["fallback_refusal_logged"])
         self.assertEqual(values["cleanup"], {"knowledge_delete": 200, "knowledge_points_after_delete": 0})
         self.assertEqual(set(values["timings"]), {"knowledge_add_s", "fault_chat_s", "recovery_chat_s"})
@@ -2017,6 +2036,35 @@ class HybridErrorTests(unittest.TestCase):
             self.check(self.Fakes(fault="fallback", marker=False))
         recorded = json.loads(str(raised.exception))
         self.assertEqual((recorded["fault"]["status"], recorded["fallback_refusal_logged"]), (200, False))
+
+    def test_a_fault_point_outside_the_tenant_read_fails_before_the_fault_chat(self):
+        # A 503 proves nothing unless hybrid search read the planted point:
+        # a plant the tenant does not hold, or one Qdrant stored without its
+        # null metadata, stops the check before any chat.
+        payload = {"tenant_id": "k1", "text": kit_module.HYBRID_FAULT_SENTINEL}
+        cases = {
+            "not in the tenant": ({"landed": False}, {"in_knowledge_tenant": False, "metadata_null": False,
+                                                      "tenant_points_with_fault": 4}),
+            "another tenant": ({"stored": {**payload, "tenant_id": "k2", "metadata": None}},
+                               {"in_knowledge_tenant": False, "metadata_null": True, "tenant_points_with_fault": 5}),
+            "no metadata key": ({"stored": payload}, {"in_knowledge_tenant": True, "metadata_null": False,
+                                                       "tenant_points_with_fault": 5}),
+        }
+        for name, (overrides, observed) in cases.items():
+            with self.subTest(name):
+                fakes = self.Fakes(**overrides)
+                with self.assertRaises(sc.ScenarioFailure) as raised:
+                    self.check(fakes)
+                self.assertEqual(json.loads(str(raised.exception))["fault_point"],
+                                 {"id": kit_module.HYBRID_FAULT_POINT, **observed})
+                self.assertEqual(fakes.chats, [])
+                self.assertEqual(fakes.deleted, ["knowledge k1"])
+                self.assertIsNone(fakes.planted)
+
+    def test_a_fault_point_left_in_the_tenant_fails_the_recovery(self):
+        with self.assertRaises(sc.ScenarioFailure) as raised:
+            self.check(self.Fakes(lingering=True))
+        self.assertEqual(json.loads(str(raised.exception))["tenant_points_after_fault_delete"], 5)
 
     def test_hybrid_search_off_or_a_closed_gate_fails_before_anything_is_created(self):
         cases: tuple[dict[str, Any], ...] = ({"hybrid": False}, {"health": 503})
