@@ -1881,9 +1881,14 @@ def upload_markdown(webui: sc.Endpoint, token: str, name: str, data: bytes, what
 
     try:
         wait_until(processed, timeout, f"{what} processing")
+    except Exception as error:
+        # The caller never gets the id, so delete the file here.  The failure
+        # leads with the processing error and then names the file and the
+        # DELETE result, so a cleanup that failed is never lost.
+        deleted = _delete(webui, token, sc.API["file"].format(id=file_id))
+        primary = str(error) if isinstance(error, sc.ScenarioFailure) else f"{type(error).__name__}: {error}"
+        raise sc.ScenarioFailure(f"{primary}; cleanup: file {file_id} DELETE returned {deleted}") from error
     except BaseException:
-        # The caller never gets the id, so delete the file here, and never
-        # let the cleanup hide the failure.
         _delete(webui, token, sc.API["file"].format(id=file_id))
         raise
     return file_id
