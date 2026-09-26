@@ -557,6 +557,16 @@ class OpenWebUIHouseholdRAGGateTests(unittest.TestCase):
         self.assertIn("'status': RAGUnavailableError.status_code", patch)
         self.assertIn("@router.get('/health')", patch)
         self.assertIn("async def get_rag_health(", patch)
+        main_patch = patch.split(
+            "diff --git a/backend/open_webui/main.py", 1
+        )[1].split("diff --git", 1)[0]
+        self.assertEqual(main_patch.count("RAGUnavailableError.status_code"), 2)
+        self.assertIn(
+            "+            if isinstance(e, RAGUnavailableError):\n"
+            "+                raise HTTPException(\n"
+            "+                    status_code=RAGUnavailableError.status_code,",
+            main_patch,
+        )
         middleware_patch = patch.split(
             "diff --git a/backend/open_webui/utils/middleware.py", 1
         )[1].split("diff --git", 1)[0]
