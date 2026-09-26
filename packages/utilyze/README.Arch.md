@@ -47,11 +47,6 @@ Still pending:
 - Repeatable TUI acceptance coverage. It will be planned when NVIDIA
   validation resumes; the earlier TUI test-harness plan is historical.
 
-The build, local acceptance, GPU validation and deployment of this package are
-tracked by
-[Resume the utilyze lane when NVIDIA validation is available](https://github.com/nisavid/arch-pkgs/issues/84)
-and the issues it links.
-
 ## First Run
 
 The safe default is:
