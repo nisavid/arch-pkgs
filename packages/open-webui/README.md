@@ -65,14 +65,15 @@ remains in
   note attached as knowledge only to a different model or folder, reached from
   another chat, goes through those personal-notes features and stays outside
   the gate. While the gate is closed, a chat with any attachment returns that
-  503; the builtin `query_*_files`, `grep_*_files`, `view_file`, and
-  `view_knowledge_file` tools, and `view_note` for a note attached as knowledge
-  to the chat's model or folder, return its message as a tool error before
-  reading anything; and `search_notes` omits those notes. Once it is
-  qualified, explicitly requested content is allowed whole, including
-  full-context items and `text`, `note`, `chat`, and `url` attachments, and
-  search results are reranked. The global full-context and
-  embedding-and-retrieval bypass modes stay refused even when qualified.
+  503, even on a model whose file context capability is off; the builtin
+  `query_*_files`, `grep_*_files`, `view_file`, and `view_knowledge_file`
+  tools, and `view_note` for a note attached as knowledge to the chat's model
+  or folder, return its message as a tool error before reading anything; and
+  `search_notes` omits those notes. Once it is qualified, explicitly requested
+  content is allowed whole, including full-context items and `text`, `note`,
+  `chat`, and `url` attachments, and search results are reranked. The global
+  full-context and embedding-and-retrieval bypass modes stay refused even when
+  qualified.
 - When hybrid search fails for every collection with any other error, such as
   a failed embedding or Qdrant search, the request fails with the same 503
   instead of falling back to a vector search that skips the reranker. The gate

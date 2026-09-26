@@ -1358,13 +1358,126 @@ class OpenWebUIHouseholdRAGGateTests(unittest.TestCase):
             ):
                 sources(**mode)
 
+    def test_file_context_off_attachment_chat_refuses_while_closed(self):
+        # A model whose file_context capability is off skips the files
+        # handler, and its chat attachments reach the model only through
+        # tools. process_chat_payload still refuses such a chat while the gate
+        # is closed. A qualified gate, a chat without attachments, and a chat
+        # with only filesystem items pass; file context on still goes through
+        # the files handler.
+        relative = "backend/open_webui/utils/middleware.py"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_root = Path(temp_dir)
+            path = source_root / relative
+            path.parent.mkdir(parents=True)
+            shutil.copyfile(self.upstream_source / relative, path)
+            applied = subprocess.run(
+                ["git", "apply", f"--include={relative}", str(RAG_PATCH)],
+                cwd=source_root,
+                text=True,
+                capture_output=True,
+                timeout=20,
+                check=False,
+            )
+            self.assertEqual(applied.returncode, 0, applied.stderr)
+            parsed = ast.parse(path.read_text(encoding="utf-8"))
+
+        payload = next(
+            node
+            for node in parsed.body
+            if isinstance(node, ast.AsyncFunctionDef)
+            and node.name == "process_chat_payload"
+        )
+        statement = next(
+            node
+            for node in ast.walk(payload)
+            if isinstance(node, ast.If)
+            and isinstance(node.test, ast.Name)
+            and node.test.id == "file_context_enabled"
+        )
+        # Run the patched statement as the body of a small coroutine.
+        runner = ast.parse(
+            "async def run(request, form_data, extra_params, user, metadata,"
+            " sources, file_context_enabled):\n"
+            "    return form_data\n"
+        ).body[0]
+        runner.body.insert(0, statement)
+        files_handler = mock.AsyncMock(return_value=({}, {"sources": []}))
+        namespace = {
+            "RAGUnavailableError": self.gate.RAGUnavailableError,
+            "chat_completion_files_handler": files_handler,
+            "log": mock.Mock(),
+            "require_file_rag_ready": self.gate.require_file_rag_ready,
+        }
+        exec(  # noqa: S102 - executes one extracted statement from the exact bound source
+            compile(
+                ast.fix_missing_locations(ast.Module(body=[runner], type_ignores=[])),
+                relative,
+                "exec",
+            ),
+            namespace,
+        )
+        request = SimpleNamespace(
+            app=SimpleNamespace(state=SimpleNamespace(RERANKING_FUNCTION=object()))
+        )
+
+        def chat(files, *, file_context=False):
+            return asyncio.run(
+                namespace["run"](
+                    request,
+                    {"messages": []},
+                    {},
+                    object(),
+                    {"files": files},
+                    [],
+                    file_context,
+                )
+            )
+
+        attached = (
+            [{"type": "note", "id": "chat-note"}],
+            [{"type": "chat", "id": "attached-chat"}],
+            [{"type": "collection", "id": "attached-knowledge"}],
+            [{"type": "file", "id": "attached-file"}],
+            [{"type": "text", "content": "pasted text"}],
+            [{"type": "url", "name": "page"}],
+            [{"type": "filesystem", "id": "workspace"}, {"type": "note", "id": "n"}],
+        )
+        unattached = (None, [], [{"type": "filesystem", "id": "workspace"}])
+
+        self.gate.configure_required_reranker(True)
+        for files in attached:
+            with (
+                self.subTest(gate="closed", files=files),
+                self.assertRaises(self.gate.RAGUnavailableError),
+            ):
+                chat(files)
+        for files in unattached:
+            with self.subTest(gate="closed", files=files):
+                chat(files)
+
+        self.gate.qualify_required_reranker([0.91, 0.08])
+        for files in attached + unattached:
+            with self.subTest(gate="qualified", files=files):
+                chat(files)
+        files_handler.assert_not_awaited()
+
+        # File context on hands the chat to the files handler, whose gate
+        # error still propagates.
+        files_handler.side_effect = self.gate.RAGUnavailableError()
+        with self.assertRaises(self.gate.RAGUnavailableError):
+            chat(attached[0], file_context=True)
+        files_handler.assert_awaited_once()
+
     def test_knowledge_attached_notes_refuse_while_closed_but_personal_notes_stay(
         self,
     ):
         # Notes attached to the model or its folder as knowledge are gated:
         # view_note refuses them and search_notes omits them while the gate is
-        # closed. Unattached notes and chat attachments are personal data and
-        # stay readable. A qualified gate allows every note.
+        # closed. Unattached notes stay readable. Chat-sourced notes exist only
+        # on a model whose file context is off, where the closed gate refuses
+        # the chat in process_chat_payload, so the note gate does not filter
+        # them. A qualified gate allows every note.
         json_codec = __import__("json")
         stored = {
             note_id: SimpleNamespace(
