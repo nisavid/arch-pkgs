@@ -407,7 +407,7 @@ points per request.
   processing. From reading the code, the failing call is the hash-dedup check
   once the shared collection exists. From reading the code (not reproduced):
   hybrid search's full-collection prefetch hits the same 400, the error is
-  caught and logged, and the chat gets zero sources with no error.
+  caught and logged, and retrieval returns no documents, with no error.
 - **Concurrent writes:** a paged read is not a point-in-time snapshot. Points
   written during the read may or may not appear; every point present for the
   whole read is returned exactly once. The prior single scroll was one atomic
