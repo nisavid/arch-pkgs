@@ -1552,9 +1552,11 @@ class ProfilePersistedTests(unittest.TestCase):
             "RAG_RERANKING_MODEL",
         ])
         self.assertEqual(recorded["absent"], [])
-        # Names only: no value, persisted or expected, reaches the record.
+        # Names only: no value, persisted or expected, reaches the record,
+        # and the record passes the evidence's public-safety check.
         for value in ("zembed", "zerank", "MiniLM", "api.openai.com", "13305", "13306", "true", "false"):
             self.assertNotIn(value, detail.lower())
+        v1.assert_public_safe({"detail": detail, "values": recorded})
 
     def test_a_missing_row_and_an_unknown_profile_key_fail(self):
         rows = {key: value for key, value in self.PROFILE_ROWS.items() if key != "rag.reranking_model"}
