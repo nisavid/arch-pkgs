@@ -51,8 +51,9 @@ def environment_assignments(text: str) -> dict[str, str]:
     return values
 
 
-# The settings that only the household profile carries. Every other key is a
-# generic, security, or RAG-gate default that stays in open-webui.env.
+# The settings the household profile carries. Only ENABLE_OPENAI_API also
+# appears in open-webui.env (as false); every other packaged key is a generic,
+# security, or RAG-gate default.
 HOUSEHOLD_PROFILE_KEYS = frozenset(
     {
         "ENABLE_OPENAI_API",
@@ -574,6 +575,9 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
         # The profile overrides exactly one packaged value: it turns on the
         # household's OpenAI-compatible connection.
         self.assertEqual(set(packaged) & set(example), {"ENABLE_OPENAI_API"})
+        self.assertEqual(
+            PACKAGED_DEFAULT_KEYS & HOUSEHOLD_PROFILE_KEYS, {"ENABLE_OPENAI_API"}
+        )
         self.assertEqual(packaged["ENABLE_OPENAI_API"], "false")
         self.assertEqual(example["ENABLE_OPENAI_API"], "true")
         for key in (
