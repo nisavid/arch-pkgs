@@ -65,16 +65,19 @@ def write_archive(directory, name, data=b"candidate"):
     return {"name": name, "size": len(data), "sha256": v1._sha256_bytes(data)}
 
 
+# The six deployed candidates of the 0.11.4 re-baseline, in DEPLOYED_PACKAGES order.
+CANDIDATE_ARCHIVES = (
+    "open-webui-0.11.4-1-x86_64.pkg.tar.zst",
+    "python-rapidocr-3.9.2-1-any.pkg.tar.zst",
+    "qdrant-1.19.1-1-x86_64.pkg.tar.zst",
+    "qdrant-migration-1.18.3-1-x86_64.pkg.tar.zst",
+    "qdrant-web-ui-0.2.18-1-any.pkg.tar.zst",
+    "python-faster-whisper-1.2.1-1-any.pkg.tar.zst",
+)
+
+
 def six_archives(directory):
-    names = (
-        "open-webui-0.11.0-5-x86_64.pkg.tar.zst",
-        "python-rapidocr-3.9.2-1-any.pkg.tar.zst",
-        "qdrant-1.19.0-1-x86_64.pkg.tar.zst",
-        "qdrant-migration-1.18.3-1-x86_64.pkg.tar.zst",
-        "qdrant-web-ui-0.2.16-1-any.pkg.tar.zst",
-        "python-faster-whisper-1.2.1-1-any.pkg.tar.zst",
-    )
-    return [write_archive(directory, name, name.encode()) for name in names]
+    return [write_archive(directory, name, name.encode()) for name in CANDIDATE_ARCHIVES]
 
 
 def write_manifest(directory, archives, **extra):
@@ -400,7 +403,7 @@ class UnitDerivationTests(unittest.TestCase):
 
 class PreflightTests(unittest.TestCase):
     def test_locate_archive_picks_the_store_file_with_the_pinned_bytes(self):
-        name = "open-webui-0.11.0-5-x86_64.pkg.tar.zst"
+        name = CANDIDATE_ARCHIVES[0]
         with tempfile.TemporaryDirectory() as directory:
             kit = make_kit(directory)
             write_archive(kit.candidate_store / "3647a6f", name, b"superseded")
@@ -450,7 +453,7 @@ class PreflightTests(unittest.TestCase):
 
     def test_archives_are_checked_by_exact_bytes(self):
         with tempfile.TemporaryDirectory() as directory:
-            record = write_archive(directory, "qdrant-1.19.0-1-x86_64.pkg.tar.zst", b"exact")
+            record = write_archive(directory, "qdrant-1.19.1-1-x86_64.pkg.tar.zst", b"exact")
             path = Path(directory) / record["name"]
             self.assertEqual(kit_module.verify_archive(path, record)["sha256"], record["sha256"])
             with self.assertRaises(ValueError):
@@ -477,12 +480,7 @@ class PreflightTests(unittest.TestCase):
         if lemond_url:
             kit.lemond_url = lemond_url
         archives = six_archives(kit.root / "store") if store else [
-            {"name": name, "size": 1, "sha256": "0" * 64}
-            for name in (
-                "open-webui-0.11.0-5-x86_64.pkg.tar.zst", "python-rapidocr-3.9.2-1-any.pkg.tar.zst",
-                "qdrant-1.19.0-1-x86_64.pkg.tar.zst", "qdrant-migration-1.18.3-1-x86_64.pkg.tar.zst",
-                "qdrant-web-ui-0.2.16-1-any.pkg.tar.zst", "python-faster-whisper-1.2.1-1-any.pkg.tar.zst",
-            )
+            {"name": name, "size": 1, "sha256": "0" * 64} for name in CANDIDATE_ARCHIVES
         ]
         kit.manifest_path = write_manifest(directory, archives)
         kit.root = Path("/srv/build/owui-acceptance-preflight-test")
@@ -1061,6 +1059,16 @@ class ProductionDocTests(unittest.TestCase):
             for prop in ("-p LoadState", "-p ActiveState", "-p ActiveEnterTimestamp", "--timestamp=unix"):
                 self.assertIn(prop, read)
 
+    def test_both_runbooks_name_the_0_11_4_candidate_set(self):
+        acceptance = (REPO_ROOT / "docs" / "maintainers" / "open-webui-household-acceptance.md").read_text(encoding="utf-8")
+        named = re.findall(r"^   \| `([^`]+\.pkg\.tar\.zst)` \|", acceptance, re.MULTILINE)
+        self.assertEqual(sorted(named), sorted(CANDIDATE_ARCHIVES))
+        for text in (acceptance, self.doc):
+            self.assertNotIn("0.11.0-7", text)
+            self.assertNotIn("1.19.0-1", text)
+        self.assertIn("`HAND-BACK: open-webui P2 installed 0.11.4-1`", self.doc)
+        self.assertIn("`HAND-BACK: qdrant verify PASSED on 1.19.1-1; …`", self.doc)
+
     def test_the_production_qdrant_loops_name_the_kit_collections(self):
         loops = re.findall(r"for s in ([^;]+); do\n\s*(?:c=|test -s \"\$1/qdrant/)([\w-]+)_\$s", self.doc)
         self.assertEqual(len(loops), 3)
@@ -1490,6 +1498,52 @@ class FirstStartTests(unittest.TestCase):
             "key columns to 'id', 'user_id'. This warning may become an exception in a future release"
         )
         self.assertEqual(kit_module.migration_errors([warning, "INFO  [alembic.runtime.migration] Running upgrade"]), [])
+
+    def test_the_0_11_4_upgrade_lines_are_not_migration_errors(self):
+        # Open WebUI 0.11.1 added three revisions on top of 0.11.0's head.
+        # None of them logs, so a fresh 0.11.4 start adds only Alembic's own
+        # upgrade lines, with each revision's docstring title.
+        upgrades = [
+            "INFO  [alembic.runtime.migration] Running upgrade f0bd01a18a3d -> 1ce6ade7d93b, "
+            "Add group_member user_id index",
+            "INFO  [alembic.runtime.migration] Running upgrade 1ce6ade7d93b -> 6d09d1bf1f23, "
+            "repair double encoded user oauth",
+            "INFO  [alembic.runtime.migration] Running upgrade 6d09d1bf1f23 -> d4c1a8e37b62, "
+            "add chat timer_at and chat list, unread and timer indexes",
+        ]
+        self.assertEqual(kit_module.migration_errors(upgrades), [])
+
+    def test_the_trial_binds_the_0_11_4_head_and_qdrant_1_19_1(self):
+        self.assertEqual(kit_module.ALEMBIC_HEAD, "d4c1a8e37b62")
+        self.assertEqual(kit_module.QDRANT_VERSION, "1.19.1")
+        # The v1 envelope contract keeps the 0.11.0 pair it measured.
+        self.assertEqual(v1.CONTRACT["open_webui"]["alembic_head"], "f0bd01a18a3d")
+        runbook = (REPO_ROOT / "docs" / "maintainers" / "open-webui-household-acceptance.md").read_text(encoding="utf-8")
+        rows = {line.split("`")[1]: line for line in runbook.splitlines() if line.startswith("| `open-webui.")}
+        self.assertIn(f"Alembic head `{kit_module.ALEMBIC_HEAD}`", rows["open-webui.acceptance.ready.first-start"])
+        self.assertIn(f"Qdrant {kit_module.QDRANT_VERSION}", rows["open-webui.acceptance.qdrant.g4"])
+
+    def test_the_first_start_requires_the_bound_head(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit = make_kit(directory)
+            kit.raw.mkdir(parents=True)
+            (kit.raw / "first-start.json").write_text(
+                json.dumps({"started_at": 1.0, "ready_s": 9.5, "qdrant_fresh": True}))
+            data = Path(directory) / "data"
+            data.mkdir()
+            trial = kit_module.Trial(kit)
+            for head, passes in ((kit_module.ALEMBIC_HEAD, True), ("f0bd01a18a3d", False)):
+                with contextlib.closing(sqlite3.connect(data / "webui.db")) as connection, connection:
+                    connection.execute("CREATE TABLE IF NOT EXISTS alembic_version (version_num TEXT)")
+                    connection.execute("DELETE FROM alembic_version")
+                    connection.execute("INSERT INTO alembic_version VALUES (?)", (head,))
+                with self.subTest(head), mock.patch.object(kit_module, "data_dir", return_value=data), \
+                        mock.patch.object(kit_module, "journal", return_value=""):
+                    if passes:
+                        self.assertEqual(trial.first_start()["alembic_head"], head)
+                    else:
+                        with self.assertRaises(sc.ScenarioFailure):
+                            trial.first_start()
 
     def test_real_alembic_failures_are_migration_errors(self):
         failures = [

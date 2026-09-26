@@ -121,7 +121,8 @@ ZEMBED_DOCUMENT_HEAD = "<|im_start|>system\ndocument<|im_end|>\n<|im_start|>user
 # evidence as ``production_expectation``), and the evidence commit adds it
 # here.  A consistency test ties every entry to committed acceptance
 # evidence.  Until that evidence exists this map is empty, so production S6
-# exits 75 instead of passing against bytes that are not of record.
+# exits 75 instead of passing against bytes that are not of record.  The
+# first entry is the 0.11.4-1 candidate's, from its trial's evidence commit.
 PRODUCTION_EXPECTATION_KEYS = (
     "RAG_EMBEDDING_MODEL",
     "RAG_RERANKING_MODEL",
