@@ -81,8 +81,10 @@ remains in
   a failed embedding or Qdrant search, the request fails with the same 503
   detail instead of falling back to a vector search that skips the reranker.
   The gate stays qualified and the health probe stays 200, so the next request
-  retries; the journal records the cause. This covers only errors that hybrid
-  search raises: a failed collection prefetch still yields empty sources
+  retries; the journal records the cause. When hybrid search fails to fetch
+  any collection before searching, the request also fails with the same 503
+  instead of skipping that collection as empty, and the gate stays qualified;
+  a collection that the vector store reports missing is still skipped
   ([#98](https://github.com/nisavid/arch-pkgs/issues/98)).
 - When a search leaves no candidates to rerank, the reranker is not called and
   the search returns nothing; the gate stays qualified. Nothing unreranked

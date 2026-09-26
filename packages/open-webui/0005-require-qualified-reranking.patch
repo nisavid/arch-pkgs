@@ -8,7 +8,7 @@
 # Gate closed: a chat with any attachment returns the 503 detail, even on a model whose file context capability is off. The builtin query_*_files, grep_*_files, view_file, and view_knowledge_file tools, and view_note for a note attached as knowledge to the chat's model or folder, return it as a tool error before reading anything; search_notes omits those notes.
 # Gate qualified: explicitly requested content is allowed whole, including full-context items and text, note, chat, and url attachments; search results are reranked. The global full-context and embedding-and-retrieval bypass modes stay refused even when qualified.
 # Hybrid-search errors: when hybrid search raises anything but RAGUnavailableError, the request fails with the gate's 503 instead of upstream's unreranked vector-search fallback. The gate stays qualified, so the health probe stays 200 and the next request retries.
-# Hybrid-search errors cover only exceptions hybrid search raises; a failed collection prefetch still yields empty sources (#98).
+# Failed collection prefetch: when hybrid search's prefetch get() raises, the request fails with the same 503 instead of skipping that collection as empty. A collection that get() reports missing is still skipped, and the gate stays qualified (#98).
 # Empty candidates: RerankCompressor keeps 0.11.4's early return of [] without calling the reranker, and the gate stays qualified. Nothing unreranked reaches chat, and closing the gate on an empty knowledge base would only cause an outage.
 # tests/test_open_webui_household_rag_gate.py pins each gate path above.
 diff --git a/backend/open_webui/retrieval/models/external.py b/backend/open_webui/retrieval/models/external.py
@@ -116,7 +116,7 @@ index a66a2c5..82b99e2 100644
 +            close_required_reranker()
 +            raise
 diff --git a/backend/open_webui/retrieval/utils.py b/backend/open_webui/retrieval/utils.py
-index 055f750..2630388 100644
+index 055f750..dff18c1 100644
 --- a/backend/open_webui/retrieval/utils.py
 +++ b/backend/open_webui/retrieval/utils.py
 @@ -46,6 +46,12 @@ from open_webui.models.notes import Notes
@@ -188,7 +188,17 @@ index 055f750..2630388 100644
  
      results = []
      last_error = None
-@@ -860,6 +880,8 @@ async def query_collection_with_hybrid_search(
+@@ -838,7 +858,8 @@ async def query_collection_with_hybrid_search(
+             return name, await ASYNC_VECTOR_DB_CLIENT.get(collection_name=name)
+         except Exception as e:
+             log.exception(f'Failed to fetch collection {name}: {e}')
+-            return name, None
++            # A failed fetch is not an empty collection; fail closed instead of skipping it.
++            raise RAGUnavailableError() from e
+ 
+     collection_results = dict(await asyncio.gather(*(_fetch_collection(name) for name in collection_names)))
+ 
+@@ -860,6 +881,8 @@ async def query_collection_with_hybrid_search(
                  native_hybrid_search=False,
              )
              return result, None, collection_name
@@ -197,7 +207,7 @@ index 055f750..2630388 100644
          except Exception as e:
              return None, e, collection_name
  
-@@ -1381,9 +1403,20 @@ async def get_sources_from_items(
+@@ -1381,9 +1404,20 @@ async def get_sources_from_items(
      full_context=False,
      user: UserModel | None = None,
  ):
@@ -220,7 +230,7 @@ index 055f750..2630388 100644
      extracted_collections = []
      query_results = []
      folder_items = set()
-@@ -1689,6 +1722,8 @@ async def get_sources_from_items(
+@@ -1689,6 +1723,8 @@ async def get_sources_from_items(
                          embedding_function=embedding_function,
                          k=k,
                      )
@@ -229,7 +239,7 @@ index 055f750..2630388 100644
              except Exception as e:
                  log.exception(e)
  
-@@ -1818,34 +1853,34 @@ class RerankCompressor(BaseDocumentCompressor):
+@@ -1818,34 +1854,34 @@ class RerankCompressor(BaseDocumentCompressor):
  
          scores = None
          if reranking:

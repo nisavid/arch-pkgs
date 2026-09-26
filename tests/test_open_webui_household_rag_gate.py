@@ -893,6 +893,145 @@ class OpenWebUIHouseholdRAGGateTests(unittest.TestCase):
         embedding_function.assert_not_awaited()
         self.gate.require_required_reranker(marker)
 
+    def test_failed_hybrid_prefetch_fails_closed_instead_of_empty_sources(self):
+        # Upstream's hybrid prefetch logs a failed get() and skips that
+        # collection as if it were empty, so a request whose every fetch
+        # fails returns empty sources and no error. A failed fetch now fails
+        # closed with the gate's 503 on the chat and /query/collection paths.
+        # A collection that get() reports missing is still skipped, and the
+        # gate stays qualified.
+        class FixtureConfig:
+            # The packaged retrieval settings that reach this path.
+            values: ClassVar[dict] = {
+                "rag.enable_hybrid_search": True,
+                "rag.bypass_embedding_and_retrieval": False,
+                "rag.top_k_reranker": 3,
+                "rag.relevance_threshold": 0.0,
+                "rag.hybrid_bm25_weight": 0.5,
+                "rag.enable_hybrid_search_enriched_texts": False,
+            }
+
+            @classmethod
+            async def get_many(cls, *keys):
+                return {key: cls.values.get(key) for key in keys}
+
+        injected = RuntimeError("Unexpected Response: 400 (Bad Request)")
+        stored = {"file-a": object(), "file-missing": None}
+
+        def fetch(collection_name):
+            if collection_name == "file-down":
+                raise injected
+            return stored[collection_name]
+
+        vector_searches = []
+
+        def unreranked_vector_search(**kwargs):
+            vector_searches.append(kwargs["collection_name"])
+            return SimpleNamespace(
+                model_dump=lambda: {
+                    "distances": [[0.42]],
+                    "documents": [["unreranked text"]],
+                    "metadatas": [[{}]],
+                }
+            )
+
+        def merge_results(results, k):
+            return {
+                key: [[value for result in results for value in result[key][0]][:k]]
+                for key in ("distances", "documents", "metadatas")
+            }
+
+        hybrid_search = mock.AsyncMock(
+            return_value={
+                "distances": [[0.97]],
+                "documents": [["reranked text"]],
+                "metadatas": [[{}]],
+            }
+        )
+        namespace = {
+            "ASYNC_VECTOR_DB_CLIENT": SimpleNamespace(
+                get=mock.AsyncMock(side_effect=fetch)
+            ),
+            "Config": FixtureConfig,
+            "RAG_EMBEDDING_QUERY_PREFIX": "query: ",
+            "RAGUnavailableError": self.gate.RAGUnavailableError,
+            "asyncio": asyncio,
+            "log": mock.Mock(),
+            "merge_and_sort_query_results": merge_results,
+            "query_doc": unreranked_vector_search,
+            "query_doc_with_hybrid_search": hybrid_search,
+            # Qdrant has no backend-native hybrid search.
+            "query_doc_with_native_hybrid_search": mock.AsyncMock(return_value=None),
+            "require_safe_retrieval_mode": self.gate.require_safe_retrieval_mode,
+        }
+        search_functions = {"query_collection", "query_collection_with_hybrid_search"}
+        self.assertEqual(
+            self.exec_patched_definitions(
+                "backend/open_webui/retrieval/utils.py", search_functions, namespace
+            ),
+            search_functions,
+        )
+
+        request = SimpleNamespace(
+            app=SimpleNamespace(
+                state=SimpleNamespace(RERANKING_FUNCTION=lambda *_args, **_kwargs: [])
+            )
+        )
+        embedding_function = mock.AsyncMock(return_value=[[0.1, 0.2]])
+
+        def retrieve_for_chat(collection_names):
+            return asyncio.run(
+                namespace["query_collection"](
+                    request,
+                    collection_names=collection_names,
+                    queries=["private query"],
+                    embedding_function=embedding_function,
+                    k=3,
+                )
+            )
+
+        def retrieve_for_query_collection(collection_names):
+            return asyncio.run(
+                namespace["query_collection_with_hybrid_search"](
+                    collection_names=collection_names,
+                    queries=["private query"],
+                    embedding_function=embedding_function,
+                    k=3,
+                    reranking_function=lambda *_args, **_kwargs: [],
+                    k_reranker=3,
+                    r=0.0,
+                    hybrid_bm25_weight=0.5,
+                )
+            )
+
+        marker = object()
+        self.gate.configure_required_reranker(True)
+        self.gate.qualify_required_reranker([0.91, 0.08])
+
+        self.assertEqual(
+            retrieve_for_chat(["file-a", "file-missing"])["documents"],
+            [["reranked text"]],
+        )
+        self.assertEqual(hybrid_search.await_count, 1)
+
+        hybrid_search.reset_mock()
+        for path, retrieve in (
+            ("chat", retrieve_for_chat),
+            ("/query/collection", retrieve_for_query_collection),
+        ):
+            for collection_names in (["file-a", "file-down"], ["file-down"]):
+                with self.subTest(path=path, collection_names=collection_names):
+                    with self.assertRaises(self.gate.RAGUnavailableError) as refused:
+                        retrieve(collection_names)
+                    self.assertEqual(
+                        str(refused.exception), self.gate.RAG_UNAVAILABLE_DETAIL
+                    )
+                    self.assertIs(refused.exception.__cause__, injected)
+                    hybrid_search.assert_not_awaited()
+                    self.assertEqual(vector_searches, [])
+                    embedding_function.assert_not_awaited()
+                    self.gate.require_required_reranker(marker)
+
     def test_mixed_full_context_chat_refuses_while_closed_and_passes_when_qualified(
         self,
     ):
