@@ -361,6 +361,41 @@ separately approves removal, keep:
   the candidate store and the repository
 - any `/var/lib/qdrant.failed-*` tree
 
+## G2 Harness
+
+The committed harness in
+[`tools/qdrant_g2_harness/`](../../tools/qdrant_g2_harness/) produced the
+accepted 1.19.1 G2 records. The G2 section of the frozen
+[`qdrant-migration-acceptance.md`](qdrant-migration-acceptance.md) runbook
+cannot name it, because the accepted G0–G3 evidence pins that runbook's bytes
+by digest. Each launcher checks both archive digests before it starts, refuses
+an existing run root, and installs or starts nothing on the host:
+
+```bash
+tools/qdrant_g2_harness/run-unit.zsh <new-unit-run-root> \
+  <qdrant-archive> <qdrant-sha256> <web-ui-archive> <web-ui-sha256>
+tools/qdrant_g2_harness/run-browser.zsh <new-browser-run-root> \
+  <qdrant-archive> <qdrant-sha256> <web-ui-archive> <web-ui-sha256> \
+  <qdrant-binary-sha256>
+```
+
+`run-unit.zsh` installs both archives with `pacman -U` in a disposable
+rootless systemd container from the pinned base image, with no network. It
+exercises the secret refusals and the exact packaged unit, then runs
+`unit_api_checks.py` from the container's network namespace. That script
+covers REST, JWT, CORS, dashboard and strict-mode checks, plus gRPC through the
+`grpc_stubs/` generated from the pinned 1.19.1 protos. `run-browser.zsh`
+extracts both payloads and runs `browser-namespace.sh` inside a loopback-only
+Bubblewrap namespace. There, `browser_seed.py` seeds the fixture and mints the
+scoped JWT, and `browser_acceptance.py` drives the dashboard with the host's
+Chrome and Playwright.
+
+`g2-unit.json` and `g2-browser.json` bind these scripts' SHA-256 digests, and
+`tests/test_qdrant_g2_harness.py` pins the committed bytes to those values.
+Any change to the harness needs a fresh G2 run and new records. The public
+records were written from each run's raw output by an evidence writer that is
+not part of this harness and that the records do not bind.
+
 ## G4 in the Open WebUI Household Acceptance
 
 G4 now runs inside
