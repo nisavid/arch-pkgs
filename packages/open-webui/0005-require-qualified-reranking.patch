@@ -3,13 +3,14 @@
 # Open WebUI 0.11.4 sdist SHA-256: 1f1a31668a0dee733953c29d6183d78dd78984e696aa8eb0f2083f5796497be0
 # The package installs open-webui-rag-gate.py as open_webui/retrieval/rag_gate.py before build.
 # App startup remains available for ordinary chat when qualification fails; authenticated /api/v1/retrieval/health stays 503.
-# Gate scope: knowledge-base content, anything attached to a model or folder as knowledge, and chat attachments of any kind.
-# Personal data outside the gate means only the notes, chats, and memories tools and features; notes attached as knowledge stay gated.
-# Gate closed: a chat with any attachment returns the 503 detail. The builtin query_*_files, grep_*_files, view_file, and view_knowledge_file tools, and view_note for a knowledge-attached note, return it as a tool error; search_notes omits knowledge-attached notes.
-# Gate qualified: explicitly requested content is allowed whole, including full-context items and text, note, chat, and url attachments; search results are reranked. The global full-context and bypass modes stay refused.
-# Hybrid-search errors: when hybrid search raises anything but RAGUnavailableError, the request fails with the gate's 503 instead of upstream's unreranked vector-search fallback, and the gate stays qualified.
-# Empty candidates: RerankCompressor keeps 0.11.4's early return of [] without calling the reranker. Nothing unreranked reaches chat, and closing the gate on an empty knowledge base would only cause an outage.
-# tests/test_open_webui_household_rag_gate.py pins each of these.
+# Gate scope: knowledge-base content, anything attached to a model or folder as knowledge, and chat attachments of any kind. For notes, the gate covers notes attached as knowledge to the chat's model or the chat's folder.
+# Personal data outside the gate means only the notes, chats, and memories tools and features: a note attached as knowledge only to a different model or folder, reached from another chat, goes through those personal-notes features and stays outside the gate.
+# Gate closed: a chat with any attachment returns the 503 detail. The builtin query_*_files, grep_*_files, view_file, and view_knowledge_file tools, and view_note for a note attached as knowledge to the chat's model or folder, return it as a tool error before reading anything; search_notes omits those notes.
+# Gate qualified: explicitly requested content is allowed whole, including full-context items and text, note, chat, and url attachments; search results are reranked. The global full-context and embedding-and-retrieval bypass modes stay refused even when qualified.
+# Hybrid-search errors: when hybrid search raises anything but RAGUnavailableError, the request fails with the gate's 503 instead of upstream's unreranked vector-search fallback. The gate stays qualified, so the health probe stays 200 and the next request retries.
+# Hybrid-search errors cover only exceptions hybrid search raises; a failed collection prefetch still yields empty sources (#98).
+# Empty candidates: RerankCompressor keeps 0.11.4's early return of [] without calling the reranker, and the gate stays qualified. Nothing unreranked reaches chat, and closing the gate on an empty knowledge base would only cause an outage.
+# tests/test_open_webui_household_rag_gate.py pins each gate path above.
 diff --git a/backend/open_webui/retrieval/models/external.py b/backend/open_webui/retrieval/models/external.py
 index a66a2c5..82b99e2 100644
 --- a/backend/open_webui/retrieval/models/external.py

@@ -55,21 +55,31 @@ remains in
   until one of those requalifies it; once the provider is healthy again,
   restart `open-webui.service`.
 - The gate covers knowledge-base content, anything attached to a model or folder
-  as knowledge, and chat attachments of any kind. Personal data outside it means
-  only the notes, chats, and memories tools and features; notes attached as
-  knowledge stay gated. While the gate is closed, a chat with any attachment
-  returns that 503; the builtin `query_*_files`, `grep_*_files`, `view_file`,
-  and `view_knowledge_file` tools, and `view_note` for a knowledge-attached
-  note, return its message as a tool error; and `search_notes` omits
-  knowledge-attached notes. Once it is qualified, explicitly requested content,
-  including full-context attachments, is allowed whole, and search results are
-  reranked.
+  as knowledge, and chat attachments of any kind. For notes, it covers notes
+  attached as knowledge to the chat's model or the chat's folder. Personal data
+  outside it means only the notes, chats, and memories tools and features: a
+  note attached as knowledge only to a different model or folder, reached from
+  another chat, goes through those personal-notes features and stays outside
+  the gate. While the gate is closed, a chat with any attachment returns that
+  503; the builtin `query_*_files`, `grep_*_files`, `view_file`, and
+  `view_knowledge_file` tools, and `view_note` for a note attached as knowledge
+  to the chat's model or folder, return its message as a tool error before
+  reading anything; and `search_notes` omits those notes. Once it is
+  qualified, explicitly requested content is allowed whole, including
+  full-context items and `text`, `note`, `chat`, and `url` attachments, and
+  search results are reranked. The global full-context and
+  embedding-and-retrieval bypass modes stay refused even when qualified.
 - When hybrid search fails for every collection with any other error, such as
   a failed embedding or Qdrant search, the request fails with the same 503
   instead of falling back to a vector search that skips the reranker. The gate
-  stays open and the health probe stays 200, so the next request retries; the
-  journal records the cause. A failed collection prefetch still yields empty
-  sources ([#98](https://github.com/nisavid/arch-pkgs/issues/98)).
+  stays qualified and the health probe stays 200, so the next request retries;
+  the journal records the cause. This covers only errors that hybrid search
+  raises: a failed collection prefetch still yields empty sources
+  ([#98](https://github.com/nisavid/arch-pkgs/issues/98)).
+- When a search leaves no candidates to rerank, the reranker is not called and
+  the search returns nothing; the gate stays qualified. Nothing unreranked
+  reaches chat, and closing the gate on an empty knowledge base would only
+  cause an outage.
 - Before service start, an operator with Qdrant administrative authority must
   precreate the exact 2560-dimensional cosine collections
   `open-webui-rag-v1_memories`, `open-webui-rag-v1_knowledge`,
