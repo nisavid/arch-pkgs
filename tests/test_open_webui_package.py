@@ -822,6 +822,16 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
             notes,
         )
         self.assertIn("-p EnvironmentFile=/etc/open-webui/household.env", notes)
+        # The unit retries a refused start every five seconds, so the section
+        # says to stop it before fixing the profile.
+        self.assertIn(
+            "\nRestart=on-failure\nRestartSec=5s\n", read(OPEN_WEBUI / "open-webui.service")
+        )
+        household = notes.split("## Household Profile\n", 1)[1].split("\n## ", 1)[0]
+        self.assertIn(
+            "systemd retries a refused start every five seconds", " ".join(household.split())
+        )
+        self.assertIn("`sudo systemctl stop open-webui.service`", household)
         self.assertNotIn("127.0.0.1:13305", notes)
         self.assertNotIn("0.9.5", notes)
         self.assertNotIn("127.0.0.1:8080", notes)

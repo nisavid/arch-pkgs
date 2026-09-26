@@ -131,8 +131,12 @@ sudoedit /etc/open-webui/household.env
 Replace every `<...>` placeholder. The unit reads the profile with a `-`
 prefix, so it starts without one. Its first `ExecStartPre=` step runs as the
 `open-webui` user and fails the start, with a journal message, when the
-profile exists but is not a file that user can read. systemd still silently
-ignores a profile it cannot parse. Check both before the first start:
+profile exists but is not a file that user can read. systemd retries a refused
+start every five seconds, and the first retry that passes is the first start,
+so after a refusal run `sudo systemctl stop open-webui.service` before fixing
+the profile, and start it again only after both checks below pass. systemd
+still silently ignores a profile it cannot parse. Check both before the first
+start:
 
 ```sh
 sudo grep -nE '^[^#]*<[a-z]+>' /etc/open-webui/household.env
