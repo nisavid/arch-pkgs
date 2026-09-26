@@ -402,8 +402,9 @@ points per request.
 - **Why:** upstream reads with a single scroll whose limit is
   `NO_LIMIT = 999999999`, a "fetch everything" stand-in added in
   [open-webui#6050](https://github.com/open-webui/open-webui/pull/6050) (2024).
-  The packaged Qdrant enables strict mode with `max_query_limit: 1000` and
-  rejects that request with HTTP 400. Uploads fail with that 400 during file
+  Qdrant's strict mode is opt-in and off by default upstream; the packaged
+  Qdrant config enables it with `max_query_limit: 1000`, so Qdrant rejects
+  that request with HTTP 400. Uploads fail with that 400 during file
   processing. From reading the code, the failing call is the hash-dedup check
   once the shared collection exists. From reading the code (not reproduced):
   hybrid search's full-collection prefetch hits the same 400, the error is

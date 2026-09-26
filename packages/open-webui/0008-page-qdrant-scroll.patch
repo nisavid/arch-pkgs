@@ -14,8 +14,9 @@
 # A paged read is not a point-in-time snapshot; concurrent writes may or
 # may not appear, while every point present for the whole read is returned
 # exactly once.
-# SCROLL_PAGE_SIZE must stay at or below the packaged Qdrant strict-mode
-# max_query_limit (1000, packages/qdrant/qdrant.config.yaml).
+# Qdrant's strict mode is opt-in and off by default upstream; the packaged
+# Qdrant config (packages/qdrant/qdrant.config.yaml) enables it with
+# max_query_limit 1000. SCROLL_PAGE_SIZE must stay at or below that limit.
 # search() top-k is unchanged. In the non-multitenancy client, search(limit=None)
 # still maps to NO_LIMIT; the household runs multitenancy mode and does not use it.
 # Drop this patch only once an upstream Open WebUI release pages Qdrant
