@@ -1157,6 +1157,19 @@ class Qdrant:
             raise sc.ScenarioFailure(f"Qdrant count for {collection} is malformed")
         return count
 
+    def point_payload(self, collection: str, point_id: str) -> dict[str, Any] | None:
+        """One point's stored payload, read back by id; None when the collection lacks the point."""
+
+        response = self.endpoint.request("GET", f"/collections/{collection}/points/{point_id}", token=self.admin_key)
+        if response.status == 404:
+            return None
+        if response.status != 200:
+            raise sc.ScenarioFailure(f"Qdrant GET /collections/{collection}/points returned HTTP {response.status}")
+        payload = ((response.json() or {}).get("result") or {}).get("payload")
+        if not isinstance(payload, dict):
+            raise sc.ScenarioFailure(f"the {collection} point payload is malformed")
+        return payload
+
     def text_past_first_page(self, collection: str, tenant: str) -> str:
         """The text of a tenant's first point after one full scroll page.
 
@@ -2388,6 +2401,13 @@ def paging_check(webui: sc.Endpoint, qdrant: Qdrant, token: str, chat_model: str
 # hybrid search raise for that collection.  Upstream then falls back to an
 # unreranked vector search; patch 0005 refuses with the gate's 503 and leaves
 # the gate qualified.  Re-derive the trigger on a later upstream.
+#
+# The merge reads every point of the tenant, not a top-k selection: the Qdrant
+# multitenancy client has no native hybrid search, so hybrid search takes the
+# legacy path, whose ``get`` scrolls the whole knowledge tenant and whose merge
+# runs before BM25 ranks or ``k`` applies.  So the fault point is in the set
+# the merge reads exactly when the knowledge tenant holds it with a null
+# metadata payload, and the check reads that back before the fault chat.
 HYBRID_FAULT_KNOWLEDGE = "household-hybrid-fault"
 HYBRID_FAULT_POINT = "00000000-0000-4000-8000-00000000fa17"
 HYBRID_FAULT_SENTINEL = "Planted fault point 0fa17 holds no household fact."
@@ -2440,11 +2460,14 @@ def hybrid_error_check(webui: sc.Endpoint, qdrant: Qdrant, token: str, chat_mode
     """A hybrid-search error fails closed with the gate's 503 and never latches it.
 
     A knowledge base built from the indexed handbook gets one planted point
-    whose metadata payload is null.  With the reranker healthy, a
-    knowledge-scoped chat must return 503 with the fixed detail and no
-    sources, and retrieval health must stay 200.  Once the point is deleted,
-    the same chat must return the canonical fact in non-empty sources with
-    finite scores, with no restart or re-save.  The knowledge base is
+    whose metadata payload is null.  Before any chat, Qdrant must read the
+    point back by id in the knowledge tenant with that null metadata, and the
+    tenant must count one point more than the copy, so the point is in the
+    set hybrid search reads.  With the reranker healthy, a knowledge-scoped
+    chat must return 503 with the fixed detail and no sources, and retrieval
+    health must stay 200.  Once the point is deleted and the tenant is back
+    to the copy's count, the same chat must return the canonical fact in
+    non-empty sources with finite scores, with no restart or re-save.  The knowledge base is
     deleted on every path, and a failed delete, or a knowledge tenant that
     keeps points after it, fails the check.
     """
@@ -2481,6 +2504,18 @@ def hybrid_error_check(webui: sc.Endpoint, qdrant: Qdrant, token: str, chat_mode
             "payload": {"tenant_id": knowledge, "text": HYBRID_FAULT_SENTINEL, "metadata": None},
         }]})
         planted = True
+        stored = qdrant.point_payload(COLLECTIONS[1], HYBRID_FAULT_POINT)
+        values["fault_point"] = {
+            "id": HYBRID_FAULT_POINT,
+            "in_knowledge_tenant": stored is not None and stored.get("tenant_id") == knowledge,
+            "metadata_null": stored is not None and "metadata" in stored and stored["metadata"] is None,
+            "tenant_points_with_fault": qdrant.tenant_points(COLLECTIONS[1], knowledge),
+        }
+        fault_point = values["fault_point"]
+        if not (fault_point["in_knowledge_tenant"] and fault_point["metadata_null"]
+                and fault_point["tenant_points_with_fault"] == knowledge_points + 1):
+            # A 503 would prove nothing: hybrid search would not read this point.
+            raise sc.ScenarioFailure(json.dumps(values, sort_keys=True))
         files = [{"type": "collection", "id": knowledge}]
         fault_started = time.time()
         started = time.monotonic()
@@ -2493,6 +2528,7 @@ def hybrid_error_check(webui: sc.Endpoint, qdrant: Qdrant, token: str, chat_mode
         qdrant.call("POST", f"/collections/{COLLECTIONS[1]}/points/delete?wait=true",
                     {"points": [HYBRID_FAULT_POINT]})
         planted = False
+        values["tenant_points_after_fault_delete"] = qdrant.tenant_points(COLLECTIONS[1], knowledge)
         started = time.monotonic()
         recovered = post_chat(webui, token, chat_model, files)
         timings["recovery_chat_s"] = round(time.monotonic() - started, 3)
@@ -2504,6 +2540,7 @@ def hybrid_error_check(webui: sc.Endpoint, qdrant: Qdrant, token: str, chat_mode
         recovery = values["recovery"]
         if not (refused(values["fault"]) and values["fault"]["sentinel"] is False
                 and values["health_after_fault"] == 200
+                and values["tenant_points_after_fault_delete"] == knowledge_points
                 and recovery["status"] == 200 and recovery["sources"] and recovery["fact_in_sources"]
                 and recovery["finite_scores"] and values["health_after_recovery"] == 200):
             raise sc.ScenarioFailure(json.dumps(values, sort_keys=True))
