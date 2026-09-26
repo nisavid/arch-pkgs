@@ -40,8 +40,10 @@ The package builds and its package-level tests cover the Arch config and
 telemetry-consent patches. Runtime validation on supported NVIDIA hardware is
 still active follow-up work.
 
-See [`docs/backlog.md`](../../docs/backlog.md) for the current acceptance and
-validation plan. The selected first NVIDIA validation rig is documented in
+See
+[Resume the utilyze lane when NVIDIA validation is available](https://github.com/nisavid/arch-pkgs/issues/84)
+and its lane tickets for the current acceptance and validation plan. The
+selected first NVIDIA validation rig is documented in
 [`docs/maintainers/utilyze-nvidia-validation-rig.md`](../../docs/maintainers/utilyze-nvidia-validation-rig.md).
 
 Keep host-specific commands, credentials, provider state, and private runtime
