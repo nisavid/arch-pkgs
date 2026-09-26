@@ -9,7 +9,7 @@ live-validated Lemonade provider, and runs **one** integrated trial set with
 one restore drill and one rollback drill.
 
 The kit is `tools/accept_open_webui_household.py` (evidence schema
-`open-webui-household-acceptance/v3`) plus the shared scenario module
+`open-webui-household-acceptance/v4`) plus the shared scenario module
 `tools/open_webui_household_scenarios.py`. The kit PR alone means *source
 updated*. The candidate set is *acceptance deployed* only after the trial's
 evidence merges.
@@ -79,7 +79,15 @@ rehearsal may run earlier.
    strict-mode `max_query_limit` stays at 1000 (owner decision), and an Open
    WebUI build without 0008 fails the first handbook upload against it. The
    package still carries the `open-webui-tailnet.service` sidecar (packaged
-   since 0.11.0-6) for the tailnet-only production route. The 0.11.4-1 size
+   since 0.11.0-6) for the tailnet-only production route. Its packaged
+   `open-webui.env` carries only generic, security, and RAG-gate defaults:
+   the model provider, the models, the zembed prefixes, and the household
+   feature choices live in a host-owned profile,
+   `/etc/open-webui/household.env`, which the unit reads after the packaged
+   file, and the package installs only the documented example,
+   `/usr/share/open-webui/household.env.example`, with `<lemond>` for the
+   model server's origin. The kit renders that example for its trial; see
+   [Deviations and the A-ID2 table](#deviations-and-the-a-id2-table). The 0.11.4-1 size
    and SHA-256 stay **pending** until the candidate is built, merged, and
    tree-equal. The Qdrant trio's values are the ones the Qdrant 1.19.1
    re-baseline's G0-G3 evidence accepted
@@ -162,10 +170,10 @@ each value used.
 | `--manifest FILE` | none; required | The candidate manifest of record from the build ticket (name, size, SHA-256, source commit). `trial` refuses with exit 75, before the trial starts, when it is missing or differs from the manifest `stage` used. |
 | `--candidate-store DIR` | the operator's arch-pkgs candidate store under the XDG state directory | Where `preflight` and `stage` look for a manifest archive that is not yet under `<root>/inputs/`; the file whose size and SHA-256 match the record is used. |
 | `--lemonade-receipt ID` | none; required for a record-mode `trial` | One Lemonade M4 receipt id; repeat it for each id. |
-| `--lemond-url URL` | `http://127.0.0.1:13305` | Lemonade base URL. Only `GET /api/v1/health`, `GET /api/v1/models`, and inference requests are sent. In record mode it must be the provider origin of the packaged `open-webui.env` (`RAG_OPENAI_API_BASE_URL` and `RAG_EXTERNAL_RERANKER_URL`); otherwise preflight and every re-entry exit 75. |
+| `--lemond-url URL` | `http://127.0.0.1:13305` | Lemonade origin. Only `GET /api/v1/health`, `GET /api/v1/models`, and inference requests are sent. The kit renders the candidate's household profile example with `<lemond>` set to this URL's origin, so the URL must be an origin with no path; if the packaged env and the rendered profile do not give Open WebUI exactly this provider for chat, embedding, and reranking, preflight and every re-entry exit 75. |
 | `--chat-model ID` | `user.Qwen3.6-35B-A3B-MTP-GGUF-UD-Q4_K_XL` (owner-pinned) | The resident chat model used for ordinary chat and the cited answer. Readiness accepts this canonical id or its bare form without the leading `user.`. |
-| `--embedding-model ID` | the packaged env's `RAG_EMBEDDING_MODEL` | zembed id that must be served and loaded. |
-| `--reranking-model ID` | the packaged env's `RAG_RERANKING_MODEL` | zerank id that must be served and loaded. |
+| `--embedding-model ID` | the household profile example's `RAG_EMBEDDING_MODEL` | zembed id that must be served and loaded. |
+| `--reranking-model ID` | the household profile example's `RAG_RERANKING_MODEL` | zerank id that must be served and loaded. |
 | `--whisper-model NAME` | `base` | Pinned Whisper size, `base` or `tiny`; the revision and every file SHA-256 are recorded. |
 | `--provider stub\|lemond` | `lemond` | `stub` serves the rehearsal from `stub_provider.py`; `lemond` is the trial. |
 | `--rehearsal` | off | Required with `--provider stub`; marks every output `mode=rehearsal`. |
@@ -237,13 +245,18 @@ the 0400-file credential fallback, and the record-mode teardown adds
   headroom, free ports, the served and loaded model ids, and the host tools.
   Its only Lemonade contact is `GET /api/v1/health` and `GET /api/v1/models`.
 - `stage` validates the archives (exact set, size, SHA-256, no symlinks),
-  extracts them read-only under `<root>/tree/`, renders the derived user units
-  and the acceptance overlay from the packaged files, mints synthetic
+  extracts them read-only under `<root>/tree/`, renders the derived user
+  units, the household profile, and the acceptance overlay from the packaged
+  files, mints synthetic
   credentials, initializes the session-epoch ledger, and places the whisper
   model in Hugging Face cache layout.
 - `up` starts Qdrant, Valkey, the reranker relay, Open WebUI, and the peer
   sampler under the kit slice. Caddy stays stopped until commissioning, so
-  the route is closed.
+  the route is closed. Every Open WebUI start, the first included, and
+  `trial` refuse with exit 75 unless `<root>/etc/household.env` exists,
+  holds no `<...>` placeholder on an uncommented line (the operator's
+  `grep -nE '^[^#]*<[a-z]+>'` check), and equals the kit's rendering of the
+  candidate's example.
 - `trial` runs the scenarios below once, in order, and writes the evidence
   JSON.
 - `teardown` stops the slice, removes the runtime units, copies the public
@@ -283,10 +296,11 @@ only.
 | `open-webui.acceptance.identity.archives` (A-ID1) | All deployed archives match the manifest by name, size, and SHA-256, before extraction and again at rollback. The generic `ctranslate2` and `python-ctranslate2` 4.8.2 archives are listed as "bound, not deployed"; the host `python-ctranslate2-gfx1151` provides and conflicts. | exact |
 | `open-webui.acceptance.identity.unit-properties` (A-ID2) | Every packaged unit property the user manager cannot apply, generated (see below). | record |
 | `open-webui.acceptance.ready.first-start` (A-R2) | First fresh start reaches Alembic head `d4c1a8e37b62`, Open WebUI 0.11.4's single head, with no migration error; UDS `/ready` 200 before commissioning. | head exact; duration recorded |
+| `open-webui.acceptance.profile.persisted` | Before commissioning rewrites the connection, the SQLite `config` row of each persistent key in the rendered household profile holds the profile's value, parsed as Open WebUI 0.11.4 parses it, or the acceptance overlay's value where the overlay sets the key (the relayed reranker URL). A first start without the profile would have persisted the vanilla values instead, and the stored values win after that. An absent row, a differing value, or a profile key the kit cannot classify fails the step and stops the trial. The record lists key names only, never values. | exact |
 | `open-webui.acceptance.auth.one-admin` (A-S2) | The packaged `open-webui-commission-admin` succeeds; signup off and exactly one admin, rechecked after both drills. | exact |
 | `open-webui.acceptance.ready.restart` (A-R1) | Restart to UDS `/ready` 200 plus authenticated retrieval health 200. | ceiling 25 s |
 | `open-webui.acceptance.qdrant.g4` (A-S3, A-S4) | Fresh Qdrant 1.19.1 state, the version Qdrant reports; five `open-webui-rag-v1` collections, 2,560-dim cosine, payload indexes `tenant_id`, `metadata.hash`, `metadata.file_id`; the runtime holds only the `prw` JWT; the negative probe (an `r` JWT upsert and a `prw` collection create or delete return 403). | exact |
-| `open-webui.acceptance.connections.no-stored-secret` (A-S5) | Open WebUI's model connections carry no stored secret: the unit loads only Open WebUI's five secret credentials plus the session-epoch credential, and the API-key fields in the env, overlay, SQLite config, and admin exports are empty. | exact |
+| `open-webui.acceptance.connections.no-stored-secret` (A-S5) | Open WebUI's model connections carry no stored secret: the unit loads only Open WebUI's five secret credentials plus the session-epoch credential, and the API-key fields in the packaged env, the rendered profile, the overlay, SQLite config, and admin exports are empty. | exact |
 | `open-webui.resmoke.zembed-canary` (A-R3) | 2,560 dims, `\|norm − 1\| ≤ 0.001`, margin ≥ 0.20, prefixes read from the running process's settings; one indexed chunk's stored vector has cosine ≥ 0.999 with the direct content-prefixed vector. | fixed; failure exits 3 and escalates |
 | `open-webui.resmoke.zerank-qualification` (A-R4) | Retrieval health 200 after start; a direct rerank gives finite scores with the relevant document first. | pass/fail |
 | `open-webui.acceptance.route.caddy-uds` (A-S1) | HTTPS 200 through Caddy to the socket; authenticated WebSocket 101; no Open WebUI TCP listener and no non-loopback listener on the Caddy port. Rechecked after both drills. | exact |
@@ -527,8 +541,8 @@ reaches 1,100, and a count still short after 300 s fails the step. The step
 detail records both counts, and the evidence records the BM25 query and its
 result.
 
-The corpus assumes Open WebUI 0.11's chunking defaults, which the packaged env
-does not override: the character splitter, `CHUNK_SIZE` 1000, `CHUNK_OVERLAP`
+The corpus assumes Open WebUI 0.11's chunking defaults, which neither the
+packaged env nor the household profile overrides: the character splitter, `CHUNK_SIZE` 1000, `CHUNK_OVERLAP`
 100, Markdown header splitting on, and `CHUNK_MIN_SIZE_TARGET` 0. Each
 section fits in one chunk and no two fit together, so the corpus indexes
 as one chunk per section, 1,100 points, with or without header splitting. A
@@ -560,9 +574,21 @@ vectors to Qdrant until the step deletes them, and the corpus stays under
 ## Deviations and the A-ID2 table
 
 The packaged env bytes stay exact. The derived user unit loads the packaged
-`open-webui.env` first and then one overlay, `<root>/etc/acceptance.env`; the
-later file wins. The overlay is the only deviation surface, and a test pins
-its key set to:
+`open-webui.env` first, then the household profile, then one overlay,
+`<root>/etc/acceptance.env`; each later file wins. The packaged unit reads
+the profile as `EnvironmentFile=-/etc/open-webui/household.env`, and the
+derived unit maps that line, `-` prefix kept, to `<root>/etc/household.env`.
+
+The kit's profile is the candidate's
+`/usr/share/open-webui/household.env.example` with `<lemond>` replaced by the
+`--lemond-url` origin, the step the production owner does by hand; nothing
+else in it changes. So the household settings, the provider connection
+included (`ENABLE_OPENAI_API=true`, `OPENAI_API_BASE_URLS`, an empty
+`OPENAI_API_KEYS`, and the embedding URL), come from the candidate's own
+example in both modes, and the rehearsal's profile names the stub.
+
+The overlay is the only other deviation surface, and a test pins its key set
+to:
 
 - the `/var/lib/open-webui` state-path keys, rewritten under
   `<root>/state/open-webui`;
@@ -570,22 +596,21 @@ its key set to:
   host's current Qdrant holds the packaged port;
 - `RAG_EXTERNAL_RERANKER_URL` pointing at the reranker relay on port 13306,
   which forwards bytes unchanged to the provider and lets the trial stop the
-  reranker without touching Lemonade;
-- any connection-seed key whose packaged value differs from the kit's seed
-  (`ENABLE_OLLAMA_API=false`, `OPENAI_API_BASE_URLS=<lemond-url>/api/v1`, and
-  an empty `OPENAI_API_KEYS`). From 0.11.0-5 on, the Open WebUI package carries
-  that seed for the default Lemonade origin, so the record overlay carries none
-  of these keys and the rehearsal overlay carries only `OPENAI_API_BASE_URLS`
-  for the stub. An older package without the seed gets all three.
+  reranker without touching Lemonade. It overrides the profile's
+  `<lemond>/api/v1/rerank`.
 
 The local Whisper settings are not overlay keys. The derived unit sets
 `WHISPER_MODEL=<whisper-model>` and `HF_HUB_OFFLINE=1` as `Environment=`
 lines, recorded as A-ID2 rows, and the production drop-in carries the same
 two values.
 
-The seed keys are persistent-config seeds in Open WebUI 0.11: they apply on
-first start, and afterwards the database value wins. A rehearsal root holds
-stub URLs in its database, so it is never reused or kept as an anchor.
+Most profile keys are persistent config in Open WebUI 0.11: the first start
+copies them into the database, and afterwards the database value wins, so a
+first start without the profile would keep the vanilla values for good. The
+kit refuses every start without its rendered profile, and
+`open-webui.acceptance.profile.persisted` checks the stored values after the
+first start. A rehearsal root holds stub URLs in its database, so it is never
+reused or kept as an anchor.
 
 The kit renders each derived unit from the extracted packaged unit. It keeps
 `EnvironmentFile`, the credential directives (sources rewritten under
@@ -600,15 +625,18 @@ A-ID2 is generated, not hand-written. The kit compares the packaged unit, the
 derived unit, and `systemctl --user show`, and writes one row per item with
 its packaged value, its acceptance value, and the reason. The table covers:
 
-- the dropped items: `User`, `Group`, `SupplementaryGroups`,
-  `ExecStartPre=+`, `StateDirectory`, `RuntimeDirectory`, the
+- the dropped items: `User`, `Group`, `SupplementaryGroups`, every
+  `ExecStartPre=` (the privileged runtime-directory steps and the
+  household-profile read guard), `StateDirectory`, `RuntimeDirectory`, the
   `Protect*`/`Private*`/`Restrict*`/`SystemCall*` block, `ReadWritePaths`,
   and the enforcement of `IPAddressDeny`/`IPAddressAllow`, recorded as not
   enforced; the user manager's IP-firewall warning is quoted when the Open
   WebUI unit's current journal holds it, but systemd logs it only once per
   manager lifetime, so it is often absent;
 - the rewritten items: working directory, `HOME`, the cache and temporary
-  directories, and the credential sources;
+  directories, the credential sources, and both environment files;
+- the household profile: the host path, and the kit's rendering of the
+  candidate's example;
 - the overlay keys above;
 - the session-epoch ledger run under `unshare -r`, the socket path under
   `$XDG_RUNTIME_DIR/owui-acc/`, and Caddy with `tls internal`;
@@ -631,6 +659,14 @@ The production handoff does not repeat these rows one by one. Its agent
 post-verification proves that the packaged unit is unmodified and that only the two documented
 drop-ins apply, so every packaged property that A-ID2 records as dropped or
 not enforced here is in force in production.
+
+The trial does not prove the unit's household-profile read guard. That first
+`ExecStartPre=` step runs as the service user and fails the start when
+`/etc/open-webui/household.env` exists but is not a regular file the service
+user can read; a missing profile passes. The derived unit drops it with the
+privileged steps, and the kit's own check stands in for it, so the guard runs
+first in production, where the production handoff's first start checks its
+result.
 
 The `open-webui-tailnet.service` sidecar (packaged since 0.11.0-6) is not
 part of the acceptance environment: the acceptance route is loopback Caddy, and the
