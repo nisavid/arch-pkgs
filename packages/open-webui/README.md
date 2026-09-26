@@ -54,6 +54,12 @@ remains in
   closed (the authenticated `/api/v1/retrieval/health` probe returns 503)
   until one of those requalifies it; once the provider is healthy again,
   restart `open-webui.service`.
+- When hybrid search fails for every collection with any other error, such as
+  a failed embedding or Qdrant search, the request fails with the same 503
+  instead of falling back to a vector search that skips the reranker. The gate
+  stays open and the health probe stays 200, so the next request retries; the
+  journal records the cause. A failed collection prefetch still yields empty
+  sources ([#98](https://github.com/nisavid/arch-pkgs/issues/98)).
 - Before service start, an operator with Qdrant administrative authority must
   precreate the exact 2560-dimensional cosine collections
   `open-webui-rag-v1_memories`, `open-webui-rag-v1_knowledge`,

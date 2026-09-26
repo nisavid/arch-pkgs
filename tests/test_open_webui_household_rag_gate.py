@@ -694,6 +694,143 @@ class OpenWebUIHouseholdRAGGateTests(unittest.TestCase):
         with self.assertRaises(self.gate.RAGUnavailableError):
             self.gate.require_required_reranker(marker)
 
+    def test_hybrid_search_error_fails_closed_without_unreranked_vector_fallback(self):
+        # Upstream query_collection falls back to a plain vector search when
+        # hybrid search raises, and that search never reaches the reranker.
+        # With reranking required, the error fails closed with the gate's
+        # stable 503 instead. It is not a reranker fault, so the gate stays
+        # qualified and the next request retries hybrid search.
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_root = Path(temp_dir)
+            relative = "backend/open_webui/retrieval/utils.py"
+            utils_path = source_root / relative
+            utils_path.parent.mkdir(parents=True)
+            shutil.copyfile(self.upstream_source / relative, utils_path)
+            applied = subprocess.run(
+                ["git", "apply", f"--include={relative}", str(RAG_PATCH)],
+                cwd=source_root,
+                text=True,
+                capture_output=True,
+                timeout=20,
+                check=False,
+            )
+            self.assertEqual(applied.returncode, 0, applied.stderr)
+
+            parsed = ast.parse(utils_path.read_text(encoding="utf-8"))
+            function_nodes: list[ast.stmt] = [
+                node
+                for node in parsed.body
+                if isinstance(node, ast.AsyncFunctionDef)
+                and node.name
+                in {"query_collection", "query_collection_with_hybrid_search"}
+            ]
+            self.assertEqual(len(function_nodes), 2)
+
+            class FixtureConfig:
+                # The packaged retrieval settings that reach this path.
+                values: ClassVar[dict] = {
+                    "rag.enable_hybrid_search": True,
+                    "rag.bypass_embedding_and_retrieval": False,
+                    "rag.top_k_reranker": 3,
+                    "rag.relevance_threshold": 0.0,
+                    "rag.hybrid_bm25_weight": 0.5,
+                    "rag.enable_hybrid_search_enriched_texts": False,
+                }
+
+                @classmethod
+                async def get_many(cls, *keys):
+                    return {key: cls.values.get(key) for key in keys}
+
+            vector_searches = []
+
+            def unreranked_vector_search(**kwargs):
+                vector_searches.append(kwargs["collection_name"])
+                return SimpleNamespace(
+                    model_dump=lambda: {
+                        "distances": [[0.42]],
+                        "documents": [["unreranked text"]],
+                        "metadatas": [[{}]],
+                    }
+                )
+
+            def merge_results(results, k):
+                return {
+                    key: [[value for result in results for value in result[key][0]][:k]]
+                    for key in ("distances", "documents", "metadatas")
+                }
+
+            hybrid_search = mock.AsyncMock()
+            namespace = {
+                "ASYNC_VECTOR_DB_CLIENT": SimpleNamespace(
+                    get=mock.AsyncMock(return_value=object())
+                ),
+                "Config": FixtureConfig,
+                "RAG_EMBEDDING_QUERY_PREFIX": "query: ",
+                "RAGUnavailableError": self.gate.RAGUnavailableError,
+                "asyncio": asyncio,
+                "log": mock.Mock(),
+                "merge_and_sort_query_results": merge_results,
+                "query_doc": unreranked_vector_search,
+                "query_doc_with_hybrid_search": hybrid_search,
+                # Qdrant has no backend-native hybrid search.
+                "query_doc_with_native_hybrid_search": mock.AsyncMock(
+                    return_value=None
+                ),
+                "require_safe_retrieval_mode": self.gate.require_safe_retrieval_mode,
+            }
+            exec(  # noqa: S102 - executes two extracted functions from the exact bound source
+                compile(
+                    ast.fix_missing_locations(
+                        ast.Module(body=function_nodes, type_ignores=[])
+                    ),
+                    str(utils_path),
+                    "exec",
+                ),
+                namespace,
+            )
+
+        query_collection = namespace["query_collection"]
+        request = SimpleNamespace(
+            app=SimpleNamespace(
+                state=SimpleNamespace(RERANKING_FUNCTION=lambda *_args, **_kwargs: [])
+            )
+        )
+        embedding_function = mock.AsyncMock(return_value=[[0.1, 0.2]])
+
+        def retrieve(collection_names):
+            return asyncio.run(
+                query_collection(
+                    request,
+                    collection_names=collection_names,
+                    queries=["private query"],
+                    embedding_function=embedding_function,
+                    k=3,
+                )
+            )
+
+        marker = object()
+        self.gate.configure_required_reranker(True)
+        self.gate.qualify_required_reranker([0.91, 0.08])
+
+        hybrid_search.return_value = {
+            "distances": [[0.97]],
+            "documents": [["reranked text"]],
+            "metadatas": [[{}]],
+        }
+        self.assertEqual(retrieve(["file-a"])["documents"], [["reranked text"]])
+
+        # An ordinary error in every collection's hybrid query, such as a BM25
+        # or embedding fault, makes hybrid search raise for the whole request.
+        hybrid_search.reset_mock(return_value=True)
+        hybrid_search.side_effect = TypeError("'NoneType' object is not a mapping")
+        with self.assertRaises(self.gate.RAGUnavailableError) as refused:
+            retrieve(["file-a", "file-b"])
+        self.assertEqual(str(refused.exception), self.gate.RAG_UNAVAILABLE_DETAIL)
+        self.assertEqual(hybrid_search.await_count, 2)
+        self.assertEqual(vector_searches, [])
+        embedding_function.assert_not_awaited()
+        self.gate.require_required_reranker(marker)
+
     def test_patch_applies_to_retained_exact_open_webui_source_and_compiles(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             source_root = Path(temp_dir)
