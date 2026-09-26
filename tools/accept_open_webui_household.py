@@ -32,6 +32,7 @@ import hmac
 import http.client
 import ipaddress
 import json
+import math
 import os
 import re
 import secrets
@@ -201,6 +202,7 @@ TRIAL_STEPS: tuple[str, ...] = (
     RESTORE_DRILL,
     ROLLBACK_DRILL,
     "open-webui.acceptance.qdrant.paging",
+    "open-webui.acceptance.failclosed.hybrid-error",
     "open-webui.acceptance.resources",
     "open-webui.acceptance.evidence",
 )
@@ -2337,6 +2339,142 @@ def paging_check(webui: sc.Endpoint, qdrant: Qdrant, token: str, chat_model: str
     return Passed(f"file tenant {file_points} points; knowledge tenant {knowledge_points} points", values)
 
 
+# The hybrid-search fault check.  0.11.4's legacy BM25 merges each point's
+# metadata payload into a new mapping (retrieval/utils.py, line 541 of the
+# pristine 0.11.4 source), so one knowledge point whose metadata is null makes
+# hybrid search raise for that collection.  Upstream then falls back to an
+# unreranked vector search; patch 0005 refuses with the gate's 503 and leaves
+# the gate qualified.  Re-derive the trigger on a later upstream.
+HYBRID_FAULT_KNOWLEDGE = "household-hybrid-fault"
+HYBRID_FAULT_POINT = "00000000-0000-4000-8000-00000000fa17"
+HYBRID_FAULT_SENTINEL = "Planted fault point 0fa17 holds no household fact."
+# What 0005 logs when it refuses the fallback; recorded, never gated on.
+HYBRID_FALLBACK_REFUSAL = "refusing the unreranked vector-search fallback"
+HYBRID_SETTLE_S = 300.0
+
+
+def finite_scores(scores: Sequence[Any]) -> bool:
+    return bool(scores) and all(
+        not isinstance(score, bool) and isinstance(score, (int, float)) and math.isfinite(score) for score in scores
+    )
+
+
+def _delete_hybrid_fault(webui: sc.Endpoint, qdrant: Qdrant, token: str, knowledge_id: str | None,
+                         planted: bool) -> tuple[list[str], dict[str, Any]]:
+    """Remove the planted point and the fault knowledge base; returns (failures, record)."""
+
+    failures: list[str] = []
+    record: dict[str, Any] = {}
+    if planted:
+        try:
+            qdrant.call("POST", f"/collections/{COLLECTIONS[1]}/points/delete?wait=true",
+                        {"points": [HYBRID_FAULT_POINT]})
+        except (sc.ScenarioFailure, OSError, http.client.HTTPException) as error:
+            failures.append(f"the planted point delete failed ({type(error).__name__})")
+    if knowledge_id is None:
+        return failures, record
+    status = _delete(webui, token, sc.API["knowledge_delete"].format(id=knowledge_id))
+    record["knowledge_delete"] = status
+    if status != 200:
+        failures.append(f"the hybrid-fault knowledge delete returned {status}")
+        return failures, record
+    try:
+        # Open WebUI deletes the tenant's points without waiting for Qdrant.
+        remaining: int | str = settled_points(lambda: qdrant.tenant_points(COLLECTIONS[1], knowledge_id), 0,
+                                              HYBRID_SETTLE_S)
+    except (sc.ScenarioFailure, OSError, http.client.HTTPException) as error:
+        remaining = type(error).__name__
+    record["knowledge_points_after_delete"] = remaining
+    if isinstance(remaining, str):
+        failures.append(f"the hybrid-fault knowledge tenant count failed after its delete ({remaining})")
+    elif remaining != 0:
+        failures.append(f"the hybrid-fault knowledge tenant still holds {remaining} points after its delete")
+    return failures, record
+
+
+def hybrid_error_check(webui: sc.Endpoint, qdrant: Qdrant, token: str, chat_model: str, file_id: str,
+                       journal_since: Callable[[float], str]) -> dict[str, Any]:
+    """A hybrid-search error fails closed with the gate's 503 and never latches it.
+
+    A knowledge base built from the indexed handbook gets one planted point
+    whose metadata payload is null.  With the reranker healthy, a
+    knowledge-scoped chat must return 503 with the fixed detail and no
+    sources, and retrieval health must stay 200.  Once the point is deleted,
+    the same chat must return the canonical fact in non-empty sources with
+    finite scores, with no restart or re-save.  The knowledge base is
+    deleted on every path, and a failed delete, or a knowledge tenant that
+    keeps points after it, fails the check.
+    """
+
+    config = webui.json("GET", sc.API["rag_config"], token=token)
+    hybrid = (config or {}).get("ENABLE_RAG_HYBRID_SEARCH")
+    health = webui.request("GET", sc.API["rag_health"], token=token).status
+    if hybrid is not True or health != 200:
+        raise sc.ScenarioFailure(json.dumps({"hybrid_search": hybrid, "health_before": health}, sort_keys=True))
+    values: dict[str, Any] = {"health_before": health}
+    timings: dict[str, float] = {}
+    knowledge_id: str | None = None
+    planted = False
+    try:
+        file_points = qdrant.tenant_points(COLLECTIONS[2], f"file-{file_id}")
+        created = webui.json("POST", sc.API["knowledge_create"],
+                             {"name": HYBRID_FAULT_KNOWLEDGE, "description": "Acceptance hybrid-search fault check"},
+                             token=token)
+        knowledge_id = created.get("id") if isinstance(created, dict) else None
+        if not isinstance(knowledge_id, str):
+            raise sc.ScenarioFailure("the knowledge create returned no id")
+        knowledge = knowledge_id
+        started = time.monotonic()
+        webui.json("POST", sc.API["knowledge_file_add"].format(id=knowledge), {"file_id": file_id}, token=token)
+        knowledge_points = settled_points(lambda: qdrant.tenant_points(COLLECTIONS[1], knowledge), file_points,
+                                          HYBRID_SETTLE_S)
+        timings["knowledge_add_s"] = round(time.monotonic() - started, 3)
+        values.update(points={"file": file_points, "knowledge": knowledge_points}, timings=timings)
+        if not file_points or knowledge_points != file_points:
+            raise sc.ScenarioFailure(json.dumps(values, sort_keys=True))
+        qdrant.call("PUT", f"/collections/{COLLECTIONS[1]}/points?wait=true", {"points": [{
+            "id": HYBRID_FAULT_POINT,
+            "vector": [1.0] + [0.0] * (QDRANT_DIMENSIONS - 1),
+            "payload": {"tenant_id": knowledge, "text": HYBRID_FAULT_SENTINEL, "metadata": None},
+        }]})
+        planted = True
+        files = [{"type": "collection", "id": knowledge}]
+        fault_started = time.time()
+        started = time.monotonic()
+        fault = post_chat(webui, token, chat_model, files)
+        timings["fault_chat_s"] = round(time.monotonic() - started, 3)
+        values["fault"] = {**refusal_record(fault),
+                           "sentinel": HYBRID_FAULT_SENTINEL in fault.body.decode("utf-8", "replace")}
+        values["health_after_fault"] = webui.request("GET", sc.API["rag_health"], token=token).status
+        values["fallback_refusal_logged"] = HYBRID_FALLBACK_REFUSAL in journal_since(fault_started)
+        qdrant.call("POST", f"/collections/{COLLECTIONS[1]}/points/delete?wait=true",
+                    {"points": [HYBRID_FAULT_POINT]})
+        planted = False
+        started = time.monotonic()
+        recovered = post_chat(webui, token, chat_model, files)
+        timings["recovery_chat_s"] = round(time.monotonic() - started, 3)
+        scores = sc.summarize_sources(recovered.sources)["scores"]
+        values["recovery"] = {"status": recovered.status, "sources": len(recovered.sources),
+                              "fact_in_sources": recovered.holds(sc.CANONICAL_FACT),
+                              "finite_scores": finite_scores(scores)}
+        values["health_after_recovery"] = webui.request("GET", sc.API["rag_health"], token=token).status
+        recovery = values["recovery"]
+        if not (refused(values["fault"]) and values["fault"]["sentinel"] is False
+                and values["health_after_fault"] == 200
+                and recovery["status"] == 200 and recovery["sources"] and recovery["fact_in_sources"]
+                and recovery["finite_scores"] and values["health_after_recovery"] == 200):
+            raise sc.ScenarioFailure(json.dumps(values, sort_keys=True))
+    except BaseException:
+        # Clean up on every path, but never let the cleanup hide the failure.
+        _delete_hybrid_fault(webui, qdrant, token, knowledge_id, planted)
+        raise
+    failures, cleanup = _delete_hybrid_fault(webui, qdrant, token, knowledge_id, planted)
+    values["cleanup"] = cleanup
+    if failures:
+        raise sc.ScenarioFailure("; ".join(failures))
+    return values
+
+
 def one_admin(webui: sc.Endpoint, token: str) -> dict[str, Any]:
     config = webui.json("GET", "/api/config", token=token) or {}
     users = webui.json("GET", "/api/v1/users/", token=token) or {}
@@ -2933,6 +3071,11 @@ class Trial:
         kit = self.kit
         return paging_check(kit.caddy(PAGING_TIMEOUTS["request_s"]), kit.qdrant(), self.token, self.chat_id())
 
+    def hybrid_error(self) -> dict[str, Any]:
+        kit = self.kit
+        return hybrid_error_check(kit.uds(), kit.qdrant(), self.token, self.chat_id(), self.seed_file,
+                                  lambda since: journal(UNITS["open-webui"], since=since))
+
     def resources(self) -> dict[str, Any]:
         kit = self.kit
         snapshot_resources(kit, "end of trial")
@@ -3023,6 +3166,9 @@ class Trial:
             # After both drills, so their anchor and timings never carry the
             # paging corpus.
             self.step("open-webui.acceptance.qdrant.paging", self.qdrant_paging)
+            # After both drills too, so their anchors never carry the planted
+            # point.
+            self.step("open-webui.acceptance.failclosed.hybrid-error", self.hybrid_error)
         except Stop:
             pass
         self.step_safely("open-webui.acceptance.resources", self.resources)

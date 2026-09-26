@@ -1478,7 +1478,7 @@ class GateCheckTests(unittest.TestCase):
     def test_each_native_tool_leak_fails_the_closed_check(self):
         handbook = json.dumps({"id": "f1", "content": self.HANDBOOK})
         cases = {
-            # 0005 before 581af74 returns the handbook through view_knowledge_file.
+            # A 0005 without the knowledge-tool fix returns the handbook through view_knowledge_file.
             "the tool returns the handbook": {"tool_output": handbook, "answer": sc.CANONICAL_FACT},
             "another tool error": {"tool_output": json.dumps({"error": "File not found"})},
             "the answer carries handbook text": {"answer": "The brass key, as the handbook says."},
@@ -1512,7 +1512,7 @@ class GateCheckTests(unittest.TestCase):
 
     def test_each_over_gated_explicit_read_fails_the_qualified_check(self):
         cases = {
-            # 0005 before 8033f41 refuses the all-full chat even when qualified.
+            # A 0005 without the all-full fix refuses that chat even when qualified.
             "all-full refused": {"legacy": {"all-full": "refuse"}},
             "mixed refused": {"legacy": {"mixed": "refuse"}},
             "the knowledge tool over-gated": {"tool_output": self.GATE_ERROR},
@@ -1740,6 +1740,222 @@ class QdrantPagingTests(unittest.TestCase):
         self.assertIn("knowledge", str(raised.exception))
 
 
+class HybridErrorTests(unittest.TestCase):
+    """open-webui.acceptance.failclosed.hybrid-error against fake Open WebUI and Qdrant."""
+
+    HANDBOOK_CHUNK = "## 3. Seed cabinet\nThe brass key opens the seed cabinet."
+
+    class Fakes:
+        """Open WebUI 0.11.4 and Qdrant sharing one knowledge tenant.
+
+        ``fault`` is how a chat answers while the null-metadata point is
+        planted: "refuse" (0005's 503), "fallback" (upstream's unreranked
+        200), "latch" (503 and the gate stays closed), "wrong-detail", or
+        "sentinel" (a 503 whose body quotes the planted text).  ``recovery``
+        is how it answers once the point is gone: "answer", "empty",
+        "no-fact", "nan", or "refuse".
+        """
+
+        json = sc.Endpoint.json
+
+        def __init__(self, *, fault="refuse", recovery="answer", hybrid=True, health=200, file_points=4,
+                     knowledge_points=None, delete_status=200, remaining=0, marker=True, plant_status=200,
+                     recount_status=200):
+            self.fault, self.recovery, self.hybrid = fault, recovery, hybrid
+            self.health, self.file_points = health, file_points
+            self.copied = file_points if knowledge_points is None else knowledge_points
+            self.delete_status, self.remaining, self.marker = delete_status, remaining, marker
+            self.plant_status, self.recount_status = plant_status, recount_status
+            self.knowledge_points = 0
+            self.planted = None
+            self.latched = False
+            self.chats, self.qdrant_calls, self.deleted = [], [], []
+
+        # Open WebUI ---------------------------------------------------------
+        def request(self, method, path, *, payload: Any = None, body=None, content_type=None, token=None):
+            def reply(value, status=200, kind="application/json"):
+                return sc.Response(status, kind, value if isinstance(value, bytes) else json.dumps(value).encode())
+
+            detail = kit_module._rag_unavailable_detail()
+            if (method, path) == ("GET", sc.API["rag_config"]):
+                return reply({"ENABLE_RAG_HYBRID_SEARCH": self.hybrid})
+            if (method, path) == ("GET", sc.API["rag_health"]):
+                status = 503 if self.latched else self.health
+                return reply({"status": "qualified"} if status == 200 else {"detail": detail}, status)
+            if (method, path) == ("POST", sc.API["knowledge_create"]):
+                return reply({"id": "k1"})
+            if (method, path) == ("POST", sc.API["knowledge_file_add"].format(id="k1")):
+                self.knowledge_points = self.copied
+                return reply({"id": "k1"})
+            if (method, path) == ("POST", sc.API["chat"]):
+                self.chats.append(payload)
+                return self.chat(reply, detail)
+            if (method, path) == ("DELETE", sc.API["knowledge_delete"].format(id="k1")):
+                self.deleted.append("knowledge k1")
+                if self.delete_status == 200:
+                    self.knowledge_points = self.remaining
+                return reply(self.delete_status == 200, self.delete_status)
+            raise AssertionError(f"unexpected request {method} {path}")
+
+        def chat(self, reply, detail):
+            if self.planted is not None:
+                kind = self.fault
+                if kind == "latch":
+                    self.latched = True
+                if kind in {"refuse", "latch"}:
+                    return reply({"detail": detail}, 503)
+                if kind == "wrong-detail":
+                    return reply({"detail": "Hybrid search failed."}, 503)
+                if kind == "sentinel":
+                    return reply({"detail": detail, "text": kit_module.HYBRID_FAULT_SENTINEL}, 503)
+                documents, scores = [kit_module.HYBRID_FAULT_SENTINEL, HybridErrorTests.HANDBOOK_CHUNK], [0.4, 0.3]
+            elif self.latched or self.recovery == "refuse":
+                return reply({"detail": detail}, 503)
+            else:
+                documents, scores = {
+                    "answer": ([HybridErrorTests.HANDBOOK_CHUNK], [0.93]),
+                    "empty": ([], []),
+                    "no-fact": (["## 1. Beds\nThe beds rest in winter."], [0.2]),
+                    "nan": ([HybridErrorTests.HANDBOOK_CHUNK], [float("nan")]),
+                }[self.recovery]
+            sources = [{"source": {"type": "collection", "id": "k1", "name": sc.HANDBOOK_NAME},
+                        "document": documents, "distances": scores}] if documents else []
+            events = [{"sources": sources}, {"choices": [{"delta": {"content": sc.CANONICAL_FACT}}]}]
+            stream = "".join(f"data: {json.dumps(event)}\n\n" for event in events) + "data: [DONE]\n\n"
+            return reply(stream.encode(), kind="text/event-stream")
+
+        # Qdrant -----------------------------------------------------------------
+        def qdrant(self):
+            qdrant = kit_module.Qdrant(16333, "admin-key")
+
+            def request(method, path, *, payload: Any = None, token=None, **_kw):
+                self.qdrant_calls.append((method, path, payload, token))
+                if path.endswith("/points/count"):
+                    tenant = payload["filter"]["must"][0]["match"]["value"]
+                    if tenant == "k1" and self.deleted and self.recount_status != 200:
+                        return sc.Response(self.recount_status, "application/json", b"{}")
+                    count = self.file_points if tenant == "file-f1" else self.knowledge_points
+                    count += 1 if tenant == "k1" and self.planted is not None else 0
+                    return sc.Response(200, "application/json", json.dumps({"result": {"count": count}}).encode())
+                if method == "PUT" and path.endswith("/points?wait=true"):
+                    if self.plant_status == 200:
+                        self.planted = payload["points"][0]
+                    return sc.Response(self.plant_status, "application/json", b'{"result": {}}')
+                if path.endswith("/points/delete?wait=true"):
+                    self.planted = None
+                    return sc.Response(200, "application/json", b'{"result": {}}')
+                raise AssertionError(f"unexpected Qdrant request {method} {path}")
+
+            qdrant.endpoint = mock.Mock(request=mock.Mock(side_effect=request))
+            return qdrant
+
+    def check(self, fakes):
+        journal = mock.Mock(return_value=(
+            "Hybrid search failed; refusing the unreranked vector-search fallback: 'NoneType' object is not a mapping"
+            if fakes.marker else ""))
+        with mock.patch.object(kit_module, "PAGING_POLL_S", 0), mock.patch.object(kit_module, "HYBRID_SETTLE_S", 0.0):
+            values = kit_module.hybrid_error_check(fakes, fakes.qdrant(), "t", "chat", "f1", journal)
+        return values, journal
+
+    def test_a_hybrid_error_fails_closed_without_latching_and_recovers(self):
+        fakes = self.Fakes()
+        values, journal = self.check(fakes)
+        refusal = {"status": 503, "fixed_detail": True, "sources": 0, "handbook_text": False, "sentinel": False}
+        self.assertEqual(values["fault"], refusal)
+        self.assertEqual((values["health_before"], values["health_after_fault"], values["health_after_recovery"]),
+                         (200, 200, 200))
+        self.assertEqual(values["recovery"], {"status": 200, "sources": 1, "fact_in_sources": True,
+                                              "finite_scores": True})
+        self.assertEqual(values["points"], {"file": 4, "knowledge": 4})
+        self.assertTrue(values["fallback_refusal_logged"])
+        self.assertEqual(values["cleanup"], {"knowledge_delete": 200, "knowledge_points_after_delete": 0})
+        self.assertEqual(set(values["timings"]), {"knowledge_add_s", "fault_chat_s", "recovery_chat_s"})
+        # Both chats are the same knowledge-scoped chat; nothing restarts or re-saves in between.
+        self.assertEqual([chat["files"] for chat in fakes.chats], [[{"type": "collection", "id": "k1"}]] * 2)
+        journal.assert_called_once()
+        self.assertEqual(fakes.deleted, ["knowledge k1"])
+        self.assertIsNone(fakes.planted)
+
+    def test_the_planted_point_carries_a_null_metadata_payload_in_the_knowledge_tenant(self):
+        fakes = self.Fakes()
+        self.check(fakes)
+        plants = [(method, path, payload, token) for method, path, payload, token in fakes.qdrant_calls
+                  if method == "PUT"]
+        self.assertEqual(plants, [(
+            "PUT", "/collections/open-webui-rag-v1_knowledge/points?wait=true",
+            {"points": [{"id": "00000000-0000-4000-8000-00000000fa17",
+                         "vector": [1.0] + [0.0] * (kit_module.QDRANT_DIMENSIONS - 1),
+                         "payload": {"tenant_id": "k1", "text": kit_module.HYBRID_FAULT_SENTINEL,
+                                     "metadata": None}}]},
+            "admin-key",
+        )])
+        deletes = [payload for method, path, payload, _ in fakes.qdrant_calls if path.endswith("/points/delete?wait=true")]
+        self.assertEqual(deletes, [{"points": ["00000000-0000-4000-8000-00000000fa17"]}])
+        self.assertNotIn("brass", kit_module.HYBRID_FAULT_SENTINEL.casefold())
+
+    def test_the_fallback_refusal_log_line_is_recorded_not_gated(self):
+        values, _ = self.check(self.Fakes(marker=False))
+        self.assertFalse(values["fallback_refusal_logged"])
+
+    def test_each_missed_hybrid_error_assertion_fails_and_still_cleans_up(self):
+        cases = {
+            # A 0005 without the hybrid-error fix takes upstream's unreranked fallback.
+            "fallback answered": {"fault": "fallback"},
+            # A hybrid-search error that latches the gate.
+            "the gate latched": {"fault": "latch"},
+            "another detail": {"fault": "wrong-detail"},
+            "the planted text in the refusal": {"fault": "sentinel"},
+            "no recovery sources": {"recovery": "empty"},
+            "the fact not recovered": {"recovery": "no-fact"},
+            "a non-finite recovery score": {"recovery": "nan"},
+            "still refusing after the point is gone": {"recovery": "refuse"},
+            "a partial knowledge copy": {"knowledge_points": 3},
+        }
+        for name, overrides in cases.items():
+            with self.subTest(name):
+                fakes = self.Fakes(**overrides)
+                with self.assertRaises(sc.ScenarioFailure):
+                    self.check(fakes)
+                self.assertEqual(fakes.deleted, ["knowledge k1"])
+                self.assertIsNone(fakes.planted)
+
+    def test_a_fault_that_was_never_injected_shows_in_the_record(self):
+        # A 200 at the fault chat with no refusal log line means the point
+        # never broke hybrid search; the failure carries both facts.
+        with self.assertRaises(sc.ScenarioFailure) as raised:
+            self.check(self.Fakes(fault="fallback", marker=False))
+        recorded = json.loads(str(raised.exception))
+        self.assertEqual((recorded["fault"]["status"], recorded["fallback_refusal_logged"]), (200, False))
+
+    def test_hybrid_search_off_or_a_closed_gate_fails_before_anything_is_created(self):
+        cases: tuple[dict[str, Any], ...] = ({"hybrid": False}, {"health": 503})
+        for overrides in cases:
+            with self.subTest(overrides):
+                fakes = self.Fakes(**overrides)
+                with self.assertRaises(sc.ScenarioFailure):
+                    self.check(fakes)
+                self.assertEqual((fakes.chats, fakes.deleted, fakes.qdrant_calls), ([], [], []))
+
+    def test_a_failed_plant_still_deletes_the_knowledge_base(self):
+        fakes = self.Fakes(plant_status=500)
+        with self.assertRaises(sc.ScenarioFailure):
+            self.check(fakes)
+        self.assertEqual(fakes.chats, [])
+        self.assertEqual(fakes.deleted, ["knowledge k1"])
+
+    def test_a_failed_or_incomplete_knowledge_delete_fails_the_check(self):
+        cases: tuple[tuple[dict[str, Any], str], ...] = (
+            ({"delete_status": 500}, "delete returned 500"),
+            ({"remaining": 2}, "still holds 2 points"),
+            ({"recount_status": 500}, "count failed after its delete (ScenarioFailure)"),
+        )
+        for overrides, message in cases:
+            with self.subTest(message):
+                with self.assertRaises(sc.ScenarioFailure) as raised:
+                    self.check(self.Fakes(**overrides))
+                self.assertIn(message, str(raised.exception))
+
+
 class FirstStartTests(unittest.TestCase):
     def test_the_alembic_tmp_table_warning_is_not_a_migration_error(self):
         warning = (
@@ -1854,12 +2070,13 @@ class ResourceTests(unittest.TestCase):
 class EvidenceTests(unittest.TestCase):
     def test_trial_map_is_one_pass_with_the_frozen_resmoke_ids_in_order(self):
         steps = kit_module.TRIAL_STEPS
-        self.assertEqual(len(steps), 23)
-        self.assertEqual(len(set(steps)), 23)
-        # The paging corpus runs after both drills, so their anchor and
-        # timings never carry its points.
-        self.assertEqual(steps[steps.index("open-webui.acceptance.drill.rollback") + 1],
-                         "open-webui.acceptance.qdrant.paging")
+        self.assertEqual(len(steps), 24)
+        self.assertEqual(len(set(steps)), 24)
+        # The paging corpus and the planted hybrid-search fault run after both
+        # drills, so their anchor and timings never carry those points.
+        rollback = steps.index("open-webui.acceptance.drill.rollback")
+        self.assertEqual(steps[rollback + 1:rollback + 3],
+                         ("open-webui.acceptance.qdrant.paging", "open-webui.acceptance.failclosed.hybrid-error"))
         # Both closed-gate checks run while reranker-down's latch holds, before
         # recovery requalifies the gate; the explicit reads follow it.
         self.assertEqual(
@@ -2100,7 +2317,7 @@ class EvidenceTests(unittest.TestCase):
 
             for name in ("identity", "unit_properties", "first_start", "commission", "restart", "g4", "no_stored_secret",
                          "reranker_down", "full_context", "native_tools", "recovery", "explicit_reads", "privacy",
-                         "rollback_drill", "qdrant_paging", "resources"):
+                         "rollback_drill", "qdrant_paging", "hybrid_error", "resources"):
                 setattr(trial, name, ok(name))
             trial.restore_drill = over_ceiling
             trial.prepare_scenarios = lambda: None
@@ -2114,7 +2331,7 @@ class EvidenceTests(unittest.TestCase):
                     mock.patch.object(sc, "lemond_snapshot", return_value=({}, {})), \
                     contextlib.redirect_stdout(io.StringIO()):
                 trial.run()
-            self.assertEqual(ran[-3:], ["rollback_drill", "qdrant_paging", "resources"])
+            self.assertEqual(ran[-4:], ["rollback_drill", "qdrant_paging", "hybrid_error", "resources"])
             # The run records exactly the scenario map, in order, plus the
             # setup step; finish records the evidence step.
             expected = list(kit_module.TRIAL_STEPS[:-1])

@@ -301,6 +301,7 @@ only.
 | `open-webui.acceptance.drill.restore` (A-D1, A-D3) | One restore, clock from epoch reservation to ready plus the cited fact. | ceiling 40 s |
 | `open-webui.acceptance.drill.rollback` (A-D2, A-D3) | Archives match the anchor manifest; state restore timed; total window recorded; never `:8080`: the host's own `open-webui.service` state is unchanged across the drill and no acceptance process listens on `:8080`. | ceiling 40 s state; window recorded |
 | `open-webui.acceptance.qdrant.paging` | The generated paging corpus indexes with packaged hybrid search on: its file tenant and a knowledge base built from it each hold exactly 1,100 points, a knowledge-scoped chat returns non-empty sources that include the sentence planted in section 1,050, and a BM25-only query finds the knowledge tenant's first point past one scroll page. The step detail records both measured point counts. The knowledge base and file are deleted afterwards, and a failed delete fails the step; an upload whose processing fails or times out is deleted before the step fails. See [Qdrant paging](#qdrant-paging). | counts exact; timings recorded |
+| `open-webui.acceptance.failclosed.hybrid-error` | The reranker is healthy and health is 200. A knowledge base built from the indexed handbook gets one planted Qdrant point whose metadata payload is null. A knowledge-scoped chat returns 503 with the fixed detail and no sources, because hybrid search fails for the only collection and 0005 refuses the unreranked vector fallback. Health stays 200 (no latch). After the point is deleted, the same chat returns 200 with the canonical fact in non-empty sources that carry finite scores, with no restart or re-save. The knowledge base is deleted afterwards; a failed delete fails the step. See [Gate checks](#gate-checks). | exact |
 | `open-webui.acceptance.resources` (A-RES1..3) | `memory.events` `oom_kill` 0 for every unit and for the kit slice, whose count is hierarchical and so still covers a unit whose cgroup is gone; an active unit whose count cannot be read fails the gate as unobserved; and `NRestarts` 0 in every snapshot for every unit (systemd resets it on each planned start, and a snapshot precedes each one); peak memory, CPU, Qdrant sizes, snapshot and backup sizes, and the cache inventory recorded. | gates: no OOM, no unplanned restart |
 | `open-webui.acceptance.evidence` (A-E1, A-E3) | Public-safe evidence with `trial_set_count=1`, the restore and rollback drills counted from the steps that actually ran (a critical failure that stops the trial first records 0 and fails this step), and no generation fields. | pass/fail |
 
@@ -355,7 +356,8 @@ bases, or anything attached to a model or a folder as knowledge, is gated
 while the gate is closed. Once the gate qualifies, explicitly requested
 content is allowed whole and search results are reranked. Unattached notes,
 chats, memories, and user-provided attachments are personal data outside the
-gate. Three steps pin the explicit-read paths:
+gate. Three steps pin the explicit-read paths, and a fourth pins how a
+hybrid-search error fails:
 
 - `open-webui.acceptance.failclosed.full-context` and
   `open-webui.acceptance.failclosed.native-tools` run between reranker-down
@@ -405,10 +407,36 @@ gate. Three steps pin the explicit-read paths:
   of the knowledge tools or of explicit full-context reads, fails here.
 - Both native-tools chats are deleted on every path, and a failed delete
   fails the step.
+- `open-webui.acceptance.failclosed.hybrid-error` runs after
+  `open-webui.acceptance.qdrant.paging`, so neither drill's anchor carries
+  its planted point. It requires packaged hybrid search and health 200,
+  creates the knowledge base `household-hybrid-fault`, adds the seed handbook
+  to it, and waits until the knowledge tenant holds as many points as the
+  file tenant. With the kit's Qdrant admin key it then plants point
+  `00000000-0000-4000-8000-00000000fa17` in `open-webui-rag-v1_knowledge`:
+  a unit vector and the payload `tenant_id` (the knowledge base), a sentinel
+  `text`, and `metadata` null. Open WebUI 0.11.4's legacy BM25 merges each
+  point's metadata into a new mapping (`retrieval/utils.py`), so the null
+  payload makes hybrid search raise for the knowledge base's only
+  collection; the trigger depends on that code and must be re-derived on a
+  later upstream. A knowledge-scoped chat with the cited-answer prompt must
+  return 503 with the fixed detail and no sources, and neither the sentinel
+  nor handbook text may appear in the body. Health must still be 200. The
+  step records, without gating on it, whether the Open WebUI journal since
+  that chat holds 0005's `refusing the unreranked vector-search fallback`
+  line; a 200 at that chat with no such line means the fault never took.
+  The step then deletes the point and repeats the chat, which must return
+  200 with the canonical fact in non-empty sources whose scores are all
+  finite, with health 200 and no restart or re-save in between. On every
+  path it deletes the point if it is still planted, then the knowledge base,
+  and it fails unless the delete returns 200 and the knowledge tenant then
+  counts 0 points. It records the statuses, the counts, and the timings. A
+  0005 that takes upstream's unreranked fallback returns 200 at the fault
+  chat, and a gate that latches on the error fails the health check.
 
-The drafts' optional knowledge-note sub-check (a workspace model whose
-knowledge is a note, read through `view_note`) is not in the kit, because
-the kit creates no workspace model. Nothing in the trial exercises 0005's
+An optional knowledge-note sub-check (a workspace model whose knowledge is a
+note, read through `view_note`) is not in the kit, because the kit creates
+no workspace model. Nothing in the trial exercises 0005's
 refusal of a knowledge-attached note.
 
 #### Acceptance-ticket checkboxes
@@ -426,6 +454,9 @@ that the gate checks prove:
 - Once the gate is requalified, the same all-full-context and mixed chats and
   the knowledge-tool read return the handbook text.
   (`open-webui.acceptance.gate.explicit-reads`)
+- With the reranker healthy, a hybrid-search error returns 503 with the fixed
+  detail and no sources, health stays 200, and the next request recovers
+  without a restart. (`open-webui.acceptance.failclosed.hybrid-error`)
 
 ### Qdrant paging
 
@@ -645,6 +676,11 @@ fail; do not settle them by assumption:
   (`NATIVE_TOOL_CHOICE` is unset), and the evidence records that. Set it to
   "required" only if the rehearsal shows that Lemonade honors it for the
   pinned chat model.
+- **The hybrid-search fault takes.** The hybrid-error step's fault chat
+  returns 503, and the Open WebUI journal holds 0005's
+  `refusing the unreranked vector-search fallback` line. The step records
+  that line without gating on it; a 200 with no such line means the planted
+  point never broke hybrid search on the candidate.
 
 ## Evidence handling
 
