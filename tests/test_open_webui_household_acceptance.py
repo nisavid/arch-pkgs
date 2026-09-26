@@ -1289,6 +1289,40 @@ class HandbookTests(unittest.TestCase):
         # The error is read before the file goes.
         self.assertEqual(requested[-2:], [("GET", sc.API["file"].format(id="f1")),
                                           ("DELETE", sc.API["file"].format(id="f1"))])
+        self.assertTrue(str(raised.exception).endswith("; cleanup: file f1 DELETE returned 200"))
+
+    def test_a_failed_cleanup_delete_is_reported_after_the_processing_error(self):
+        # The caller never gets the id, so the failure itself must name the
+        # file and say whether the cleanup DELETE removed it.
+        for outcome, reported in ((500, "500"), (ConnectionRefusedError(), "ConnectionRefusedError")):
+            def request(method, path, _outcome=outcome, **_kw):
+                if method == "DELETE":
+                    if isinstance(_outcome, BaseException):
+                        raise _outcome
+                    return sc.Response(_outcome, "application/json", b"{}")
+                body = {"id": "f1"} if method == "POST" else {"status": "failed"}
+                if path == sc.API["file"].format(id="f1"):
+                    body = {"id": "f1", "data": {"status": "failed", "error": "embedding failed"}}
+                return sc.Response(200, "application/json", json.dumps(body).encode())
+
+            with self.subTest(reported), self.assertRaises(sc.ScenarioFailure) as raised:
+                kit_module.upload_handbook(mock.Mock(request=mock.Mock(side_effect=request)), "t")
+            self.assertEqual(str(raised.exception),
+                             f"handbook processing failed: embedding failed; cleanup: file f1 DELETE returned {reported}")
+            self.assertIsInstance(raised.exception.__cause__, sc.ScenarioFailure)
+
+    def test_a_transport_error_while_waiting_keeps_its_type_in_the_record(self):
+        def request(method, path, **_kw):
+            if method == "POST":
+                return sc.Response(200, "application/json", b'{"id": "f1"}')
+            if method == "GET":
+                raise TimeoutError("socket read timed out")
+            return sc.Response(200, "application/json", b"{}")
+
+        with self.assertRaises(sc.ScenarioFailure) as raised:
+            kit_module.upload_handbook(mock.Mock(request=mock.Mock(side_effect=request)), "t")
+        self.assertEqual(str(raised.exception),
+                         "TimeoutError: socket read timed out; cleanup: file f1 DELETE returned 200")
 
 
 class GateCheckTests(unittest.TestCase):
@@ -1782,7 +1816,7 @@ class QdrantPagingTests(unittest.TestCase):
                         mock.patch.object(kit_module.time, "sleep"), \
                         self.assertRaises(sc.ScenarioFailure) as raised:
                     self.check(webui)
-                self.assertEqual(str(raised.exception), message)
+                self.assertEqual(str(raised.exception), f"{message}; cleanup: file f1 DELETE returned 200")
                 self.assertEqual(webui.deleted, ["file f1"])
 
     def test_hybrid_search_off_fails_before_anything_is_uploaded(self):
