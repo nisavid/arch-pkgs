@@ -4,7 +4,7 @@
 # The package installs open-webui-rag-gate.py as open_webui/retrieval/rag_gate.py before build.
 # App startup remains available for ordinary chat when qualification fails; authenticated /api/v1/retrieval/health stays 503.
 # Gate closed: a chat with any attachment returns the 503 detail, and the builtin query_*_files, grep_*_files, view_file, and view_knowledge_file tools return it as a tool error.
-# Gate qualified: explicitly requested whole documents are allowed without reranking: text, note, chat, and url attachments, full-context items beside searched ones, and those tools. A chat whose attachments are all full-context, and the global full-context and bypass modes, stay refused.
+# Gate qualified: explicitly requested content is allowed whole, including full-context items and text, note, chat, and url attachments; search results are reranked. The global full-context and bypass modes stay refused.
 # Hybrid-search errors: when hybrid search raises anything but RAGUnavailableError, the request fails with the gate's 503 instead of upstream's unreranked vector-search fallback, and the gate stays qualified.
 # Empty candidates: RerankCompressor keeps 0.11.4's early return of [] without calling the reranker. Nothing unreranked reaches chat, and closing the gate on an empty knowledge base would only cause an outage.
 # tests/test_open_webui_household_rag_gate.py pins each of these.
@@ -113,7 +113,7 @@ index a66a2c5..82b99e2 100644
 +            close_required_reranker()
 +            raise
 diff --git a/backend/open_webui/retrieval/utils.py b/backend/open_webui/retrieval/utils.py
-index 055f750..a2bed15 100644
+index 055f750..2630388 100644
 --- a/backend/open_webui/retrieval/utils.py
 +++ b/backend/open_webui/retrieval/utils.py
 @@ -46,6 +46,12 @@ from open_webui.models.notes import Notes
@@ -194,7 +194,7 @@ index 055f750..a2bed15 100644
          except Exception as e:
              return None, e, collection_name
  
-@@ -1381,9 +1403,19 @@ async def get_sources_from_items(
+@@ -1381,9 +1403,20 @@ async def get_sources_from_items(
      full_context=False,
      user: UserModel | None = None,
  ):
@@ -207,16 +207,17 @@ index 055f750..a2bed15 100644
 +        len(queries),
 +        full_context,
 +    )
++    # Explicit full-context items pass once qualified; the global mode does not.
 +    require_safe_retrieval_mode(
 +        reranking_function,
-+        full_context=full_context is True,
++        full_context=(await Config.get('rag.full_context')) is True,
 +        hybrid_search=hybrid_search is True,
 +        bypass_embedding_and_retrieval=bypass_embedding_and_retrieval is True,
 +    )
      extracted_collections = []
      query_results = []
      folder_items = set()
-@@ -1689,6 +1721,8 @@ async def get_sources_from_items(
+@@ -1689,6 +1722,8 @@ async def get_sources_from_items(
                          embedding_function=embedding_function,
                          k=k,
                      )
@@ -225,7 +226,7 @@ index 055f750..a2bed15 100644
              except Exception as e:
                  log.exception(e)
  
-@@ -1818,34 +1852,34 @@ class RerankCompressor(BaseDocumentCompressor):
+@@ -1818,34 +1853,34 @@ class RerankCompressor(BaseDocumentCompressor):
  
          scores = None
          if reranking:
@@ -285,7 +286,7 @@ index 055f750..a2bed15 100644
 +            final_results.append(doc)
 +        return final_results
 diff --git a/backend/open_webui/utils/middleware.py b/backend/open_webui/utils/middleware.py
-index 8234604..e1afe5f 100644
+index 8234604..fa44535 100644
 --- a/backend/open_webui/utils/middleware.py
 +++ b/backend/open_webui/utils/middleware.py
 @@ -54,6 +54,10 @@ from open_webui.models.notes import Notes
@@ -321,7 +322,7 @@ index 8234604..e1afe5f 100644
 +        require_file_rag_ready(
 +            files,
 +            reranking_function,
-+            full_context=(all_full_context or rag_config.get('rag.full_context')) is True,
++            full_context=rag_config.get('rag.full_context') is True,
 +            hybrid_search=rag_config.get('rag.enable_hybrid_search') is True,
 +            bypass_embedding_and_retrieval=(rag_config.get('rag.bypass_embedding_and_retrieval') is True),
 +        )

@@ -1174,6 +1174,167 @@ class OpenWebUIHouseholdRAGGateTests(unittest.TestCase):
                 )
                 self.assertIn(expected, call(name))
 
+    def test_all_full_context_chat_passes_when_qualified_but_not_in_global_modes(
+        self,
+    ):
+        # Every attachment set to full context is an explicit whole-document
+        # request: refused while closed, allowed once qualified. The global
+        # full-context and bypass modes stay refused even when qualified.
+        class FixtureConfig:
+            values: ClassVar[dict] = {}
+
+            @classmethod
+            async def get_many(cls, *keys):
+                return {key: cls.values.get(key) for key in keys}
+
+        generate_queries = mock.AsyncMock()
+        source_lookup = mock.AsyncMock(return_value=[])
+        namespace = {
+            "Config": FixtureConfig,
+            "RAGUnavailableError": self.gate.RAGUnavailableError,
+            "Request": object,
+            "UserModel": object,
+            "generate_queries": generate_queries,
+            "get_last_user_message": lambda messages: messages[-1]["content"],
+            "get_sources_from_items": source_lookup,
+            "log": mock.Mock(),
+            "require_file_rag_ready": self.gate.require_file_rag_ready,
+        }
+        self.exec_patched_definitions(
+            "backend/open_webui/utils/middleware.py",
+            {"chat_completion_files_handler"},
+            namespace,
+        )
+        request = SimpleNamespace(
+            app=SimpleNamespace(
+                state=SimpleNamespace(RERANKING_FUNCTION=lambda *_args, **_kwargs: [])
+            )
+        )
+        full = [
+            {"type": "file", "id": "first-file", "context": "full"},
+            {"type": "file", "id": "second-file", "context": "full"},
+        ]
+        packaged = {
+            "rag.enable_hybrid_search": True,
+            "rag.full_context": False,
+            "rag.bypass_embedding_and_retrieval": False,
+        }
+
+        def chat(**config):
+            FixtureConfig.values = {**packaged, **config}
+            return asyncio.run(
+                namespace["chat_completion_files_handler"](
+                    request,
+                    {
+                        "metadata": {"files": full},
+                        "messages": [{"role": "user", "content": "private query"}],
+                        "model": "chat",
+                    },
+                    {"__event_emitter__": mock.AsyncMock()},
+                    object(),
+                )
+            )
+
+        self.gate.configure_required_reranker(True)
+        with self.assertRaises(self.gate.RAGUnavailableError):
+            chat()
+        source_lookup.assert_not_awaited()
+
+        self.gate.qualify_required_reranker([0.91, 0.08])
+        chat()
+        lookup = source_lookup.await_args_list[0].kwargs
+        self.assertEqual(lookup["items"], full)
+        self.assertIs(lookup["full_context"], True)
+        generate_queries.assert_not_awaited()
+
+        for mode in (
+            {"rag.full_context": True},
+            {"rag.bypass_embedding_and_retrieval": True},
+        ):
+            with (
+                self.subTest(mode=mode),
+                self.assertRaises(self.gate.RAGUnavailableError),
+            ):
+                chat(**mode)
+        source_lookup.assert_awaited_once()
+
+    def test_all_full_context_sources_return_whole_documents_only_when_qualified(
+        self,
+    ):
+        # get_sources_from_items refuses only the global modes, which it reads
+        # from Config, not its full_context argument.
+        class FixtureConfig:
+            values: ClassVar[dict] = {}
+
+            @classmethod
+            async def get(cls, key):
+                return cls.values.get(key)
+
+        namespace = {
+            "Config": FixtureConfig,
+            "RAGUnavailableError": self.gate.RAGUnavailableError,
+            "UserModel": object,
+            "log": mock.Mock(),
+            "require_safe_retrieval_mode": self.gate.require_safe_retrieval_mode,
+        }
+        self.exec_patched_definitions(
+            "backend/open_webui/retrieval/utils.py",
+            {"get_sources_from_items"},
+            namespace,
+        )
+        whole = ["first whole document", "second whole document"]
+        items = [
+            {
+                "type": "file",
+                "id": f"file-{index}",
+                "name": f"file-{index}.md",
+                "context": "full",
+                "file": {"data": {"content": text}},
+            }
+            for index, text in enumerate(whole)
+        ]
+
+        def sources(**config):
+            FixtureConfig.values = {
+                "rag.full_context": False,
+                "rag.bypass_embedding_and_retrieval": False,
+                **config,
+            }
+            return asyncio.run(
+                namespace["get_sources_from_items"](
+                    None,
+                    [dict(item) for item in items],
+                    ["private query"],
+                    mock.AsyncMock(),
+                    3,
+                    lambda *_args, **_kwargs: [],
+                    3,
+                    0.0,
+                    0.5,
+                    True,
+                    full_context=True,
+                    user=SimpleNamespace(id="fixture-user", role="user"),
+                )
+            )
+
+        self.gate.configure_required_reranker(True)
+        with self.assertRaises(self.gate.RAGUnavailableError):
+            sources()
+
+        self.gate.qualify_required_reranker([0.91, 0.08])
+        self.assertEqual(
+            [source["document"] for source in sources()], [[text] for text in whole]
+        )
+        for mode in (
+            {"rag.full_context": True},
+            {"rag.bypass_embedding_and_retrieval": True},
+        ):
+            with (
+                self.subTest(mode=mode),
+                self.assertRaises(self.gate.RAGUnavailableError),
+            ):
+                sources(**mode)
+
     def test_patch_applies_to_retained_exact_open_webui_source_and_compiles(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             source_root = Path(temp_dir)
