@@ -3,8 +3,9 @@
 # Open WebUI 0.11.4 sdist SHA-256: 1f1a31668a0dee733953c29d6183d78dd78984e696aa8eb0f2083f5796497be0
 # The package installs open-webui-rag-gate.py as open_webui/retrieval/rag_gate.py before build.
 # App startup remains available for ordinary chat when qualification fails; authenticated /api/v1/retrieval/health stays 503.
+# Hybrid-search errors: when hybrid search raises anything but RAGUnavailableError, the request fails with the gate's 503 instead of upstream's unreranked vector-search fallback, and the gate stays qualified.
 # Empty candidates: RerankCompressor keeps 0.11.4's early return of [] without calling the reranker. Nothing unreranked reaches chat, and closing the gate on an empty knowledge base would only cause an outage.
-# tests/test_open_webui_household_rag_gate.py pins it.
+# tests/test_open_webui_household_rag_gate.py pins both.
 diff --git a/backend/open_webui/retrieval/models/external.py b/backend/open_webui/retrieval/models/external.py
 index a66a2c5..82b99e2 100644
 --- a/backend/open_webui/retrieval/models/external.py
@@ -110,7 +111,7 @@ index a66a2c5..82b99e2 100644
 +            close_required_reranker()
 +            raise
 diff --git a/backend/open_webui/retrieval/utils.py b/backend/open_webui/retrieval/utils.py
-index 055f750..a9833ad 100644
+index 055f750..a2bed15 100644
 --- a/backend/open_webui/retrieval/utils.py
 +++ b/backend/open_webui/retrieval/utils.py
 @@ -46,6 +46,12 @@ from open_webui.models.notes import Notes
@@ -168,16 +169,21 @@ index 055f750..a9833ad 100644
              return await query_collection_with_hybrid_search(
                  collection_names=collection_names,
                  queries=queries,
-@@ -729,6 +745,8 @@ async def query_collection(
+@@ -729,8 +745,12 @@ async def query_collection(
                  hybrid_bm25_weight=config.get('rag.hybrid_bm25_weight'),
                  enable_enriched_texts=config.get('rag.enable_hybrid_search_enriched_texts'),
              )
 +        except RAGUnavailableError:
 +            raise
          except Exception as e:
-             log.debug('Hybrid search failed, falling back to vector search: %s', e)
+-            log.debug('Hybrid search failed, falling back to vector search: %s', e)
++            # The vector-search fallback below never reranks; fail closed instead.
++            log.error('Hybrid search failed; refusing the unreranked vector-search fallback: %s', e)
++            raise RAGUnavailableError() from e
  
-@@ -860,6 +878,8 @@ async def query_collection_with_hybrid_search(
+     results = []
+     last_error = None
+@@ -860,6 +880,8 @@ async def query_collection_with_hybrid_search(
                  native_hybrid_search=False,
              )
              return result, None, collection_name
@@ -186,7 +192,7 @@ index 055f750..a9833ad 100644
          except Exception as e:
              return None, e, collection_name
  
-@@ -1381,9 +1401,19 @@ async def get_sources_from_items(
+@@ -1381,9 +1403,19 @@ async def get_sources_from_items(
      full_context=False,
      user: UserModel | None = None,
  ):
@@ -208,7 +214,7 @@ index 055f750..a9833ad 100644
      extracted_collections = []
      query_results = []
      folder_items = set()
-@@ -1689,6 +1719,8 @@ async def get_sources_from_items(
+@@ -1689,6 +1721,8 @@ async def get_sources_from_items(
                          embedding_function=embedding_function,
                          k=k,
                      )
@@ -217,7 +223,7 @@ index 055f750..a9833ad 100644
              except Exception as e:
                  log.exception(e)
  
-@@ -1818,34 +1850,34 @@ class RerankCompressor(BaseDocumentCompressor):
+@@ -1818,34 +1852,34 @@ class RerankCompressor(BaseDocumentCompressor):
  
          scores = None
          if reranking:
