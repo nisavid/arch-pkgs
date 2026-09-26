@@ -39,13 +39,17 @@ remains in
   query/document prefixes come from the
   [household profile](#household-profile), not the packaged defaults.
 - The packaged defaults disable both the Ollama and the OpenAI-compatible
-  APIs, so an instance without a profile has no model peer, not even the
+  APIs, so a fresh instance without a profile has no model peer, not even the
   default Ollama or `api.openai.com` one. Open WebUI copies these values, and
   the other persistent settings such as `RAG_RERANKING_MODEL`, into its
   database the first time an instance starts. After that, the stored values
-  win over both environment files, so a later edit to either file or a
-  package update does not change an existing instance. Change them in the
-  admin UI, or start from a fresh data directory.
+  win over both environment files, so a later edit to a persistent setting in
+  either file, or a package update, does not change it on an existing
+  instance; change those in the admin UI, or start from a fresh data
+  directory. The zembed query and document prefixes are not persistent:
+  Open WebUI reads them from the environment at every start, so keep the
+  profile in place for the life of the instance, including across upgrades
+  and restores, and do not change the prefixes once documents are embedded.
 - Open WebUI stores no secret for its model connections. The package keeps the
   embedding and reranking API-key settings out of persistent configuration and
   out of the document settings form.
@@ -610,8 +614,7 @@ python python-offline-closure.py archive \
 The 0.11.4 archives were regenerated this way twice, in independent output
 directories with separate download caches, and both runs matched byte for
 byte. The recipe fetches them from its `open-webui-0.11.4-offline-closures-v1`
-build-input release. Until that release is published, `makepkg --verifysource`
-needs local copies of the exact archive bytes in the package directory.
+build-input release.
 
 For 0.11.0, these inputs removed the dependency-network blocker. The
 subsequent no-egress 0.11.0 pkgrel-3 build and payload-inspection gate passed

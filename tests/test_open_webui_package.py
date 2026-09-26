@@ -727,8 +727,16 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
             self.assertNotIn("uses no credential", read(path), path.name)
         self.assertIn(
             "Open WebUI stores no secret for its model connections.",
-            read(OPEN_WEBUI / "household.env.example"),
+            read(OPEN_WEBUI / "README.md"),
         )
+        # The example's key line is generic: it states no provider's key needs.
+        example = read(OPEN_WEBUI / "household.env.example")
+        self.assertIn(
+            "# OPENAI_API_KEYS: set to the provider's API key if it requires one;"
+            " otherwise\n# leave empty.\nOPENAI_API_KEYS=\n",
+            example,
+        )
+        self.assertNotIn("stores no secret", example)
 
     def test_embedding_prefixes_are_the_zembed_wrapper_heads(self):
         packaged = environment_assignments(read(OPEN_WEBUI / "open-webui.env"))
