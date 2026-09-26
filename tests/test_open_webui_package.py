@@ -5,6 +5,7 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import socketserver
 import subprocess
 import tempfile
@@ -132,6 +133,22 @@ PACKAGED_DEFAULT_KEYS = frozenset(
 )
 HOUSEHOLD_PROFILE = "/etc/open-webui/household.env"
 HOUSEHOLD_EXAMPLE = "/usr/share/open-webui/household.env.example"
+HOUSEHOLD_PROFILE_GUARD = (
+    "ExecStartPre=/bin/sh -c '"
+    f"if [ -e {HOUSEHOLD_PROFILE} ] || [ -L {HOUSEHOLD_PROFILE} ]; then "
+    f"[ -f {HOUSEHOLD_PROFILE} ] && [ -r {HOUSEHOLD_PROFILE} ] || "
+    f'{{ echo "open-webui: {HOUSEHOLD_PROFILE} exists but is not a file this '
+    'service can read" >&2; exit 1; }; fi\''
+)
+
+
+def household_profile_guard(service: str) -> list[str]:
+    """The guard's argv, as systemd splits its unit-file quoting."""
+
+    line = next(
+        line for line in service.splitlines() if line.startswith("ExecStartPre=/bin/sh ")
+    )
+    return shlex.split(line.removeprefix("ExecStartPre="))
 
 
 class OpenWebUIPackageContractTests(unittest.TestCase):
@@ -628,6 +645,77 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
         self.assertNotIn("etc/open-webui/household.env", recipe)
         self.assertNotIn("etc/open-webui/household.env", source_info)
 
+    def test_service_refuses_a_household_profile_it_cannot_read(self):
+        service = read(OPEN_WEBUI / "open-webui.service")
+
+        # The guard runs first and as the service user (no "+" prefix), before
+        # the privileged runtime-directory steps.
+        self.assertEqual(
+            re.findall(r"(?m)^ExecStartPre=.*$", service),
+            [
+                HOUSEHOLD_PROFILE_GUARD,
+                "ExecStartPre=+/usr/bin/chgrp open-webui-proxy /run/open-webui",
+                "ExecStartPre=+/usr/bin/chmod 2750 /run/open-webui",
+            ],
+        )
+        # systemd would expand "$" and "%" in an Exec line.
+        self.assertNotIn("$", HOUSEHOLD_PROFILE_GUARD)
+        self.assertNotIn("%", HOUSEHOLD_PROFILE_GUARD)
+
+    def test_household_profile_guard_passes_only_a_missing_or_readable_file(self):
+        argv = household_profile_guard(read(OPEN_WEBUI / "open-webui.service"))
+        self.assertEqual(argv[:2], ["/bin/sh", "-c"])
+        self.assertEqual(len(argv), 3)
+
+        with tempfile.TemporaryDirectory() as directory:
+            profile = Path(directory) / "household.env"
+            script = argv[2].replace(HOUSEHOLD_PROFILE, str(profile))
+            self.assertNotIn(HOUSEHOLD_PROFILE, script)
+
+            def guard() -> subprocess.CompletedProcess[str]:
+                return subprocess.run(
+                    [argv[0], argv[1], script],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+
+            def refused(case: str) -> None:
+                result = guard()
+                self.assertEqual(result.returncode, 1, case)
+                self.assertEqual(
+                    result.stderr,
+                    f"open-webui: {profile} exists but is not a file this service can read\n",
+                    case,
+                )
+
+            with self.subTest("missing"):
+                result = guard()
+                self.assertEqual((result.returncode, result.stderr), (0, ""))
+
+            profile.write_text("ENABLE_OPENAI_API=true\n", encoding="utf-8")
+            profile.chmod(0o640)
+            with self.subTest("readable"):
+                result = guard()
+                self.assertEqual((result.returncode, result.stderr), (0, ""))
+
+            profile.chmod(0o000)
+            with self.subTest("unreadable"):
+                if os.geteuid() == 0:
+                    self.skipTest("root can read a mode-0000 file")
+                refused("unreadable")
+            profile.chmod(0o600)
+            profile.unlink()
+
+            profile.mkdir()
+            with self.subTest("directory"):
+                refused("directory")
+            profile.rmdir()
+
+            profile.symlink_to(Path(directory) / "missing")
+            with self.subTest("dangling symlink"):
+                refused("dangling symlink")
+
     def test_public_text_keeps_no_connection_credential_wording(self):
         for path in (
             OPEN_WEBUI / "README.md",
@@ -701,7 +789,7 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
         self.assertIn("## Household Profile", notes)
         self.assertIn(
             "sudo test ! -e /etc/open-webui/household.env &&\n"
-            "  sudo install -m 0600 /usr/share/open-webui/household.env.example"
+            "  sudo install -m 0640 -g open-webui /usr/share/open-webui/household.env.example"
             " /etc/open-webui/household.env\n"
             "sudoedit /etc/open-webui/household.env\n",
             notes,

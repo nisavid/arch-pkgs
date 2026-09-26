@@ -97,21 +97,26 @@ connection and keep document RAG closed (the retrieval health probe returns
 packaged file, so its values win. The package never ships or overwrites that
 file. `/usr/share/open-webui/household.env.example` documents each key, with
 placeholders for the host-specific values: `<lemond>` stands for the model
-server's origin.
+server's origin. The example lives there rather than under
+`/usr/share/doc/open-webui/` because the cutover copies it, and pacman
+`NoExtract` rules often drop `/usr/share/doc`.
 
 Create the live profile once, before the first start, because the first start
 copies the persistent settings into the database. The first command copies the
-example only if no profile exists yet:
+example only if no profile exists yet, readable by root and the `open-webui`
+group:
 
 ```sh
 sudo test ! -e /etc/open-webui/household.env &&
-  sudo install -m 0600 /usr/share/open-webui/household.env.example /etc/open-webui/household.env
+  sudo install -m 0640 -g open-webui /usr/share/open-webui/household.env.example /etc/open-webui/household.env
 sudoedit /etc/open-webui/household.env
 ```
 
 Replace every `<...>` placeholder. The unit reads the profile with a `-`
-prefix, so it starts without one, and it also silently ignores a profile it
-cannot read or parse. Check both before the first start:
+prefix, so it starts without one. Its first `ExecStartPre=` step runs as the
+`open-webui` user and fails the start, with a journal message, when the
+profile exists but is not a file that user can read. systemd still silently
+ignores a profile it cannot parse. Check both before the first start:
 
 ```sh
 sudo grep -nE '^[^#]*<[a-z]+>' /etc/open-webui/household.env

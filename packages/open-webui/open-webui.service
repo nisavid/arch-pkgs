@@ -25,6 +25,9 @@ LoadCredentialEncrypted=oauth-session-token-encryption-key:/etc/credstore.encryp
 LoadCredentialEncrypted=valkey-url:/etc/credstore.encrypted/open-webui.valkey-url
 LoadCredentialEncrypted=qdrant-runtime-api-key:/etc/credstore.encrypted/open-webui.qdrant-runtime-api-key
 LoadCredential=session-epoch:/var/lib/open-webui-session-epoch/current
+# The "-" above also hides a profile that exists but cannot be read, so fail
+# the start instead. This runs as the service user before anything else.
+ExecStartPre=/bin/sh -c 'if [ -e /etc/open-webui/household.env ] || [ -L /etc/open-webui/household.env ]; then [ -f /etc/open-webui/household.env ] && [ -r /etc/open-webui/household.env ] || { echo "open-webui: /etc/open-webui/household.env exists but is not a file this service can read" >&2; exit 1; }; fi'
 ExecStartPre=+/usr/bin/chgrp open-webui-proxy /run/open-webui
 ExecStartPre=+/usr/bin/chmod 2750 /run/open-webui
 ExecStart=/usr/bin/open-webui serve --uds /run/open-webui/open-webui.sock
