@@ -57,9 +57,9 @@ remains in
 - While the gate is closed, a chat with any attachment returns that 503, and
   the builtin `query_*_files`, `grep_*_files`, `view_file`, and
   `view_knowledge_file` tools return its message as a tool error. Once it is
-  qualified, explicitly requested whole documents pass without reranking: text,
-  note, chat, and URL attachments, full-context files beside searched ones, and
-  those tools. A chat whose attachments are all full-context stays refused.
+  qualified, explicitly requested content, including full-context attachments
+  and whole text, note, chat, and URL attachments, is allowed whole, and search
+  results are reranked.
 - When hybrid search fails for every collection with any other error, such as
   a failed embedding or Qdrant search, the request fails with the same 503
   instead of falling back to a vector search that skips the reranker. The gate
