@@ -224,6 +224,8 @@ API = MappingProxyType(
         "knowledge_file_add": "/api/v1/knowledge/{id}/file/add",
         "knowledge_delete": "/api/v1/knowledge/{id}/delete",
         "chat": "/api/chat/completions",
+        "chat_create": "/api/v1/chats/new",
+        "chat_record": "/api/v1/chats/{id}",
         "models": "/api/models",
         "transcriptions": "/api/v1/audio/transcriptions",
         "ollama_config": "/ollama/config",

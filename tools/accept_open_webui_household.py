@@ -5,7 +5,7 @@ The kit deploys the exact candidate bytes named by the build ticket's manifest
 as user-level services under one disposable, marked root, wires them to the
 shared Lemonade provider, and runs exactly one integrated trial set: one pass
 over the scenario map, one restore drill, and one rollback drill.  Evidence
-schema: ``open-webui-household-acceptance/v2``.
+schema: ``open-webui-household-acceptance/v3``.
 
 Subcommands: preflight [--probe-only], stage, up, down, trial, resmoke,
 teardown [--keep-anchor].  The stub rehearsal (``--provider stub
@@ -45,6 +45,7 @@ import sys
 import tempfile
 import time
 import urllib.parse
+import uuid
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Callable, Iterable, Mapping, Sequence
@@ -56,7 +57,7 @@ sys.path.insert(0, str(TOOLS))
 import measure_open_webui_household as v1  # noqa: E402
 import open_webui_household_scenarios as sc  # noqa: E402
 
-SCHEMA = "open-webui-household-acceptance/v2"
+SCHEMA = "open-webui-household-acceptance/v3"
 MARKER = ".owui-acceptance"
 KIT_STATE = "kit.json"
 DEFAULT_ROOT = Path("/srv/build/arch-pkgs-owui-acceptance")
@@ -175,6 +176,8 @@ PAYLOAD_INDEXES = (
     {"field_name": "metadata.file_id", "field_schema": {"type": "keyword", "on_disk": False}},
 )
 
+RESTORE_DRILL = "open-webui.acceptance.drill.restore"
+ROLLBACK_DRILL = "open-webui.acceptance.drill.rollback"
 # The trial's scenario map, in run order.  One pass; no step repeats.
 TRIAL_STEPS: tuple[str, ...] = (
     "open-webui.acceptance.identity.archives",
@@ -189,11 +192,14 @@ TRIAL_STEPS: tuple[str, ...] = (
     "open-webui.acceptance.route.caddy-uds",
     sc.SCENARIO_IDS[2],
     "open-webui.acceptance.failclosed.reranker-down",
+    "open-webui.acceptance.failclosed.full-context",
+    "open-webui.acceptance.failclosed.native-tools",
     "open-webui.acceptance.failclosed.recovery",
+    "open-webui.acceptance.gate.explicit-reads",
     sc.SCENARIO_IDS[3],
     "open-webui.acceptance.privacy",
-    "open-webui.acceptance.drill.restore",
-    "open-webui.acceptance.drill.rollback",
+    RESTORE_DRILL,
+    ROLLBACK_DRILL,
     "open-webui.acceptance.qdrant.paging",
     "open-webui.acceptance.resources",
     "open-webui.acceptance.evidence",
@@ -1890,30 +1896,243 @@ def _delete(webui: sc.Endpoint, token: str, path: str) -> int | str:
         return type(error).__name__
 
 
-def file_chat(webui: sc.Endpoint, token: str, chat_model: str, file_id: str | None) -> tuple[int, str, dict[str, Any], Any]:
+@dataclasses.dataclass(frozen=True)
+class ChatReply:
+    """One chat completion: the gate's refusal, or the answer and its sources."""
+
+    status: int
+    text: str
+    sources: list[dict[str, Any]]
+    detail: Any
+    body: bytes
+
+    def holds(self, sentence: str) -> bool:
+        """Whether a retrieved source document carries ``sentence``."""
+
+        return any(sentence in text for source in self.sources for text in source.get("document") or []
+                   if isinstance(text, str))
+
+    def handbook_text(self) -> bool:
+        """Whether the reply carries handbook text anywhere in its body."""
+
+        return carries_handbook_text(self.body.decode("utf-8", "replace"))
+
+
+def carries_handbook_text(text: str) -> bool:
+    """The canonical fact, or its one word no refusal or prompt uses."""
+
+    return sc.CANONICAL_FACT in text or "brass" in text.casefold()
+
+
+def post_chat(
+    webui: sc.Endpoint,
+    token: str,
+    chat_model: str,
+    files: Sequence[Mapping[str, Any]] | None,
+    prompt: str = sc.CITED_ANSWER_PROMPT,
+) -> ChatReply:
+    """One streamed chat with no saved chat or session, so no builtin tool runs."""
+
     payload: dict[str, Any] = {
         "model": chat_model,
         "stream": True,
         "temperature": 0,
         "params": {"temperature": 0},
-        "messages": [{"role": "user", "content": sc.CITED_ANSWER_PROMPT if file_id else "Reply with OK."}],
+        "messages": [{"role": "user", "content": prompt}],
     }
-    if file_id:
-        payload["files"] = [{"type": "file", "id": file_id}]
+    if files:
+        payload["files"] = [dict(item) for item in files]
     response = webui.request("POST", sc.API["chat"], payload=payload, token=token)
     if response.status != 200:
         try:
             detail = (response.json() or {}).get("detail")
         except (json.JSONDecodeError, AttributeError):
             detail = None
-        return response.status, "", {"count": 0, "names": [], "scores": []}, detail
+        return ChatReply(response.status, "", [], detail, response.body)
     text, sources = sc.parse_chat_response(response.body, response.content_type)
-    return response.status, text, sc.summarize_sources(sources), None
+    return ChatReply(response.status, text, sources, None, response.body)
+
+
+def file_chat(webui: sc.Endpoint, token: str, chat_model: str, file_id: str | None) -> tuple[int, str, dict[str, Any], Any]:
+    reply = post_chat(webui, token, chat_model, [{"type": "file", "id": file_id}] if file_id else None,
+                      sc.CITED_ANSWER_PROMPT if file_id else "Reply with OK.")
+    return reply.status, reply.text, sc.summarize_sources(reply.sources), reply.detail
 
 
 def cited_fact(webui: sc.Endpoint, token: str, chat_model: str, file_id: str) -> bool:
     status, text, summary, _ = file_chat(webui, token, chat_model, file_id)
     return status == 200 and sc.cited_answer_passes(text, summary, sc.HANDBOOK_NAME)
+
+
+# The gate's explicit-read checks.  Patch 0005 gates knowledge-base content
+# and anything attached to a model or folder as knowledge while the gate is
+# closed, and allows explicitly requested content whole once it qualifies.
+
+
+def full_context_files(file_id: str) -> dict[str, list[dict[str, str]]]:
+    """The two explicit full-context attachment sets, each read in full.
+
+    ``mixed`` attaches the handbook in full beside a searched copy of it, and
+    ``all-full`` attaches it only in full.
+    """
+
+    full = {"type": "file", "id": file_id, "context": "full"}
+    return {"mixed": [full, {"type": "file", "id": file_id}], "all-full": [dict(full)]}
+
+
+def refusal_record(reply: ChatReply) -> dict[str, Any]:
+    return {
+        "status": reply.status,
+        "fixed_detail": reply.detail == _rag_unavailable_detail(),
+        "sources": len(reply.sources),
+        "handbook_text": reply.handbook_text(),
+    }
+
+
+def refused(record: Mapping[str, Any]) -> bool:
+    """The closed gate's refusal: 503, the fixed detail, no source, no handbook text."""
+
+    return (record["status"] == 503 and record["fixed_detail"] is True and record["sources"] == 0
+            and record["handbook_text"] is False)
+
+
+# Open WebUI 0.11.4 offers these builtin tools, which read knowledge content,
+# to a chat whose model has no knowledge attached.
+NATIVE_KNOWLEDGE_TOOLS = frozenset({"view_knowledge_file", "view_file", "grep_knowledge_files", "query_knowledge_files"})
+NATIVE_TOOL_PROMPT = (
+    'Call view_knowledge_file with file_id "{file_id}" and repeat its sentence about the seed cabinet '
+    "word for word. If the tool returns an error, reply with that error only."
+)
+# tool_choice "required" is sent only once the guarded rehearsal shows that
+# the pinned chat model's provider honors it; until then the request carries
+# none, and the evidence records that.
+NATIVE_TOOL_CHOICE: str | None = None
+NATIVE_CHAT_TIMEOUT_S = 300.0
+NATIVE_CHAT_POLL_S = 1.0
+
+
+def tool_output_text(value: Any) -> str | None:
+    """A function_call_output's text; Open WebUI 0.11.4 stores it as input_text parts."""
+
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        parts = [part["text"] for part in value if isinstance(part, dict) and isinstance(part.get("text"), str)]
+        return "".join(parts) if parts else None
+    return None
+
+
+def tool_calls(message: Mapping[str, Any]) -> list[tuple[str, str | None]]:
+    """(tool name, output text) for each function call a stored assistant message made.
+
+    Open WebUI 0.11.4 stores a native tool call as a ``function_call`` output
+    item and its result as the ``function_call_output`` with the same
+    ``call_id``; a call with no result has output None.
+    """
+
+    output = message.get("output")
+    items = [item for item in output if isinstance(item, dict)] if isinstance(output, list) else []
+    results = {item.get("call_id"): tool_output_text(item.get("output"))
+               for item in items if item.get("type") == "function_call_output"}
+    return [(str(item.get("name")), results.get(item.get("call_id")))
+            for item in items if item.get("type") == "function_call"]
+
+
+def gate_tool_error(text: str | None) -> bool:
+    """Whether a tool's output is exactly the closed gate's tool error."""
+
+    try:
+        return json.loads(text or "") == {"error": _rag_unavailable_detail(), "status": 503}
+    except json.JSONDecodeError:
+        return False
+
+
+def native_tool_chat(webui: sc.Endpoint, token: str, chat_model: str, file_id: str) -> dict[str, Any]:
+    """One UI-style native-calling chat that asks for ``file_id`` through view_knowledge_file.
+
+    Open WebUI 0.11.4 offers its builtin tools only to a request that carries
+    a session_id and whose function_calling is not "legacy", and it runs them
+    only on its event-emitter path, which needs a saved chat and an assistant
+    message id.  The kit's other chats carry none of these, so they never
+    reach the tools.  Like the frontend, this saves a chat holding one user
+    message and an empty assistant message, posts the completion, and reads
+    the stored assistant message back once Open WebUI marks it done.  The
+    chat is deleted on every path, and a failed delete fails the caller.
+    """
+
+    user_id, assistant_id = str(uuid.uuid4()), str(uuid.uuid4())
+    prompt = NATIVE_TOOL_PROMPT.format(file_id=file_id)
+    now = int(time.time())
+    user_message = {"id": user_id, "parentId": None, "childrenIds": [assistant_id], "role": "user",
+                    "content": prompt, "timestamp": now, "models": [chat_model]}
+    assistant_message = {"id": assistant_id, "parentId": user_id, "childrenIds": [], "role": "assistant",
+                         "content": "", "model": chat_model, "modelIdx": 0, "timestamp": now, "done": False}
+    created = webui.json("POST", sc.API["chat_create"], {"chat": {
+        "title": "Acceptance native tools",
+        "models": [chat_model],
+        "params": {},
+        "history": {"currentId": assistant_id, "messages": {user_id: user_message, assistant_id: assistant_message}},
+        "messages": [user_message, assistant_message],
+        "tags": [],
+        "timestamp": now * 1000,
+    }}, token=token)
+    chat_id = created.get("id") if isinstance(created, dict) else None
+    if not isinstance(chat_id, str):
+        raise sc.ScenarioFailure("the native-tools chat create returned no id")
+    record_path = sc.API["chat_record"].format(id=chat_id)
+    try:
+        payload: dict[str, Any] = {
+            "model": chat_model,
+            "stream": True,
+            "chat_id": chat_id,
+            "id": assistant_id,
+            "session_id": f"owui-acc-{secrets.token_hex(8)}",
+            "messages": [{"role": "user", "content": prompt}],
+            "params": {"function_calling": "native", "temperature": 0},
+        }
+        if NATIVE_TOOL_CHOICE is not None:
+            payload["tool_choice"] = NATIVE_TOOL_CHOICE
+        started = time.monotonic()
+        response = webui.request("POST", sc.API["chat"], payload=payload, token=token)
+        if response.status != 200:
+            raise sc.ScenarioFailure(f"the native-tools chat returned HTTP {response.status}")
+        stored: dict[str, Any] = {}
+
+        def done() -> bool:
+            record = webui.json("GET", record_path, token=token)
+            history = ((record or {}).get("chat") or {}).get("history") or {}
+            message = (history.get("messages") or {}).get(assistant_id)
+            stored.clear()
+            stored.update(message if isinstance(message, dict) else {})
+            return stored.get("done") is True
+
+        wait_until(done, NATIVE_CHAT_TIMEOUT_S, "the native-tools chat to finish", NATIVE_CHAT_POLL_S)
+        elapsed = round(time.monotonic() - started, 3)
+    except BaseException:
+        # Clean up on every path, but never let the cleanup hide the failure.
+        _delete(webui, token, record_path)
+        raise
+    deleted = _delete(webui, token, record_path)
+    if deleted != 200:
+        raise sc.ScenarioFailure(f"the native-tools chat delete returned {deleted}")
+    return {"message": stored, "completion_s": elapsed, "timeout_s": NATIVE_CHAT_TIMEOUT_S,
+            "tool_choice_sent": NATIVE_TOOL_CHOICE is not None}
+
+
+def native_values(chat: Mapping[str, Any]) -> dict[str, Any]:
+    """What a native-tools chat records: its calls, timings, and any stored error."""
+
+    message = chat["message"]
+    values: dict[str, Any] = {
+        "tools_called": [name for name, _ in tool_calls(message)],
+        "completion_s": chat["completion_s"],
+        "timeout_s": chat["timeout_s"],
+        "tool_choice_sent": chat["tool_choice_sent"],
+    }
+    error = message.get("error")
+    if error:
+        values["message_error"] = str(error.get("content") if isinstance(error, dict) else error)[:300]
+    return values
 
 
 # The Qdrant paging check.  The packaged Qdrant strict mode caps every query
@@ -2476,6 +2695,78 @@ class Trial:
             raise sc.ScenarioFailure(json.dumps(values, sort_keys=True))
         return values
 
+    def rag_health(self) -> int:
+        return self.kit.uds().request("GET", sc.API["rag_health"], token=self.token).status
+
+    def full_context(self) -> dict[str, Any]:
+        """With the gate closed, explicit full-context attachments are refused."""
+
+        before = self.rag_health()
+        if before != 503:
+            raise sc.ScenarioFailure(json.dumps({"health_before": before}))
+        uds = self.kit.uds()
+        chats = {name: refusal_record(post_chat(uds, self.token, self.chat_id(), files))
+                 for name, files in full_context_files(self.seed_file).items()}
+        after = self.rag_health()
+        values = {"health_before": before, "health_after": after, "chats": chats}
+        if after != 503 or not all(refused(record) for record in chats.values()):
+            raise sc.ScenarioFailure(json.dumps(values, sort_keys=True))
+        return values
+
+    def native_tools(self) -> dict[str, Any]:
+        """With the gate closed, a UI-style chat's knowledge tools return only the gate's error."""
+
+        before = self.rag_health()
+        if before != 503:
+            raise sc.ScenarioFailure(json.dumps({"health_before": before}))
+        chat = native_tool_chat(self.kit.uds(), self.token, self.chat_id(), self.seed_file)
+        after = self.rag_health()
+        message = chat["message"]
+        knowledge = [text for name, text in tool_calls(message) if name in NATIVE_KNOWLEDGE_TOOLS]
+        values = {
+            **native_values(chat),
+            "health_before": before,
+            "health_after": after,
+            # Only the fixed tool error is ever recorded, never handbook text.
+            "knowledge_tool_outputs": [text if gate_tool_error(text) else "not the gate's tool error"
+                                       for text in knowledge],
+            "handbook_text": carries_handbook_text(json.dumps(message, ensure_ascii=False)),
+        }
+        if not knowledge:
+            raise sc.ScenarioFailure("no knowledge tool call observed: " + json.dumps(values, sort_keys=True))
+        if after != 503 or not all(gate_tool_error(text) for text in knowledge) or values["handbook_text"]:
+            raise sc.ScenarioFailure(json.dumps(values, sort_keys=True))
+        return values
+
+    def explicit_reads(self) -> dict[str, Any]:
+        """Once the gate qualifies, explicitly requested content is allowed whole."""
+
+        health = self.rag_health()
+        if health != 200:
+            raise sc.ScenarioFailure(json.dumps({"health": health}))
+        uds = self.kit.uds()
+        replies = {name: post_chat(uds, self.token, self.chat_id(), files)
+                   for name, files in full_context_files(self.seed_file).items()}
+        chat = native_tool_chat(uds, self.token, self.chat_id(), self.seed_file)
+        # The canonical fact has no character that JSON escapes, so the tool's
+        # JSON output carries it verbatim.
+        views = [text or "" for name, text in tool_calls(chat["message"]) if name == "view_knowledge_file"]
+        values = {
+            **native_values(chat),
+            "health": health,
+            "chats": {name: {"status": reply.status, "sources": len(reply.sources),
+                             "fact_in_sources": reply.holds(sc.CANONICAL_FACT)}
+                      for name, reply in replies.items()},
+            "view_knowledge_file_calls": len(views),
+            "view_knowledge_file_holds_fact": any(sc.CANONICAL_FACT in text for text in views),
+        }
+        if not views:
+            raise sc.ScenarioFailure("no view_knowledge_file call observed: " + json.dumps(values, sort_keys=True))
+        if not (all(item["status"] == 200 and item["fact_in_sources"] for item in values["chats"].values())
+                and values["view_knowledge_file_holds_fact"]):
+            raise sc.ScenarioFailure(json.dumps(values, sort_keys=True))
+        return values
+
     def recovery(self) -> dict[str, Any]:
         kit = self.kit
         systemctl("start", UNITS["relay"])
@@ -2697,39 +2988,44 @@ class Trial:
     def run(self) -> int:
         kit = self.kit
         try:
-            self.step(TRIAL_STEPS[0], self.identity, critical=True)
-            self.step(TRIAL_STEPS[1], self.unit_properties)
-            self.step(TRIAL_STEPS[2], self.first_start, critical=True)
-            self.step(TRIAL_STEPS[3], self.commission, critical=True)
-            self.step(TRIAL_STEPS[4], self.restart)
-            self.step(TRIAL_STEPS[5], self.g4)
-            self.step(TRIAL_STEPS[6], self.no_stored_secret)
+            self.step("open-webui.acceptance.identity.archives", self.identity, critical=True)
+            self.step("open-webui.acceptance.identity.unit-properties", self.unit_properties)
+            self.step("open-webui.acceptance.ready.first-start", self.first_start, critical=True)
+            self.step("open-webui.acceptance.auth.one-admin", self.commission, critical=True)
+            self.step("open-webui.acceptance.ready.restart", self.restart)
+            self.step("open-webui.acceptance.qdrant.g4", self.g4)
+            self.step("open-webui.acceptance.connections.no-stored-secret", self.no_stored_secret)
             contexts: list[sc.Context] = []
             self.step("open-webui.acceptance.handbook-indexed",
                       lambda: contexts.append(self.prepare_scenarios()) or {}, critical=True)
             ctx = contexts[0]
-            self.scenario(TRIAL_STEPS[7], ctx)
-            self.scenario(TRIAL_STEPS[8], ctx)
-            self.step(TRIAL_STEPS[9], lambda: route_checks(kit, self.token))
+            self.scenario(sc.SCENARIO_IDS[0], ctx)
+            self.scenario(sc.SCENARIO_IDS[1], ctx)
+            self.step("open-webui.acceptance.route.caddy-uds", lambda: route_checks(kit, self.token))
             answer_started = time.time()
-            self.scenario(TRIAL_STEPS[10], ctx)
+            self.scenario(sc.SCENARIO_IDS[2], ctx)
             answer_ended = time.time()
             if kit.rehearsal:
                 self.rehearsal_prefixes(*self.seed_window, answer_started, answer_ended)
-            self.step(TRIAL_STEPS[11], self.reranker_down)
-            self.step(TRIAL_STEPS[12], self.recovery)
-            self.scenario(TRIAL_STEPS[13], ctx)
-            self.step(TRIAL_STEPS[14], self.privacy)
+            self.step("open-webui.acceptance.failclosed.reranker-down", self.reranker_down)
+            # While reranker-down's latch holds the gate closed; neither check
+            # requalifies it, so recovery still sees the latched 503 first.
+            self.step("open-webui.acceptance.failclosed.full-context", self.full_context)
+            self.step("open-webui.acceptance.failclosed.native-tools", self.native_tools)
+            self.step("open-webui.acceptance.failclosed.recovery", self.recovery)
+            self.step("open-webui.acceptance.gate.explicit-reads", self.explicit_reads)
+            self.scenario(sc.SCENARIO_IDS[3], ctx)
+            self.step("open-webui.acceptance.privacy", self.privacy)
             # Only a structural failure stops the trial; a restore that misses
             # its ceiling is recorded, and the rollback drill still runs.
-            self.step(TRIAL_STEPS[15], self.restore_drill)
-            self.step(TRIAL_STEPS[16], self.rollback_drill, critical=True)
+            self.step(RESTORE_DRILL, self.restore_drill)
+            self.step(ROLLBACK_DRILL, self.rollback_drill, critical=True)
             # After both drills, so their anchor and timings never carry the
             # paging corpus.
-            self.step(TRIAL_STEPS[17], self.qdrant_paging)
+            self.step("open-webui.acceptance.qdrant.paging", self.qdrant_paging)
         except Stop:
             pass
-        self.step_safely(TRIAL_STEPS[18], self.resources)
+        self.step_safely("open-webui.acceptance.resources", self.resources)
         try:
             self.lemond_post, _ = sc.lemond_snapshot(kit.lemond())
         except (OSError, http.client.HTTPException, sc.ScenarioFailure):
@@ -2770,7 +3066,7 @@ class Trial:
         """How many restore and rollback drills this trial actually ran."""
 
         ran = [step.id for step in self.steps]
-        return {"restore_drills": ran.count(TRIAL_STEPS[15]), "rollback_drills": ran.count(TRIAL_STEPS[16])}
+        return {"restore_drills": ran.count(RESTORE_DRILL), "rollback_drills": ran.count(ROLLBACK_DRILL)}
 
     def finish(self) -> int:
         kit = self.kit
@@ -2790,7 +3086,7 @@ class Trial:
         complete = drills == {"restore_drills": 1, "rollback_drills": 1}
         if safe and not complete:
             detail = "a critical failure stopped the trial before both drills ran"
-        evidence_step = Step(TRIAL_STEPS[19], sc.PASS if safe and complete else sc.FAIL, detail, 0.0,
+        evidence_step = Step(TRIAL_STEPS[-1], sc.PASS if safe and complete else sc.FAIL, detail, 0.0,
                              {"trial_set_count": 1, **drills})
         self.record(evidence_step)
         if (not safe or not complete) and exit_code == sc.EXIT_PASS:

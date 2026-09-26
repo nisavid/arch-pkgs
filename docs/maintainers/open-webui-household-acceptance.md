@@ -9,7 +9,7 @@ live-validated Lemonade provider, and runs **one** integrated trial set with
 one restore drill and one rollback drill.
 
 The kit is `tools/accept_open_webui_household.py` (evidence schema
-`open-webui-household-acceptance/v2`) plus the shared scenario module
+`open-webui-household-acceptance/v3`) plus the shared scenario module
 `tools/open_webui_household_scenarios.py`. The kit PR alone means *source
 updated*. The candidate set is *acceptance deployed* only after the trial's
 evidence merges.
@@ -292,7 +292,10 @@ only.
 | `open-webui.acceptance.route.caddy-uds` (A-S1) | HTTPS 200 through Caddy to the socket; authenticated WebSocket 101; no Open WebUI TCP listener and no non-loopback listener on the Caddy port. Rechecked after both drills. | exact |
 | `open-webui.resmoke.cited-answer` (A-S6) | "The brass key opens the seed cabinet." with exactly one source, named as the uploaded fixture handbook (`winter-garden-handbook.md`), because Open WebUI names a file source by its upload name, and a finite rerank score. The uploaded handbook is deleted afterwards, and a failed delete fails the scenario. Timings recorded. | pass/fail |
 | `open-webui.acceptance.failclosed.reranker-down` (A-F1) | With the relay stopped: chat 200; retrieval, file-attached chat, and health 503 with the fixed detail and no citation. | exact |
+| `open-webui.acceptance.failclosed.full-context` | With the relay stopped and health 503, two chats that attach the indexed handbook each return 503 with the fixed detail and no sources. One mixes the handbook with context "full" and the same handbook for search. The other attaches it only with context "full". Health stays 503. See [Gate checks](#gate-checks). | exact |
+| `open-webui.acceptance.failclosed.native-tools` | With the relay stopped and health 503, a UI-style native-calling chat makes at least one knowledge-tool call and gets only the gate's tool error. The chat is a saved chat with an assistant message id, a `session_id`, `function_calling` "native", and no attachments, and it is told to read the handbook through `view_knowledge_file`. The stored assistant message carries no handbook text. Health stays 503. The chat is deleted afterwards; a failed delete fails the step. | exact |
 | `open-webui.acceptance.failclosed.recovery` (A-F2) | Relay back, latch still 503, RAG config re-saved, then health 200 and a cited answer. | exact |
+| `open-webui.acceptance.gate.explicit-reads` | With the gate qualified, explicitly requested content is allowed whole: the all-full chat from full-context returns 200 with the canonical fact in its sources; the mixed chat also returns 200 with the canonical fact in its sources; and the native-tools chat's `view_knowledge_file` output contains the canonical fact. The native-tools chat is deleted afterwards; a failed delete fails the step. | exact |
 | `open-webui.resmoke.stt` (A-S7) | `jfk.flac` through local faster-whisper on the CPU (int8): language `en`, both expected phrases, at least 20 ordered words; no `WhisperModel initialization failed` in the journal. | pass/fail |
 | `open-webui.acceptance.privacy` (A-P1..P3, A-E2) | A-P1 recorded; peer samples only within the allowed set; the five telemetry values; Haystack absent from the acceptance environment. | pass/fail (A-P1 record) |
 | `open-webui.acceptance.drill.restore` (A-D1, A-D3) | One restore, clock from epoch reservation to ready plus the cited fact. | ceiling 40 s |
@@ -344,6 +347,85 @@ Notes on specific checks:
   key, collection shape and point counts, the credential tuple's
   fingerprints, the epoch above the recorded bound, a pre-backup session
   rejected with 401, and a fresh login succeeding.
+
+### Gate checks
+
+Patch 0005's gate scope, as the lead classified it: content from knowledge
+bases, or anything attached to a model or a folder as knowledge, is gated
+while the gate is closed. Once the gate qualifies, explicitly requested
+content is allowed whole and search results are reranked. Unattached notes,
+chats, memories, and user-provided attachments are personal data outside the
+gate. Three steps pin the explicit-read paths:
+
+- `open-webui.acceptance.failclosed.full-context` and
+  `open-webui.acceptance.failclosed.native-tools` run between reranker-down
+  and recovery. Reranker-down has already stopped the relay and latched the
+  gate, and recovery still requires the latched 503 first; neither check
+  requalifies the gate. Each first requires authenticated retrieval health
+  503, and health must still be 503 afterwards.
+- full-context posts two chats with no saved chat and no session, with the
+  cited-answer prompt: `mixed` attaches the seed handbook with context
+  "full" beside the same handbook for search, and `all-full` attaches it only
+  with context "full". Each must return 503 with the fixed detail and no
+  sources, and neither the canonical fact nor the word "brass" may appear in
+  either response body. A regression that reads a full-context item before
+  the gate check returns 200 with the whole handbook. 0005 has refused both
+  sets while closed since before its knowledge-tool fix, so this step pins
+  that behavior; the qualified counterpart below is what tells candidates
+  apart.
+- native-tools runs one chat the way the UI does. Open WebUI 0.11.4 offers
+  its builtin tools only to a request that carries a `session_id` and whose
+  `function_calling` is not "legacy", and it runs server-side tools only on
+  its event-emitter path, which needs a saved chat and an assistant message
+  id; the kit's other chats send none of these, so they never reach the
+  tools. The step saves a chat (`POST /api/v1/chats/new`) holding one user
+  message and an empty assistant message with fresh ids, then posts the
+  completion with the chat id, the assistant message id, a fresh
+  `session_id`, and `params` `{"function_calling": "native", "temperature":
+  0}`, and no attachment. The prompt tells the model to call
+  `view_knowledge_file` for the seed handbook and repeat its seed-cabinet
+  sentence, or to reply with the tool's error only. The step then reads the
+  chat (`GET /api/v1/chats/{id}`) until the assistant message is done,
+  within 300 s. It passes only when the stored message holds at least one
+  call to `view_knowledge_file`, `view_file`, `grep_knowledge_files`, or
+  `query_knowledge_files`, each such call's output is exactly the gate's tool
+  error (`{"error": <fixed detail>, "status": 503}`), and neither the
+  canonical fact nor "brass" appears anywhere in the stored message. A chat
+  with no knowledge-tool call fails as `no knowledge tool call observed`; the
+  step never passes without one. The evidence records the tools called, the
+  knowledge-tool outputs (the fixed error only), the completion time, and
+  whether `tool_choice` was sent. A 0005 without the knowledge-tool fix
+  returns the handbook through `view_knowledge_file` and fails here.
+- `open-webui.acceptance.gate.explicit-reads` runs right after recovery,
+  with health 200, and its failure fails the trial like any other step's
+  (the lead's recommendation): the same two attachment chats must
+  each return 200 with the canonical fact in their sources, and the same
+  native-tools chat's `view_knowledge_file` output must contain it. A 0005
+  that still refuses the all-full chat once qualified, or a later over-gate
+  of the knowledge tools or of explicit full-context reads, fails here.
+- Both native-tools chats are deleted on every path, and a failed delete
+  fails the step.
+
+The drafts' optional knowledge-note sub-check (a workspace model whose
+knowledge is a note, read through `view_note`) is not in the kit, because
+the kit creates no workspace model. Nothing in the trial exercises 0005's
+refusal of a knowledge-attached note.
+
+#### Acceptance-ticket checkboxes
+
+These are the checkbox texts for
+[Acceptance-deploy the Open WebUI household candidate set](https://github.com/nisavid/arch-pkgs/issues/89)
+that the gate checks prove:
+
+- With the gate closed, chats that attach a full-context file (alone, or
+  beside a searched copy) return 503 with the fixed detail and no sources. A
+  UI-style native-calling chat (saved chat, `session_id`) that calls the
+  knowledge tools gets only the gate's tool error. None returns handbook
+  text, and health stays 503. (`open-webui.acceptance.failclosed.full-context`,
+  `open-webui.acceptance.failclosed.native-tools`)
+- Once the gate is requalified, the same all-full-context and mixed chats and
+  the knowledge-tool read return the handbook text.
+  (`open-webui.acceptance.gate.explicit-reads`)
 
 ### Qdrant paging
 
@@ -542,6 +624,27 @@ real trial may need; the second `up` keeps `first-start.json`.
 
 The rehearsal cannot prove the zembed semantic margin, real zerank scores, the
 real model's verbatim answer, or provider timings. Only the trial does.
+
+For the native-tools chats, the stub calls the one tool a user message names
+as `Call <tool> with <argument> "<value>"` when the request offers it, then
+answers with the tool's error verbatim or the result sentence that best
+matches the question.
+
+### Confirm at the guarded rehearsal
+
+The gate checks carry items that unit tests cannot settle. Confirm each at
+the guarded rehearsal, and record the result with the rehearsal's pass or
+fail; do not settle them by assumption:
+
+- **Stored tool-call shape.** Open WebUI 0.11.4 stores a native tool call as
+  a `function_call` output item and its result as a `function_call_output`
+  item with the same `call_id`, whose `output` is a list of `input_text`
+  parts; the kit's parser (`tool_calls`) reads that shape. If the rehearsal
+  shows another shape, adapt the parser, not the pass condition.
+- **`tool_choice`.** The native-tools chats send no `tool_choice`
+  (`NATIVE_TOOL_CHOICE` is unset), and the evidence records that. Set it to
+  "required" only if the rehearsal shows that Lemonade honors it for the
+  pinned chat model.
 
 ## Evidence handling
 

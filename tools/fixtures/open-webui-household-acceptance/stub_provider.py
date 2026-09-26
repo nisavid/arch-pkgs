@@ -7,6 +7,11 @@ v1 deterministic embedding and rerank helpers, so the whole kit can run
 without the shared Lemonade.  It logs whether any request carried an
 Authorization header, plus the first bytes of every embedding input so the
 rehearsal can check that Open WebUI applied the settings prefixes.
+
+For native function calling it calls the one tool a user message names as
+``Call <tool> with <argument> "<value>"`` when the request offers that tool,
+and then answers from the tool's result: its error verbatim, or the result
+sentence that best matches the question.
 """
 
 from __future__ import annotations
@@ -108,22 +113,72 @@ def _sentences(text: str) -> list[str]:
     return [item.strip() for item in re.split(r"(?<=[.!?])\s+|\n+", text) if item.strip()]
 
 
-def chat_answer(request: dict[str, Any]) -> str:
-    """Quote the retrieved-context sentence that best matches the question."""
-
+def _messages(request: dict[str, Any]) -> list[dict[str, Any]]:
     if request.get("model") != CHAT_MODEL:
         raise StubError("unknown chat model")
     messages = request.get("messages")
     if not isinstance(messages, list) or not messages:
         raise StubError("messages must be a nonempty array")
-    contents = [
-        (item.get("role"), item["content"])
-        for item in messages
-        if isinstance(item, dict) and isinstance(item.get("content"), str)
-    ]
+    return [item for item in messages if isinstance(item, dict)]
+
+
+def _best_sentence(candidates: str, question: str) -> str:
+    tokens = v1._tokens(question)
+    best, best_score = "Synthetic household stub response.", 0
+    for sentence in _sentences(candidates):
+        score = len(v1._tokens(sentence) & tokens)
+        if score > best_score and not sentence.endswith("?"):
+            best, best_score = sentence, score
+    return best
+
+
+def requested_tool_call(request: dict[str, Any]) -> tuple[str, dict[str, str]] | None:
+    """The call the last message asks for, when it is a user message and the tool is offered.
+
+    The request names it as ``Call <tool> with <argument> "<value>"``; once a
+    tool result follows the user message, the stub answers instead.
+    """
+
+    messages = _messages(request)
+    last = messages[-1]
+    content = last.get("content")
+    if last.get("role") != "user" or not isinstance(content, str):
+        return None
+    offered = {
+        tool["function"].get("name")
+        for tool in request.get("tools") or []
+        if isinstance(tool, dict) and isinstance(tool.get("function"), dict)
+    }
+    words = content.split(maxsplit=4)
+    value = _between(content, '"', '"')
+    if len(words) < 4 or words[0] != "Call" or words[2] != "with" or words[1] not in offered or not value:
+        return None
+    return words[1], {words[3]: value}
+
+
+def tool_result_answer(result: str, question: str) -> str:
+    """A tool's error verbatim, else the result sentence that best matches the question."""
+
+    try:
+        parsed = json.loads(result)
+    except json.JSONDecodeError:
+        parsed = result
+    if isinstance(parsed, dict) and isinstance(parsed.get("error"), str):
+        return parsed["error"]
+    text = parsed.get("content") if isinstance(parsed, dict) else None
+    return _best_sentence(text if isinstance(text, str) else result, question)
+
+
+def chat_answer(request: dict[str, Any]) -> str:
+    """Quote the retrieved-context sentence, or the tool result, that best matches the question."""
+
+    messages = _messages(request)
+    contents = [(item.get("role"), item["content"]) for item in messages if isinstance(item.get("content"), str)]
     users = [content for role, content in contents if role == "user"]
     if not users:
         raise StubError("messages must include a user message")
+    if messages[-1].get("role") == "tool" and isinstance(messages[-1].get("content"), str):
+        return tool_result_answer(messages[-1]["content"], users[-1])
     everything = "\n".join(content for _, content in contents)
     context = _between(everything, "<context>", "</context>")
     query = _between(everything, "<user_query>", "</user_query>")
@@ -132,30 +187,43 @@ def chat_answer(request: dict[str, Any]) -> str:
         candidates = re.sub(r"<[^<>]*>", "\n", context)
     else:
         candidates = "\n".join(content for content in (c for _, c in contents) if content is not users[-1])
-    question = v1._tokens(query if query is not None else users[-1])
-    best, best_score = "Synthetic household stub response.", 0
-    for sentence in _sentences(candidates):
-        score = len(v1._tokens(sentence) & question)
-        if score > best_score and not sentence.endswith("?"):
-            best, best_score = sentence, score
-    return best
+    return _best_sentence(candidates, query if query is not None else users[-1])
+
+
+TOOL_CALL_ID = "call_household_stub_1"
+
+
+def _tool_call(name: str, arguments: dict[str, str]) -> dict[str, Any]:
+    return {"id": TOOL_CALL_ID, "type": "function",
+            "function": {"name": name, "arguments": json.dumps(arguments, separators=(",", ":"))}}
 
 
 def chat_completion(request: dict[str, Any]) -> dict[str, Any]:
-    text = chat_answer(request)
+    call = requested_tool_call(request)
+    if call is not None:
+        message: dict[str, Any] = {"role": "assistant", "content": None, "tool_calls": [_tool_call(*call)]}
+        text, finish = "", "tool_calls"
+    else:
+        text, finish = chat_answer(request), "stop"
+        message = {"role": "assistant", "content": text}
     return {
         "id": "chatcmpl-household-stub",
         "object": "chat.completion",
         "created": 0,
         "model": CHAT_MODEL,
-        "choices": [{"index": 0, "message": {"role": "assistant", "content": text}, "finish_reason": "stop"}],
+        "choices": [{"index": 0, "message": message, "finish_reason": finish}],
         "usage": {"prompt_tokens": 0, "completion_tokens": len(text.split()), "total_tokens": len(text.split())},
     }
 
 
 def chat_events(request: dict[str, Any]) -> Iterable[str]:
-    text = chat_answer(request)
-    for delta, finish in (({"content": text}, None), ({}, "stop")):
+    call = requested_tool_call(request)
+    if call is not None:
+        deltas = (({"role": "assistant", "tool_calls": [{"index": 0, **_tool_call(*call)}]}, None),
+                  ({}, "tool_calls"))
+    else:
+        deltas = (({"content": chat_answer(request)}, None), ({}, "stop"))
+    for delta, finish in deltas:
         event = {
             "id": "chatcmpl-household-stub",
             "object": "chat.completion.chunk",

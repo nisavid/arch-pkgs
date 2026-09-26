@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 from unittest import mock
 
 
@@ -1290,6 +1291,255 @@ class HandbookTests(unittest.TestCase):
                                           ("DELETE", sc.API["file"].format(id="f1"))])
 
 
+class GateCheckTests(unittest.TestCase):
+    """The closed-gate bypass checks and their qualified counterpart."""
+
+    HANDBOOK = sc.handbook_bytes().decode("utf-8")
+    GATE_ERROR = json.dumps({"error": kit_module._rag_unavailable_detail(), "status": 503})
+
+    class FakeOpenWebUI:
+        """Open WebUI 0.11.4 as the gate checks see it, with the gate ``closed`` or ``qualified``.
+
+        ``legacy`` maps "mixed" and "all-full" to how their chat answers:
+        "refuse" (the gate's 503), "answer" (200 with the whole handbook),
+        "wrong-detail" (503 with another detail), or "leak" (the gate's 503
+        whose body quotes the handbook).  ``tool_name`` None makes the
+        native chat call no tool; ``done_after`` None never finishes it.
+        """
+
+        json = sc.Endpoint.json
+
+        def __init__(self, gate="closed", *, health=None, legacy=None, tool_name: str | None = "view_knowledge_file",
+                     tool_output=None, answer=None, delete_status=200, done_after: int | None = 2):
+            closed = gate == "closed"
+            self.health = list(health or [503 if closed else 200])
+            self.legacy = {"mixed": "refuse" if closed else "answer", "all-full": "refuse" if closed else "answer",
+                           **(legacy or {})}
+            self.tool_name = tool_name
+            self.tool_output = tool_output if tool_output is not None else (
+                GateCheckTests.GATE_ERROR if closed
+                else json.dumps({"id": "f1", "filename": sc.HANDBOOK_NAME, "content": GateCheckTests.HANDBOOK}))
+            self.answer = answer if answer is not None else (
+                kit_module._rag_unavailable_detail() if closed else sc.CANONICAL_FACT)
+            self.delete_status, self.done_after = delete_status, done_after
+            self.legacy_chats, self.created, self.completions, self.deleted = [], [], [], []
+            self.polls = 0
+
+        def request(self, method, path, *, payload: Any = None, body=None, content_type=None, token=None):
+            def reply(value, status=200, kind="application/json"):
+                return sc.Response(status, kind, value if isinstance(value, bytes) else json.dumps(value).encode())
+
+            if (method, path) == ("GET", sc.API["rag_health"]):
+                status = self.health.pop(0) if len(self.health) > 1 else self.health[0]
+                return reply({"status": "qualified"} if status == 200 else {"detail": "closed"}, status)
+            if (method, path) == ("POST", sc.API["chat_create"]):
+                self.created.append(payload)
+                return reply({"id": "c1", "chat": payload["chat"]})
+            if (method, path) == ("POST", sc.API["chat"]) and "chat_id" in payload:
+                self.completions.append(payload)
+                return reply({"status": True, "task_ids": ["t1"], "chat_id": payload["chat_id"]})
+            if (method, path) == ("POST", sc.API["chat"]):
+                self.legacy_chats.append(payload)
+                return self.legacy_reply(payload, reply)
+            if (method, path) == ("GET", sc.API["chat_record"].format(id="c1")):
+                self.polls += 1
+                return reply({"id": "c1", "chat": {"history": {"messages": {self.assistant_id(): self.message()}}}})
+            if (method, path) == ("DELETE", sc.API["chat_record"].format(id="c1")):
+                self.deleted.append("chat c1")
+                return reply(self.delete_status == 200, self.delete_status)
+            raise AssertionError(f"unexpected request {method} {path}")
+
+        def legacy_reply(self, payload, reply):
+            files = payload["files"]
+            kind = self.legacy["mixed" if len(files) == 2 else "all-full"]
+            detail = kit_module._rag_unavailable_detail()
+            if kind == "refuse":
+                return reply({"detail": detail}, 503)
+            if kind == "wrong-detail":
+                return reply({"detail": "Something else went wrong."}, 503)
+            if kind == "leak":
+                return reply({"detail": detail, "context": sc.CANONICAL_FACT}, 503)
+            source = {"source": {"type": "file", "id": "f1", "name": sc.HANDBOOK_NAME},
+                      "document": [GateCheckTests.HANDBOOK], "distances": [1.0]}
+            events = [{"sources": [source]}, {"choices": [{"delta": {"content": sc.CANONICAL_FACT}}]}]
+            stream = "".join(f"data: {json.dumps(event)}\n\n" for event in events) + "data: [DONE]\n\n"
+            return reply(stream.encode(), kind="text/event-stream")
+
+        def assistant_id(self):
+            return self.completions[-1]["id"]
+
+        def message(self):
+            output = []
+            if self.tool_name:
+                output += [
+                    {"type": "function_call", "id": "fc_1", "call_id": "call_1", "name": self.tool_name,
+                     "arguments": json.dumps({"file_id": "f1"}), "status": "completed"},
+                    {"type": "function_call_output", "id": "fco_1", "call_id": "call_1",
+                     "output": [{"type": "input_text", "text": self.tool_output}], "status": "completed"},
+                ]
+            output.append({"type": "message", "id": "msg_1", "role": "assistant", "status": "completed",
+                           "content": [{"type": "output_text", "text": self.answer}]})
+            done = self.done_after is not None and self.polls >= self.done_after
+            return {"id": self.assistant_id(), "role": "assistant", "content": self.answer if done else "",
+                    "output": output if done else [], "done": done}
+
+    def run_step(self, name, webui, timeout_s=None):
+        with tempfile.TemporaryDirectory() as directory:
+            trial = kit_module.Trial(make_kit(directory))
+            trial.token, trial.listed_chat_model, trial.seed_file = "t", "chat", "f1"
+            with contextlib.ExitStack() as stack:
+                stack.enter_context(mock.patch.object(kit_module.Kit, "uds", return_value=webui))
+                stack.enter_context(mock.patch.object(kit_module, "NATIVE_CHAT_POLL_S", 0))
+                if timeout_s is not None:
+                    stack.enter_context(mock.patch.object(kit_module, "NATIVE_CHAT_TIMEOUT_S", timeout_s))
+                return getattr(trial, name)()
+
+    def assert_fails(self, name, webui, message=None, **kwargs):
+        with self.assertRaises(sc.ScenarioFailure) as raised:
+            self.run_step(name, webui, **kwargs)
+        if message is not None:
+            self.assertIn(message, str(raised.exception))
+        return raised.exception
+
+    # failclosed.full-context ----------------------------------------------------
+    def test_a_closed_gate_refuses_both_full_context_attachment_sets(self):
+        webui = self.FakeOpenWebUI()
+        values = self.run_step("full_context", webui)
+        refusal = {"status": 503, "fixed_detail": True, "sources": 0, "handbook_text": False}
+        self.assertEqual(values["chats"], {"mixed": refusal, "all-full": refusal})
+        self.assertEqual((values["health_before"], values["health_after"]), (503, 503))
+        full = {"type": "file", "id": "f1", "context": "full"}
+        self.assertEqual([chat["files"] for chat in webui.legacy_chats],
+                         [[full, {"type": "file", "id": "f1"}], [full]])
+        for chat in webui.legacy_chats:
+            # No saved chat, session, or native calling: the attachment path alone.
+            self.assertFalse({"chat_id", "session_id", "id"} & set(chat))
+            self.assertEqual(chat["messages"], [{"role": "user", "content": sc.CITED_ANSWER_PROMPT}])
+
+    def test_each_full_context_bypass_fails_the_closed_check(self):
+        cases = {
+            # A regression that reads a full-context item before the gate check.
+            "all-full answered whole": {"legacy": {"all-full": "answer"}},
+            "mixed answered whole": {"legacy": {"mixed": "answer"}},
+            "another detail": {"legacy": {"mixed": "wrong-detail"}},
+            "handbook text in the refusal": {"legacy": {"all-full": "leak"}},
+            "the gate requalified": {"health": [503, 200]},
+        }
+        for name, overrides in cases.items():
+            with self.subTest(name):
+                self.assert_fails("full_context", self.FakeOpenWebUI(**overrides))
+
+    def test_the_full_context_check_needs_the_latched_gate_first(self):
+        webui = self.FakeOpenWebUI(health=[200])
+        self.assert_fails("full_context", webui, "health_before")
+        self.assertEqual(webui.legacy_chats, [])
+
+    # failclosed.native-tools ----------------------------------------------------
+    def test_a_closed_gate_answers_a_ui_style_knowledge_tool_call_with_its_error_only(self):
+        webui = self.FakeOpenWebUI()
+        values = self.run_step("native_tools", webui)
+        self.assertEqual(values["tools_called"], ["view_knowledge_file"])
+        self.assertEqual(values["knowledge_tool_outputs"], [self.GATE_ERROR])
+        self.assertFalse(values["handbook_text"])
+        self.assertFalse(values["tool_choice_sent"])
+        self.assertEqual((values["health_before"], values["health_after"]), (503, 503))
+        # The chat is saved as the frontend saves it, then deleted.
+        chat = webui.created[0]["chat"]
+        completion = webui.completions[0]
+        user, assistant = chat["messages"]
+        self.assertEqual(chat["history"]["currentId"], assistant["id"])
+        self.assertEqual((user["role"], user["parentId"], user["childrenIds"]), ("user", None, [assistant["id"]]))
+        self.assertEqual((assistant["role"], assistant["parentId"], assistant["content"]),
+                         ("assistant", user["id"], ""))
+        self.assertEqual(completion["chat_id"], "c1")
+        self.assertEqual(completion["id"], assistant["id"])
+        self.assertTrue(completion["session_id"])
+        self.assertEqual(completion["params"], {"function_calling": "native", "temperature": 0})
+        self.assertNotIn("tool_choice", completion)
+        self.assertNotIn("files", completion)
+        self.assertEqual(completion["messages"], [{"role": "user", "content": user["content"]}])
+        self.assertIn('Call view_knowledge_file with file_id "f1"', user["content"])
+        self.assertEqual(webui.deleted, ["chat c1"])
+        self.assertGreaterEqual(webui.polls, 2)
+
+    def test_each_knowledge_tool_counts_and_each_must_return_the_gate_error(self):
+        for tool in sorted(kit_module.NATIVE_KNOWLEDGE_TOOLS):
+            with self.subTest(tool):
+                values = self.run_step("native_tools", self.FakeOpenWebUI(tool_name=tool))
+                self.assertEqual(values["knowledge_tool_outputs"], [self.GATE_ERROR])
+
+    def test_a_chat_that_calls_no_knowledge_tool_never_passes(self):
+        for tool in (None, "search_notes"):
+            with self.subTest(tool):
+                webui = self.FakeOpenWebUI(tool_name=tool)
+                self.assert_fails("native_tools", webui, "no knowledge tool call observed")
+                self.assertEqual(webui.deleted, ["chat c1"])
+
+    def test_each_native_tool_leak_fails_the_closed_check(self):
+        handbook = json.dumps({"id": "f1", "content": self.HANDBOOK})
+        cases = {
+            # 0005 before 581af74 returns the handbook through view_knowledge_file.
+            "the tool returns the handbook": {"tool_output": handbook, "answer": sc.CANONICAL_FACT},
+            "another tool error": {"tool_output": json.dumps({"error": "File not found"})},
+            "the answer carries handbook text": {"answer": "The brass key, as the handbook says."},
+            "the gate requalified": {"health": [503, 200]},
+        }
+        for name, overrides in cases.items():
+            with self.subTest(name):
+                webui = self.FakeOpenWebUI(**overrides)
+                failure = self.assert_fails("native_tools", webui)
+                self.assertNotIn(self.HANDBOOK, str(failure))
+                self.assertEqual(webui.deleted, ["chat c1"])
+
+    def test_a_native_chat_that_never_finishes_fails_and_is_still_deleted(self):
+        webui = self.FakeOpenWebUI(done_after=None)
+        self.assert_fails("native_tools", webui, "timed out waiting for the native-tools chat", timeout_s=0.0)
+        self.assertEqual(webui.deleted, ["chat c1"])
+
+    def test_a_failed_native_chat_delete_fails_the_check(self):
+        self.assert_fails("native_tools", self.FakeOpenWebUI(delete_status=500), "delete returned 500")
+
+    # gate.explicit-reads --------------------------------------------------------
+    def test_a_qualified_gate_allows_every_explicit_read_whole(self):
+        webui = self.FakeOpenWebUI("qualified")
+        values = self.run_step("explicit_reads", webui)
+        read = {"status": 200, "sources": 1, "fact_in_sources": True}
+        self.assertEqual(values["chats"], {"mixed": read, "all-full": read})
+        self.assertEqual(values["view_knowledge_file_calls"], 1)
+        self.assertTrue(values["view_knowledge_file_holds_fact"])
+        self.assertEqual(webui.deleted, ["chat c1"])
+        self.assertNotIn(self.HANDBOOK, json.dumps(values))
+
+    def test_each_over_gated_explicit_read_fails_the_qualified_check(self):
+        cases = {
+            # 0005 before 8033f41 refuses the all-full chat even when qualified.
+            "all-full refused": {"legacy": {"all-full": "refuse"}},
+            "mixed refused": {"legacy": {"mixed": "refuse"}},
+            "the knowledge tool over-gated": {"tool_output": self.GATE_ERROR},
+            "no view_knowledge_file call": {"tool_name": "query_knowledge_files"},
+            "the gate is still closed": {"health": [503]},
+            "the chat delete failed": {"delete_status": 500},
+        }
+        for name, overrides in cases.items():
+            with self.subTest(name):
+                self.assert_fails("explicit_reads", self.FakeOpenWebUI("qualified", **overrides))
+
+    def test_stored_tool_outputs_pair_by_call_id(self):
+        message = {"output": [
+            {"type": "function_call", "call_id": "a", "name": "view_file"},
+            {"type": "function_call", "call_id": "b", "name": "view_knowledge_file"},
+            {"type": "function_call_output", "call_id": "b", "output": [{"type": "input_text", "text": "B"}]},
+            {"type": "function_call_output", "call_id": "a", "output": "A"},
+            {"type": "message", "content": [{"type": "output_text", "text": "done"}]},
+        ]}
+        self.assertEqual(kit_module.tool_calls(message), [("view_file", "A"), ("view_knowledge_file", "B")])
+        self.assertEqual(kit_module.tool_calls({"output": [{"type": "function_call", "call_id": "c", "name": "x"}]}),
+                         [("x", None)])
+        self.assertTrue(kit_module.gate_tool_error(self.GATE_ERROR))
+        self.assertFalse(kit_module.gate_tool_error(None))
+        self.assertFalse(kit_module.gate_tool_error(json.dumps({"error": kit_module._rag_unavailable_detail()})))
+
+
 class QdrantPagingTests(unittest.TestCase):
     def test_the_paging_corpus_chunks_past_one_scroll_page_and_plants_its_fact_deep(self):
         corpus = kit_module.paging_corpus()
@@ -1604,19 +1854,36 @@ class ResourceTests(unittest.TestCase):
 class EvidenceTests(unittest.TestCase):
     def test_trial_map_is_one_pass_with_the_frozen_resmoke_ids_in_order(self):
         steps = kit_module.TRIAL_STEPS
-        self.assertEqual(len(steps), 20)
-        self.assertEqual(len(set(steps)), 20)
+        self.assertEqual(len(steps), 23)
+        self.assertEqual(len(set(steps)), 23)
         # The paging corpus runs after both drills, so their anchor and
         # timings never carry its points.
         self.assertEqual(steps[steps.index("open-webui.acceptance.drill.rollback") + 1],
                          "open-webui.acceptance.qdrant.paging")
+        # Both closed-gate checks run while reranker-down's latch holds, before
+        # recovery requalifies the gate; the explicit reads follow it.
+        self.assertEqual(
+            steps[steps.index("open-webui.acceptance.failclosed.reranker-down"):
+                  steps.index("open-webui.acceptance.gate.explicit-reads") + 1],
+            ("open-webui.acceptance.failclosed.reranker-down", "open-webui.acceptance.failclosed.full-context",
+             "open-webui.acceptance.failclosed.native-tools", "open-webui.acceptance.failclosed.recovery",
+             "open-webui.acceptance.gate.explicit-reads"),
+        )
         self.assertEqual(steps[-2:], ("open-webui.acceptance.resources", "open-webui.acceptance.evidence"))
         self.assertEqual(tuple(item for item in steps if item.startswith("open-webui.resmoke.")), sc.SCENARIO_IDS)
         self.assertEqual(sum(1 for item in steps if ".drill." in item), 2)
+        self.assertEqual((kit_module.RESTORE_DRILL, kit_module.ROLLBACK_DRILL),
+                         tuple(item for item in steps if ".drill." in item))
         # A changed step gets a new id and an evidence schema bump, never a
-        # rewritten id.
+        # rewritten id; new steps bump the schema too.
         self.assertEqual(steps[6], "open-webui.acceptance.connections.no-stored-secret")
-        self.assertEqual(kit_module.SCHEMA, "open-webui-household-acceptance/v2")
+        self.assertEqual(kit_module.SCHEMA, "open-webui-household-acceptance/v3")
+
+    def test_the_runbook_scenario_map_is_the_trial_map(self):
+        runbook = (REPO_ROOT / "docs" / "maintainers" / "open-webui-household-acceptance.md").read_text(encoding="utf-8")
+        rows = re.findall(r"^\| `(open-webui\.[^`]+)`", runbook, re.MULTILINE)
+        self.assertEqual(tuple(rows), kit_module.TRIAL_STEPS)
+        self.assertIn(f"`{kit_module.SCHEMA}`", runbook)
 
     def test_publicize_hides_private_paths_and_addresses(self):
         replacements = [("/srv/build/owui", "<root>"), ("/run/user/1000", "$XDG_RUNTIME_DIR")]
@@ -1673,7 +1940,7 @@ class EvidenceTests(unittest.TestCase):
             kit, trial = self.trial(directory, rehearsal=False)
             evidence = kit_module.build_evidence(kit, trial, 0, False)
             v1.assert_public_safe(evidence)
-            self.assertEqual(evidence["schema"], "open-webui-household-acceptance/v2")
+            self.assertEqual(evidence["schema"], "open-webui-household-acceptance/v3")
             self.assertEqual(
                 (evidence["trial_set_count"], evidence["restore_drills"], evidence["rollback_drills"]), (1, 1, 1)
             )
@@ -1701,7 +1968,7 @@ class EvidenceTests(unittest.TestCase):
             self.assertEqual(trial.drill_counts(), {"restore_drills": 1, "rollback_drills": 1})
             # A critical failure before the drills: neither drill step exists.
             trial.steps = [step for step in trial.steps
-                           if step.id not in (kit_module.TRIAL_STEPS[15], kit_module.TRIAL_STEPS[16])]
+                           if step.id not in (kit_module.RESTORE_DRILL, kit_module.ROLLBACK_DRILL)]
             evidence = kit_module.build_evidence(kit, trial, 1, False)
             self.assertEqual((evidence["restore_drills"], evidence["rollback_drills"]), (0, 0))
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
@@ -1832,17 +2099,28 @@ class EvidenceTests(unittest.TestCase):
                 raise sc.ScenarioFailure('{"restore_s": 41.0}')
 
             for name in ("identity", "unit_properties", "first_start", "commission", "restart", "g4", "no_stored_secret",
-                         "reranker_down", "recovery", "privacy", "rollback_drill", "qdrant_paging", "resources"):
+                         "reranker_down", "full_context", "native_tools", "recovery", "explicit_reads", "privacy",
+                         "rollback_drill", "qdrant_paging", "resources"):
                 setattr(trial, name, ok(name))
             trial.restore_drill = over_ceiling
             trial.prepare_scenarios = lambda: None
-            trial.scenario = ok("scenario")
+
+            def scenario(scenario_id, _ctx):
+                trial.record(kit_module.Step(scenario_id, sc.PASS, "ok", 0.0))
+
+            trial.scenario = scenario
             trial.finish = lambda: 0
             with mock.patch.object(kit_module, "route_checks", return_value={}), \
                     mock.patch.object(sc, "lemond_snapshot", return_value=({}, {})), \
                     contextlib.redirect_stdout(io.StringIO()):
                 trial.run()
             self.assertEqual(ran[-3:], ["rollback_drill", "qdrant_paging", "resources"])
+            # The run records exactly the scenario map, in order, plus the
+            # setup step; finish records the evidence step.
+            expected = list(kit_module.TRIAL_STEPS[:-1])
+            expected.insert(expected.index("open-webui.acceptance.connections.no-stored-secret") + 1,
+                            "open-webui.acceptance.handbook-indexed")
+            self.assertEqual([step.id for step in trial.steps], expected)
             results = {step.id: step.result for step in trial.steps}
             self.assertEqual(results["open-webui.acceptance.drill.restore"], sc.FAIL)
             self.assertEqual(results["open-webui.acceptance.drill.rollback"], sc.PASS)

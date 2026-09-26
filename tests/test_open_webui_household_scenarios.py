@@ -783,6 +783,39 @@ class StubProviderTests(unittest.TestCase):
         text, _ = scenarios.parse_chat_response(events, "text/event-stream")
         self.assertEqual(text, scenarios.CANONICAL_FACT)
 
+    def test_stub_calls_the_named_tool_and_answers_from_its_result(self):
+        prompt = ('Call view_knowledge_file with file_id "f1" and repeat its sentence about the seed cabinet '
+                  "word for word. If the tool returns an error, reply with that error only.")
+        tools = [{"type": "function", "function": {"name": name, "parameters": {}}}
+                 for name in ("list_knowledge_bases", "view_knowledge_file")]
+        request = {"model": stub.CHAT_MODEL, "tools": tools, "messages": [{"role": "user", "content": prompt}]}
+        call = {"id": stub.TOOL_CALL_ID, "type": "function",
+                "function": {"name": "view_knowledge_file", "arguments": '{"file_id":"f1"}'}}
+        completion = stub.chat_completion(request)["choices"][0]
+        self.assertEqual(completion["finish_reason"], "tool_calls")
+        self.assertEqual(completion["message"]["tool_calls"], [call])
+        events = [json.loads(line[len("data: "):]) for line in "".join(stub.chat_events(request)).splitlines()
+                  if line.startswith("data: {")]
+        self.assertEqual(events[0]["choices"][0]["delta"]["tool_calls"], [{"index": 0, **call}])
+        self.assertEqual(events[-1]["choices"][0]["finish_reason"], "tool_calls")
+        # A tool the request does not offer is never called.
+        self.assertIsNone(stub.requested_tool_call({**request, "tools": tools[:1]}))
+        self.assertIsNone(stub.requested_tool_call({**request, "messages": [{"role": "user", "content": "Hi."}]}))
+
+        def answer(result):
+            follow_up = {**request, "messages": [
+                {"role": "user", "content": prompt},
+                {"role": "assistant", "content": "", "tool_calls": [call]},
+                {"role": "tool", "tool_call_id": stub.TOOL_CALL_ID, "content": result},
+            ]}
+            self.assertIsNone(stub.requested_tool_call(follow_up))
+            return stub.chat_answer(follow_up)
+
+        error = "Document retrieval is temporarily unavailable while its inference provider is unhealthy."
+        self.assertEqual(answer(json.dumps({"error": error, "status": 503})), error)
+        handbook = scenarios.handbook_bytes().decode()
+        self.assertEqual(answer(json.dumps({"id": "f1", "content": handbook})), scenarios.CANONICAL_FACT)
+
     def test_stub_parsing_stays_linear_on_hostile_prompts(self):
         self.assertEqual(stub._between("a<context>x</context>", "<context>", "</context>"), "x")
         self.assertIsNone(stub._between("a<context>x", "<context>", "</context>"))
@@ -790,10 +823,14 @@ class StubProviderTests(unittest.TestCase):
             "<context>" + "<" * 40_000 + "</context>",
             "<context>" * 20_000,
             "<user_query>" * 20_000,
+            "Call view_file with file_id " + '"' * 40_000,
+            "Call " * 20_000,
         ):
-            hostile = {"model": stub.CHAT_MODEL, "messages": [{"role": "user", "content": content}]}
+            hostile = {"model": stub.CHAT_MODEL, "messages": [{"role": "user", "content": content}],
+                       "tools": [{"type": "function", "function": {"name": "view_file"}}]}
             started = time.monotonic()
             self.assertIsInstance(stub.chat_answer(hostile), str)
+            stub.requested_tool_call(hostile)
             # The backtracking patterns this replaced took over a second here.
             self.assertLess(time.monotonic() - started, 0.5)
 
