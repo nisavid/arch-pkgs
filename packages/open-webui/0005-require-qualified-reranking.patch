@@ -3,9 +3,11 @@
 # Open WebUI 0.11.4 sdist SHA-256: 1f1a31668a0dee733953c29d6183d78dd78984e696aa8eb0f2083f5796497be0
 # The package installs open-webui-rag-gate.py as open_webui/retrieval/rag_gate.py before build.
 # App startup remains available for ordinary chat when qualification fails; authenticated /api/v1/retrieval/health stays 503.
+# Gate closed: a chat with any attachment returns the 503 detail, and the builtin query_*_files, grep_*_files, view_file, and view_knowledge_file tools return it as a tool error.
+# Gate qualified: explicitly requested whole documents are allowed without reranking: text, note, chat, and url attachments, full-context items beside searched ones, and those tools. A chat whose attachments are all full-context, and the global full-context and bypass modes, stay refused.
 # Hybrid-search errors: when hybrid search raises anything but RAGUnavailableError, the request fails with the gate's 503 instead of upstream's unreranked vector-search fallback, and the gate stays qualified.
 # Empty candidates: RerankCompressor keeps 0.11.4's early return of [] without calling the reranker. Nothing unreranked reaches chat, and closing the gate on an empty knowledge base would only cause an outage.
-# tests/test_open_webui_household_rag_gate.py pins both.
+# tests/test_open_webui_household_rag_gate.py pins each of these.
 diff --git a/backend/open_webui/retrieval/models/external.py b/backend/open_webui/retrieval/models/external.py
 index a66a2c5..82b99e2 100644
 --- a/backend/open_webui/retrieval/models/external.py
@@ -375,45 +377,111 @@ index 8234604..e1afe5f 100644
              log.exception(e)
  
 diff --git a/backend/open_webui/tools/builtin.py b/backend/open_webui/tools/builtin.py
-index d80884d..8728242 100644
+index d80884d..ed9c30d 100644
 --- a/backend/open_webui/tools/builtin.py
 +++ b/backend/open_webui/tools/builtin.py
-@@ -29,6 +29,10 @@ from open_webui.models.memories import Memories
+@@ -29,6 +29,11 @@ from open_webui.models.memories import Memories
  from open_webui.models.messages import Message, Messages
  from open_webui.models.notes import Notes
  from open_webui.models.users import UserModel
 +from open_webui.retrieval.rag_gate import (
 +    RAG_UNAVAILABLE_DETAIL,
 +    RAGUnavailableError,
++    require_required_reranker,
 +)
  from open_webui.retrieval.utils import filter_source_metadata, get_content_from_url
  from open_webui.retrieval.vector.async_client import ASYNC_VECTOR_DB_CLIENT
  from open_webui.routers.images import (
-@@ -2621,6 +2625,13 @@ async def query_chat_files(
+@@ -2326,6 +2331,24 @@ async def search_knowledge_files(
+         return JSONCodec.dumps({'error': str(e)})
+ 
+ 
++def _rag_unavailable_tool_error() -> str:
++    return JSONCodec.dumps(
++        {
++            'error': RAG_UNAVAILABLE_DETAIL,
++            'status': RAGUnavailableError.status_code,
++        }
++    )
++
++
++def _rag_closed_tool_error(request: Request) -> Optional[str]:
++    """Refuse knowledge content with the gate's tool error while RAG is closed."""
++    try:
++        require_required_reranker(getattr(request.app.state, 'RERANKING_FUNCTION', None))
++    except RAGUnavailableError:
++        return _rag_unavailable_tool_error()
++    return None
++
++
+ async def _get_accessible_chat_files(
+     files: Optional[list[dict]],
+     user: dict,
+@@ -2476,6 +2499,9 @@ async def grep_chat_files(
+     if not __user__:
+         return JSONCodec.dumps({'error': 'User context not available'})
+ 
++    if refusal := _rag_closed_tool_error(__request__):
++        return refusal
++
+     if not pattern or not pattern.strip():
+         return JSONCodec.dumps({'error': 'Pattern is required'})
+ 
+@@ -2621,6 +2647,8 @@ async def query_chat_files(
                  chunks.append(chunk)
  
          return JSONCodec.dumps(chunks[:count], ensure_ascii=False)
 +    except RAGUnavailableError:
-+        return JSONCodec.dumps(
-+            {
-+                'error': RAG_UNAVAILABLE_DETAIL,
-+                'status': RAGUnavailableError.status_code,
-+            }
-+        )
++        return _rag_unavailable_tool_error()
      except Exception as e:
          log.exception(f'query_chat_files error: {e}')
          return JSONCodec.dumps({'error': str(e)})
-@@ -3364,6 +3375,13 @@ async def query_knowledge_files(
+@@ -2654,6 +2682,9 @@ async def grep_knowledge_files(
+     if not __user__:
+         return JSONCodec.dumps({'error': 'User context not available'})
+ 
++    if refusal := _rag_closed_tool_error(__request__):
++        return refusal
++
+     if not pattern or not pattern.strip():
+         return JSONCodec.dumps({'error': 'Pattern is required'})
+ 
+@@ -2775,6 +2806,9 @@ async def view_file(
+     if not __user__:
+         return JSONCodec.dumps({'error': 'User context not available'})
+ 
++    if refusal := _rag_closed_tool_error(__request__):
++        return refusal
++
+     # Coerce parameters from LLM tool calls (may come as strings)
+     if isinstance(offset, str):
+         try:
+@@ -2887,6 +2921,9 @@ async def view_knowledge_file(
+     if not __user__:
+         return JSONCodec.dumps({'error': 'User context not available'})
+ 
++    if refusal := _rag_closed_tool_error(__request__):
++        return refusal
++
+     # Coerce parameters from LLM tool calls (may come as strings)
+     if isinstance(offset, str):
+         try:
+@@ -3172,6 +3209,9 @@ async def query_knowledge_files(
+     if not __user__:
+         return JSONCodec.dumps({'error': 'User context not available'})
+ 
++    if refusal := _rag_closed_tool_error(__request__):
++        return refusal
++
+     # Coerce parameters from LLM tool calls (may come as strings)
+     if isinstance(count, str):
+         try:
+@@ -3364,6 +3404,8 @@ async def query_knowledge_files(
          chunks = chunks[:count]
  
          return JSONCodec.dumps(chunks, ensure_ascii=False)
 +    except RAGUnavailableError:
-+        return JSONCodec.dumps(
-+            {
-+                'error': RAG_UNAVAILABLE_DETAIL,
-+                'status': RAGUnavailableError.status_code,
-+            }
-+        )
++        return _rag_unavailable_tool_error()
      except Exception as e:
          log.exception(f'query_knowledge_files error: {e}')
          return JSONCodec.dumps({'error': str(e)})
