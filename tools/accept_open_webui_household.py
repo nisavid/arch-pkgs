@@ -2005,10 +2005,19 @@ NATIVE_TOOL_PROMPT = (
     'Call view_knowledge_file with file_id "{file_id}" and repeat its sentence about the seed cabinet '
     "word for word. If the tool returns an error, reply with that error only."
 )
-# tool_choice "required" is sent only once the guarded rehearsal shows that
-# the pinned chat model's provider honors it; until then the request carries
-# none, and the evidence records that.
-NATIVE_TOOL_CHOICE: str | None = None
+# The kit never sends tool_choice.  Lemonade honors "required" and a named
+# function for the pinned chat model (probe of 2026-09-26), but Open WebUI
+# 0.11.4 copies the request's top-level keys, tool_choice included, into
+# every tool-loop continuation, so an honored tool_choice forces a tool call
+# on every round until CHAT_RESPONSE_MAX_TOOL_CALL_ITERATIONS (256) and the
+# chat never finishes.  The first attempt is plain instead; only when it makes
+# none of the calls a step needs does one retry add this system instruction.
+NATIVE_TOOL_INSTRUCTION = (
+    'Your first action must be a call to view_knowledge_file with file_id "{file_id}". '
+    "Do not reply before that call returns. If the tool returns an error, reply with that error only."
+)
+NATIVE_MODE_PLAIN = "plain"
+NATIVE_MODE_RETRIED = "retried with instruction"
 NATIVE_CHAT_TIMEOUT_S = 300.0
 NATIVE_CHAT_POLL_S = 1.0
 
@@ -2049,7 +2058,8 @@ def gate_tool_error(text: str | None) -> bool:
         return False
 
 
-def native_tool_chat(webui: sc.Endpoint, token: str, chat_model: str, file_id: str) -> dict[str, Any]:
+def native_tool_chat(webui: sc.Endpoint, token: str, chat_model: str, file_id: str,
+                     instruction: str | None = None) -> dict[str, Any]:
     """One UI-style native-calling chat that asks for ``file_id`` through view_knowledge_file.
 
     Open WebUI 0.11.4 offers its builtin tools only to a request that carries
@@ -2058,8 +2068,10 @@ def native_tool_chat(webui: sc.Endpoint, token: str, chat_model: str, file_id: s
     message id.  The kit's other chats carry none of these, so they never
     reach the tools.  Like the frontend, this saves a chat holding one user
     message and an empty assistant message, posts the completion, and reads
-    the stored assistant message back once Open WebUI marks it done.  The
-    chat is deleted on every path, and a failed delete fails the caller.
+    the stored assistant message back once Open WebUI marks it done.  An
+    ``instruction`` goes first in the completion's messages as a system
+    message.  The chat is deleted on every path, and a failed delete fails
+    the caller.
     """
 
     user_id, assistant_id = str(uuid.uuid4()), str(uuid.uuid4())
@@ -2089,11 +2101,10 @@ def native_tool_chat(webui: sc.Endpoint, token: str, chat_model: str, file_id: s
             "chat_id": chat_id,
             "id": assistant_id,
             "session_id": f"owui-acc-{secrets.token_hex(8)}",
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": ([{"role": "system", "content": instruction}] if instruction else [])
+            + [{"role": "user", "content": prompt}],
             "params": {"function_calling": "native", "temperature": 0},
         }
-        if NATIVE_TOOL_CHOICE is not None:
-            payload["tool_choice"] = NATIVE_TOOL_CHOICE
         started = time.monotonic()
         response = webui.request("POST", sc.API["chat"], payload=payload, token=token)
         if response.status != 200:
@@ -2117,23 +2128,50 @@ def native_tool_chat(webui: sc.Endpoint, token: str, chat_model: str, file_id: s
     deleted = _delete(webui, token, record_path)
     if deleted != 200:
         raise sc.ScenarioFailure(f"the native-tools chat delete returned {deleted}")
-    return {"message": stored, "completion_s": elapsed, "timeout_s": NATIVE_CHAT_TIMEOUT_S,
-            "tool_choice_sent": NATIVE_TOOL_CHOICE is not None}
+    return {"message": stored, "completion_s": elapsed}
 
 
-def native_values(chat: Mapping[str, Any]) -> dict[str, Any]:
-    """What a native-tools chat records: its calls, timings, and any stored error."""
+def native_knowledge_chat(webui: sc.Endpoint, token: str, chat_model: str, file_id: str,
+                          needed: frozenset[str]) -> dict[str, Any]:
+    """Native-tools chats until one calls a tool in ``needed``: a plain attempt, then at most one retry.
 
-    message = chat["message"]
+    The retry, in a fresh chat, adds NATIVE_TOOL_INSTRUCTION.  It runs only
+    when the plain attempt called none of ``needed``; a call whose output
+    fails the step never triggers it.  Every attempt is returned, so the
+    caller can check each stored message, and the last one is the result.
+    """
+
+    attempts = [native_tool_chat(webui, token, chat_model, file_id)]
+    mode = NATIVE_MODE_PLAIN
+    if not any(name in needed for name, _ in tool_calls(attempts[0]["message"])):
+        attempts.append(native_tool_chat(webui, token, chat_model, file_id,
+                                         NATIVE_TOOL_INSTRUCTION.format(file_id=file_id)))
+        mode = NATIVE_MODE_RETRIED
+    return {"message": attempts[-1]["message"], "mode": mode, "attempts": attempts}
+
+
+def attempt_values(attempt: Mapping[str, Any]) -> dict[str, Any]:
+    """One native-tools attempt's record: its calls, completion time, and any stored error."""
+
+    message = attempt["message"]
     values: dict[str, Any] = {
         "tools_called": [name for name, _ in tool_calls(message)],
-        "completion_s": chat["completion_s"],
-        "timeout_s": chat["timeout_s"],
-        "tool_choice_sent": chat["tool_choice_sent"],
+        "completion_s": attempt["completion_s"],
     }
     error = message.get("error")
     if error:
         values["message_error"] = str(error.get("content") if isinstance(error, dict) else error)[:300]
+    return values
+
+
+def native_values(chat: Mapping[str, Any]) -> dict[str, Any]:
+    """What a native-tools step records: its mode, the last attempt, and a retried step's first attempt."""
+
+    attempts = chat["attempts"]
+    values: dict[str, Any] = {**attempt_values(attempts[-1]), "timeout_s": NATIVE_CHAT_TIMEOUT_S,
+                              "mode": chat["mode"]}
+    if len(attempts) > 1:
+        values["first_attempt"] = attempt_values(attempts[0])
     return values
 
 
@@ -2857,10 +2895,10 @@ class Trial:
         before = self.rag_health()
         if before != 503:
             raise sc.ScenarioFailure(json.dumps({"health_before": before}))
-        chat = native_tool_chat(self.kit.uds(), self.token, self.chat_id(), self.seed_file)
+        chat = native_knowledge_chat(self.kit.uds(), self.token, self.chat_id(), self.seed_file,
+                                     NATIVE_KNOWLEDGE_TOOLS)
         after = self.rag_health()
-        message = chat["message"]
-        knowledge = [text for name, text in tool_calls(message) if name in NATIVE_KNOWLEDGE_TOOLS]
+        knowledge = [text for name, text in tool_calls(chat["message"]) if name in NATIVE_KNOWLEDGE_TOOLS]
         values = {
             **native_values(chat),
             "health_before": before,
@@ -2868,7 +2906,9 @@ class Trial:
             # Only the fixed tool error is ever recorded, never handbook text.
             "knowledge_tool_outputs": [text if gate_tool_error(text) else "not the gate's tool error"
                                        for text in knowledge],
-            "handbook_text": carries_handbook_text(json.dumps(message, ensure_ascii=False)),
+            # A retried step's plain attempt must not leak either.
+            "handbook_text": any(carries_handbook_text(json.dumps(attempt["message"], ensure_ascii=False))
+                                 for attempt in chat["attempts"]),
         }
         if not knowledge:
             raise sc.ScenarioFailure("no knowledge tool call observed: " + json.dumps(values, sort_keys=True))
@@ -2885,7 +2925,8 @@ class Trial:
         uds = self.kit.uds()
         replies = {name: post_chat(uds, self.token, self.chat_id(), files)
                    for name, files in full_context_files(self.seed_file).items()}
-        chat = native_tool_chat(uds, self.token, self.chat_id(), self.seed_file)
+        chat = native_knowledge_chat(uds, self.token, self.chat_id(), self.seed_file,
+                                     frozenset({"view_knowledge_file"}))
         # The canonical fact has no character that JSON escapes, so the tool's
         # JSON output carries it verbatim.
         views = [text or "" for name, text in tool_calls(chat["message"]) if name == "view_knowledge_file"]
