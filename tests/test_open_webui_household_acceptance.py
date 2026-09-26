@@ -1657,6 +1657,7 @@ class GateCheckTests(unittest.TestCase):
         "wrong-detail" (503 with another detail), or "leak" (the gate's 503
         whose body quotes the handbook).  ``tool_name`` None makes the
         native chat call no tool; ``done_after`` None never finishes it.
+        ``delete_status`` may be an exception, which the chat DELETE raises.
         ``tool_name`` and ``answer`` may be lists, one entry per native chat
         completion in order, the last repeating.
         """
@@ -1665,7 +1666,8 @@ class GateCheckTests(unittest.TestCase):
 
         def __init__(self, gate="closed", *, health=None, legacy=None,
                      tool_name: str | None | list[str | None] = "view_knowledge_file",
-                     tool_output=None, answer=None, delete_status=200, done_after: int | None = 2):
+                     tool_output=None, answer=None, delete_status: int | BaseException = 200,
+                     done_after: int | None = 2):
             closed = gate == "closed"
             self.health = list(health or [503 if closed else 200])
             self.legacy = {"mixed": "refuse" if closed else "answer", "all-full": "refuse" if closed else "answer",
@@ -1701,6 +1703,8 @@ class GateCheckTests(unittest.TestCase):
                 return reply({"id": "c1", "chat": {"history": {"messages": {self.assistant_id(): self.message()}}}})
             if (method, path) == ("DELETE", sc.API["chat_record"].format(id="c1")):
                 self.deleted.append("chat c1")
+                if isinstance(self.delete_status, BaseException):
+                    raise self.delete_status
                 return reply(self.delete_status == 200, self.delete_status)
             raise AssertionError(f"unexpected request {method} {path}")
 
@@ -1895,6 +1899,38 @@ class GateCheckTests(unittest.TestCase):
 
     def test_a_failed_native_chat_delete_fails_the_check(self):
         self.assert_fails("native_tools", self.FakeOpenWebUI(delete_status=500), "delete returned 500")
+
+    def test_a_failed_native_chat_reports_its_cleanup_after_the_chat_error(self):
+        # The chat never finishes, so the failure leads with the timeout and
+        # then names the chat and what its cleanup DELETE returned.
+        for outcome, reported in ((200, "200"), (500, "500"), (ConnectionResetError(), "ConnectionResetError")):
+            with self.subTest(reported):
+                webui = self.FakeOpenWebUI(done_after=None, delete_status=outcome)
+                with mock.patch.object(kit_module, "NATIVE_CHAT_POLL_S", 0), \
+                        mock.patch.object(kit_module, "NATIVE_CHAT_TIMEOUT_S", 0.0), \
+                        self.assertRaises(sc.ScenarioFailure) as raised:
+                    kit_module.native_tool_chat(webui, "t", "chat", "f1")
+                self.assertEqual(str(raised.exception),
+                                 "timed out waiting for the native-tools chat to finish; "
+                                 f"cleanup: chat c1 DELETE returned {reported}")
+                self.assertIsInstance(raised.exception.__cause__, sc.ScenarioFailure)
+                self.assertEqual(webui.deleted, ["chat c1"])
+
+    def test_a_transport_error_in_a_native_chat_keeps_its_type_in_the_record(self):
+        webui = self.FakeOpenWebUI()
+        answer = webui.request
+
+        def request(method, path, **kwargs):
+            if (method, path) == ("GET", sc.API["chat_record"].format(id="c1")):
+                raise TimeoutError("socket read timed out")
+            return answer(method, path, **kwargs)
+
+        webui.request = request
+        with mock.patch.object(kit_module, "NATIVE_CHAT_POLL_S", 0), \
+                self.assertRaises(sc.ScenarioFailure) as raised:
+            kit_module.native_tool_chat(webui, "t", "chat", "f1")
+        self.assertEqual(str(raised.exception),
+                         "TimeoutError: socket read timed out; cleanup: chat c1 DELETE returned 200")
 
     # gate.explicit-reads --------------------------------------------------------
     def test_a_qualified_gate_allows_every_explicit_read_whole(self):

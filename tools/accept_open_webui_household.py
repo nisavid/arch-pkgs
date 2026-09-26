@@ -2209,8 +2209,14 @@ def native_tool_chat(webui: sc.Endpoint, token: str, chat_model: str, file_id: s
 
         wait_until(done, NATIVE_CHAT_TIMEOUT_S, "the native-tools chat to finish", NATIVE_CHAT_POLL_S)
         elapsed = round(time.monotonic() - started, 3)
+    except Exception as error:
+        # Clean up on every path.  The failure leads with the chat's error and
+        # then names the chat and the DELETE result, so a cleanup that failed
+        # is never lost.
+        deleted = _delete(webui, token, record_path)
+        primary = str(error) if isinstance(error, sc.ScenarioFailure) else f"{type(error).__name__}: {error}"
+        raise sc.ScenarioFailure(f"{primary}; cleanup: chat {chat_id} DELETE returned {deleted}") from error
     except BaseException:
-        # Clean up on every path, but never let the cleanup hide the failure.
         _delete(webui, token, record_path)
         raise
     deleted = _delete(webui, token, record_path)
