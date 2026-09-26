@@ -672,9 +672,10 @@ def render_household_profile(example: str, lemond_url: str) -> str:
 def speech_environment(whisper_model: str = DEFAULT_WHISPER_MODEL) -> dict[str, str]:
     """Local Whisper settings (ruling 11), set as unit ``Environment=`` lines.
 
-    They are not part of the connection seed: ``HF_HUB_OFFLINE=1`` keeps a
-    Whisper load failure from falling back to the network.  The acceptance
-    unit and the production drop-in carry the same two values.
+    They are not household profile keys, and the profile must not set them:
+    ``HF_HUB_OFFLINE=1`` keeps a Whisper load failure from falling back to the
+    network.  The acceptance unit and the production drop-in carry the same
+    two values.
     """
 
     return {"WHISPER_MODEL": whisper_model, "HF_HUB_OFFLINE": "1"}
