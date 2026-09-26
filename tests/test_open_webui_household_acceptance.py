@@ -1305,11 +1305,14 @@ class GateCheckTests(unittest.TestCase):
         "wrong-detail" (503 with another detail), or "leak" (the gate's 503
         whose body quotes the handbook).  ``tool_name`` None makes the
         native chat call no tool; ``done_after`` None never finishes it.
+        ``tool_name`` and ``answer`` may be lists, one entry per native chat
+        completion in order, the last repeating.
         """
 
         json = sc.Endpoint.json
 
-        def __init__(self, gate="closed", *, health=None, legacy=None, tool_name: str | None = "view_knowledge_file",
+        def __init__(self, gate="closed", *, health=None, legacy=None,
+                     tool_name: str | None | list[str | None] = "view_knowledge_file",
                      tool_output=None, answer=None, delete_status=200, done_after: int | None = 2):
             closed = gate == "closed"
             self.health = list(health or [503 if closed else 200])
@@ -1368,19 +1371,25 @@ class GateCheckTests(unittest.TestCase):
         def assistant_id(self):
             return self.completions[-1]["id"]
 
+        def current(self, value):
+            """A per-completion setting's value for the latest native chat completion."""
+
+            return value[min(len(self.completions), len(value)) - 1] if isinstance(value, list) else value
+
         def message(self):
             output = []
-            if self.tool_name:
+            tool_name, answer = self.current(self.tool_name), self.current(self.answer)
+            if tool_name:
                 output += [
-                    {"type": "function_call", "id": "fc_1", "call_id": "call_1", "name": self.tool_name,
+                    {"type": "function_call", "id": "fc_1", "call_id": "call_1", "name": tool_name,
                      "arguments": json.dumps({"file_id": "f1"}), "status": "completed"},
                     {"type": "function_call_output", "id": "fco_1", "call_id": "call_1",
                      "output": [{"type": "input_text", "text": self.tool_output}], "status": "completed"},
                 ]
             output.append({"type": "message", "id": "msg_1", "role": "assistant", "status": "completed",
-                           "content": [{"type": "output_text", "text": self.answer}]})
+                           "content": [{"type": "output_text", "text": answer}]})
             done = self.done_after is not None and self.polls >= self.done_after
-            return {"id": self.assistant_id(), "role": "assistant", "content": self.answer if done else "",
+            return {"id": self.assistant_id(), "role": "assistant", "content": answer if done else "",
                     "output": output if done else [], "done": done}
 
     def run_step(self, name, webui, timeout_s=None):
@@ -1441,7 +1450,9 @@ class GateCheckTests(unittest.TestCase):
         self.assertEqual(values["tools_called"], ["view_knowledge_file"])
         self.assertEqual(values["knowledge_tool_outputs"], [self.GATE_ERROR])
         self.assertFalse(values["handbook_text"])
-        self.assertFalse(values["tool_choice_sent"])
+        self.assertEqual(values["mode"], "plain")
+        self.assertNotIn("first_attempt", values)
+        self.assertEqual(len(webui.completions), 1)
         self.assertEqual((values["health_before"], values["health_after"]), (503, 503))
         # The chat is saved as the frontend saves it, then deleted.
         chat = webui.created[0]["chat"]
@@ -1472,8 +1483,39 @@ class GateCheckTests(unittest.TestCase):
         for tool in (None, "search_notes"):
             with self.subTest(tool):
                 webui = self.FakeOpenWebUI(tool_name=tool)
-                self.assert_fails("native_tools", webui, "no knowledge tool call observed")
-                self.assertEqual(webui.deleted, ["chat c1"])
+                failure = self.assert_fails("native_tools", webui, "no knowledge tool call observed")
+                self.assertIn('"mode": "retried with instruction"', str(failure))
+                # One plain attempt and one retry, each chat deleted; never a third.
+                self.assertEqual(len(webui.completions), 2)
+                self.assertEqual(webui.deleted, ["chat c1", "chat c1"])
+
+    def test_a_plain_attempt_without_a_knowledge_call_retries_once_with_the_instruction(self):
+        webui = self.FakeOpenWebUI(tool_name=[None, "view_knowledge_file"])
+        values = self.run_step("native_tools", webui)
+        self.assertEqual(values["mode"], "retried with instruction")
+        self.assertEqual(values["first_attempt"]["tools_called"], [])
+        self.assertEqual(values["tools_called"], ["view_knowledge_file"])
+        self.assertEqual(values["knowledge_tool_outputs"], [self.GATE_ERROR])
+        plain, retried = webui.completions
+        self.assertEqual([message["role"] for message in plain["messages"]], ["user"])
+        system, user = retried["messages"]
+        self.assertEqual(system["role"], "system")
+        self.assertIn('call to view_knowledge_file with file_id "f1"', system["content"])
+        self.assertEqual(user, plain["messages"][0])
+        # The retry is a fresh saved chat, not a second turn in the first.
+        self.assertEqual(len(webui.created), 2)
+        self.assertNotEqual(plain["id"], retried["id"])
+        for completion in (plain, retried):
+            self.assertNotIn("tool_choice", completion)
+        self.assertEqual(webui.deleted, ["chat c1", "chat c1"])
+
+    def test_a_leak_in_the_plain_attempt_fails_even_when_the_retry_passes(self):
+        webui = self.FakeOpenWebUI(tool_name=["search_notes", "view_knowledge_file"],
+                                   answer=["The brass key, as the handbook says.", kit_module._rag_unavailable_detail()])
+        failure = self.assert_fails("native_tools", webui)
+        self.assertIn('"handbook_text": true', str(failure))
+        self.assertNotIn(self.HANDBOOK, str(failure))
+        self.assertEqual(len(webui.completions), 2)
 
     def test_each_native_tool_leak_fails_the_closed_check(self):
         handbook = json.dumps({"id": "f1", "content": self.HANDBOOK})
@@ -1489,11 +1531,14 @@ class GateCheckTests(unittest.TestCase):
                 webui = self.FakeOpenWebUI(**overrides)
                 failure = self.assert_fails("native_tools", webui)
                 self.assertNotIn(self.HANDBOOK, str(failure))
+                # A knowledge call that fails the step is never retried away.
+                self.assertEqual(len(webui.completions), 1)
                 self.assertEqual(webui.deleted, ["chat c1"])
 
     def test_a_native_chat_that_never_finishes_fails_and_is_still_deleted(self):
         webui = self.FakeOpenWebUI(done_after=None)
         self.assert_fails("native_tools", webui, "timed out waiting for the native-tools chat", timeout_s=0.0)
+        self.assertEqual(len(webui.completions), 1)
         self.assertEqual(webui.deleted, ["chat c1"])
 
     def test_a_failed_native_chat_delete_fails_the_check(self):
@@ -1507,7 +1552,19 @@ class GateCheckTests(unittest.TestCase):
         self.assertEqual(values["chats"], {"mixed": read, "all-full": read})
         self.assertEqual(values["view_knowledge_file_calls"], 1)
         self.assertTrue(values["view_knowledge_file_holds_fact"])
+        self.assertEqual(values["mode"], "plain")
         self.assertEqual(webui.deleted, ["chat c1"])
+        self.assertNotIn(self.HANDBOOK, json.dumps(values))
+
+    def test_explicit_reads_retry_once_until_view_knowledge_file_is_called(self):
+        # Another knowledge tool does not satisfy this step, so it triggers the retry.
+        webui = self.FakeOpenWebUI("qualified", tool_name=["query_knowledge_files", "view_knowledge_file"])
+        values = self.run_step("explicit_reads", webui)
+        self.assertEqual(values["mode"], "retried with instruction")
+        self.assertEqual(values["first_attempt"]["tools_called"], ["query_knowledge_files"])
+        self.assertTrue(values["view_knowledge_file_holds_fact"])
+        self.assertEqual(webui.completions[1]["messages"][0]["role"], "system")
+        self.assertEqual(webui.deleted, ["chat c1", "chat c1"])
         self.assertNotIn(self.HANDBOOK, json.dumps(values))
 
     def test_each_over_gated_explicit_read_fails_the_qualified_check(self):
