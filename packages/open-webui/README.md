@@ -29,22 +29,23 @@ remains in
   `/opt/open-webui/lib/python3.14/site-packages`. The bundled browser-side
   Pyodide wheels are a separate WebAssembly runtime, not server providers or a
   security boundary.
-- Native RAG uses the five Qdrant collections under
-  `open-webui-rag-v1`, zembed query/document prefixes, and the external zerank
-  reranker (Lemonade model `zerank-2-GGUF`, the built-in entry that carries
-  the ZeroEntropy selected-logit adapter). The packaged defaults send embedding and reranking requests to
-  Lemonade at `http://127.0.0.1:13305/api/v1` and enable hybrid search,
-  because the reranker gate rejects non-hybrid document retrieval. Reranker
-  qualification is mandatory for document RAG; ordinary chat remains
-  available when that provider is unhealthy.
-- The packaged chat connection seed disables the Ollama API and names only
-  Lemonade at `http://127.0.0.1:13305/api/v1`, so a fresh instance has no
-  default Ollama or `api.openai.com` peer. Open WebUI copies these values, and
+- Native RAG uses the five Qdrant collections under `open-webui-rag-v1`, an
+  external reranker, and hybrid search. The packaged defaults select the
+  external reranker engine, a 30-second reranker timeout, and hybrid search,
+  because the reranker gate qualifies only an external reranker with a finite
+  timeout and rejects non-hybrid document retrieval. Reranker qualification is
+  mandatory for document RAG; ordinary chat remains available when that
+  provider is unhealthy. The model provider, the models, and the zembed
+  query/document prefixes come from the
+  [household profile](#household-profile), not the packaged defaults.
+- The packaged defaults disable both the Ollama and the OpenAI-compatible
+  APIs, so an instance without a profile has no model peer, not even the
+  default Ollama or `api.openai.com` one. Open WebUI copies these values, and
   the other persistent settings such as `RAG_RERANKING_MODEL`, into its
   database the first time an instance starts. After that, the stored values
-  win over `open-webui.env`, so a later edit to the file or a package update
-  does not change an existing instance. Change them in the admin UI, or start
-  from a fresh data directory.
+  win over both environment files, so a later edit to either file or a
+  package update does not change an existing instance. Change them in the
+  admin UI, or start from a fresh data directory.
 - Open WebUI stores no secret for its model connections. The package keeps the
   embedding and reranking API-key settings out of persistent configuration and
   out of the document settings form.
@@ -81,9 +82,48 @@ remains in
   `/var/lib/open-webui-session-epoch` and is outside application snapshots and
   rollback state.
 - Signup, API keys, server-side package installation, profile-image URL
-  forwarding, code execution/interpreter, automations, calendar, evaluation
-  arena, update checks, and non-loopback IP egress are disabled by the packaged
-  baseline.
+  forwarding, code execution/interpreter, automations, update checks, and
+  non-loopback IP egress are disabled by the packaged baseline. The household
+  profile also turns off the calendar, evaluation arena models, and retrieval
+  query generation.
+
+## Household Profile
+
+The packaged `/etc/open-webui/open-webui.env` carries only generic and
+security defaults. On their own, they give a fresh instance no model
+connection and keep document RAG closed (the retrieval health probe returns
+503). The household's provider settings live in a host-owned profile,
+`/etc/open-webui/household.env`, which `open-webui.service` reads after the
+packaged file, so its values win. The package never ships or overwrites that
+file. `/usr/share/open-webui/household.env.example` documents each key, with
+placeholders for the host-specific values: `<lemond>` stands for the model
+server's origin.
+
+Create the live profile once, before the first start, because the first start
+copies the persistent settings into the database. The first command copies the
+example only if no profile exists yet:
+
+```sh
+sudo test ! -e /etc/open-webui/household.env &&
+  sudo install -m 0600 /usr/share/open-webui/household.env.example /etc/open-webui/household.env
+sudoedit /etc/open-webui/household.env
+```
+
+Replace every `<...>` placeholder. The unit reads the profile with a `-`
+prefix, so it starts without one, and it also silently ignores a profile it
+cannot read or parse. Check both before the first start:
+
+```sh
+sudo grep -nE '^[^#]*<[a-z]+>' /etc/open-webui/household.env
+sudo systemd-run --quiet --wait --pipe \
+  -p EnvironmentFile=/etc/open-webui/open-webui.env \
+  -p EnvironmentFile=/etc/open-webui/household.env \
+  /usr/bin/env | grep -E '^(ENABLE_OPENAI_API|OPENAI_API_BASE_URLS|RAG_EMBEDDING_MODEL|RAG_RERANKING_MODEL)='
+```
+
+The `grep` must print nothing. The `systemd-run` check reads both files the
+way the unit does, without the `-`, so a malformed profile fails there; it must
+print `ENABLE_OPENAI_API=true` and the profile's URL and model values.
 
 ## Mandatory Credentials
 
@@ -108,7 +148,7 @@ is limited to initial provisioning, deliberate rotation, or restore.
 ## zembed Prefixes
 
 zembed expects each input wrapped as a short chat transcript whose system turn
-names the input type. The packaged defaults carry the opening part of that
+names the input type. The household profile carries the opening part of that
 wrapper, with real newlines, as Open WebUI text prefixes:
 
 - `RAG_EMBEDDING_QUERY_PREFIX`:
@@ -116,7 +156,7 @@ wrapper, with real newlines, as Open WebUI text prefixes:
 - `RAG_EMBEDDING_CONTENT_PREFIX`:
   `<|im_start|>system\ndocument<|im_end|>\n<|im_start|>user\n`
 
-Each `\n` stands for a real newline. In `open-webui.env` each value is a
+Each `\n` stands for a real newline. In the profile each value is a
 double-quoted string that spans lines, which systemd reads with its newlines
 intact. `RAG_EMBEDDING_PREFIX_FIELD_NAME` stays unset, so Open WebUI sends no
 `input_type` request field.
@@ -241,14 +281,17 @@ command runs under `sudo`.
    `Drop:` line for it instead). Once
    `sudo tailscale --socket=/run/open-webui-tailnet/tailscaled.sock status --peers=false`
    shows the node online, retry once from a device the policy admits.
-3. Before the first Open WebUI start, set the canonical origin in
-   `/etc/open-webui/open-webui.env`:
+3. Before the first Open WebUI start, set the canonical origin in the
+   [household profile](#household-profile), `/etc/open-webui/household.env`,
+   by uncommenting its two origin lines and filling them in:
 
    ```text
    WEBUI_URL=https://<name>.<tailnet>.ts.net
    CORS_ALLOW_ORIGIN=https://<name>.<tailnet>.ts.net
    ```
 
+   A unit drop-in with `Environment=` lines works too, but set the origin in
+   one place only: the profile's values override `Environment=` lines.
    Settle the origin now. `WEBUI_URL` is persistent config: the first start
    copies it into Open WebUI's database, and the stored value wins after
    that, so later edits to this file have no effect. Change it later under
@@ -471,6 +514,10 @@ points per request.
     configuration stay runtime state.
   - Page Qdrant scroll reads under the packaged strict-mode query limit
     ([Qdrant Scroll Paging](#qdrant-scroll-paging)).
+  - Keep the model provider and household choices out of the packaged
+    defaults: the unit reads an optional host-owned profile after them, and
+    the package ships only its documented example
+    ([Household Profile](#household-profile)).
 - `update_notes`:
   - Recompute the complete private closure from the immutable release lock and
     selected optional runtime backends; a digest without the full lock is not a

@@ -23,6 +23,117 @@ def read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def environment_assignments(text: str) -> dict[str, str]:
+    """Parse the active assignments of a systemd EnvironmentFile.
+
+    Covers the forms these files use: comments, blank lines, plain values, and
+    double-quoted values that span lines.
+    """
+
+    values: dict[str, str] = {}
+    lines = iter(text.splitlines())
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith(("#", ";")):
+            continue
+        key, separator, value = stripped.partition("=")
+        if not separator:
+            continue
+        if value.startswith('"'):
+            value = value[1:]
+            while not value.endswith('"'):
+                value += "\n" + next(lines)
+            value = value[:-1]
+        if key in values:
+            raise ValueError(f"{key} is assigned twice")
+        values[key] = value
+    return values
+
+
+# The settings that only the household profile carries. Every other key is a
+# generic, security, or RAG-gate default that stays in open-webui.env.
+HOUSEHOLD_PROFILE_KEYS = frozenset(
+    {
+        "ENABLE_OPENAI_API",
+        "OPENAI_API_BASE_URLS",
+        "OPENAI_API_KEYS",
+        "RAG_EMBEDDING_ENGINE",
+        "RAG_OPENAI_API_BASE_URL",
+        "RAG_EMBEDDING_MODEL",
+        "RAG_EMBEDDING_BATCH_SIZE",
+        "RAG_EMBEDDING_CONCURRENT_REQUESTS",
+        "RAG_EMBEDDING_QUERY_PREFIX",
+        "RAG_EMBEDDING_CONTENT_PREFIX",
+        "RAG_RERANKING_MODEL",
+        "RAG_EXTERNAL_RERANKER_URL",
+        "RAG_RERANKING_BATCH_SIZE",
+        "ENABLE_CALENDAR",
+        "ENABLE_EVALUATION_ARENA_MODELS",
+        "ENABLE_RETRIEVAL_QUERY_GENERATION",
+    }
+)
+PACKAGED_DEFAULT_KEYS = frozenset(
+    {
+        "ENV",
+        "FROM_INIT_PY",
+        "UVICORN_WORKERS",
+        "FRONTEND_BUILD_DIR",
+        "STATIC_DIR",
+        "DATA_DIR",
+        "DATABASE_URL",
+        "CACHE_DIR",
+        "HF_HOME",
+        "SENTENCE_TRANSFORMERS_HOME",
+        "TIKTOKEN_CACHE_DIR",
+        "WHISPER_MODEL_DIR",
+        "WEBUI_AUTH",
+        "ENABLE_SIGNUP",
+        "DEFAULT_USER_ROLE",
+        "ENABLE_API_KEYS",
+        "ENABLE_PERSISTENT_CONFIG",
+        "WEBUI_SESSION_COOKIE_SECURE",
+        "WEBUI_SESSION_COOKIE_SAME_SITE",
+        "WEBUI_AUTH_COOKIE_SECURE",
+        "WEBUI_AUTH_COOKIE_SAME_SITE",
+        "BYPASS_ADMIN_ACCESS_CONTROL",
+        "BYPASS_MODEL_ACCESS_CONTROL",
+        "BYPASS_RETRIEVAL_ACCESS_CONTROL",
+        "ENABLE_PLUGINS",
+        "ENABLE_PIP_INSTALL_FRONTMATTER_REQUIREMENTS",
+        "ENABLE_DIRECT_CONNECTIONS",
+        "ENABLE_OPENAI_API_PASSTHROUGH",
+        "ENABLE_FORWARD_USER_INFO_HEADERS",
+        "ENABLE_VERSION_UPDATE_CHECK",
+        "OFFLINE_MODE",
+        "ENABLE_PROFILE_IMAGE_URL_FORWARDING",
+        "ENABLE_CODE_EXECUTION",
+        "ENABLE_CODE_INTERPRETER",
+        "USER_PERMISSIONS_FEATURES_CODE_INTERPRETER",
+        "ENABLE_AUTOMATIONS",
+        "USER_PERMISSIONS_FEATURES_AUTOMATIONS",
+        "ENABLE_OLLAMA_API",
+        "ENABLE_OPENAI_API",
+        "VECTOR_DB",
+        "QDRANT_URI",
+        "QDRANT_ON_DISK",
+        "QDRANT_PREFER_GRPC",
+        "QDRANT_COLLECTION_PREFIX",
+        "ENABLE_QDRANT_MULTITENANCY_MODE",
+        "RAG_RERANKING_ENGINE",
+        "ENABLE_RAG_HYBRID_SEARCH",
+        "RAG_EXTERNAL_RERANKER_TIMEOUT",
+        "REDIS_KEY_PREFIX",
+        "ENABLE_STAR_SESSIONS_MIDDLEWARE",
+        "WEBSOCKET_MANAGER",
+        "SCARF_NO_ANALYTICS",
+        "DO_NOT_TRACK",
+        "ANONYMIZED_TELEMETRY",
+    }
+)
+HOUSEHOLD_PROFILE = "/etc/open-webui/household.env"
+HOUSEHOLD_EXAMPLE = "/usr/share/open-webui/household.env.example"
+
+
 class OpenWebUIPackageContractTests(unittest.TestCase):
     def test_recipe_binds_exact_release_and_frozen_closures(self):
         recipe = read(OPEN_WEBUI / "PKGBUILD")
@@ -400,62 +511,155 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
         for value in credential_values.values():
             self.assertNotIn(value, result.stderr)
 
-    def test_household_defaults_close_signup_and_server_code_installation(self):
-        environment = read(OPEN_WEBUI / "open-webui.env")
+    def test_packaged_defaults_close_signup_and_server_code_installation(self):
+        environment = environment_assignments(read(OPEN_WEBUI / "open-webui.env"))
 
-        for setting in (
-            "WEBUI_AUTH=true",
-            "ENABLE_SIGNUP=false",
-            "DEFAULT_USER_ROLE=pending",
-            "WEBUI_SESSION_COOKIE_SECURE=true",
-            "WEBUI_SESSION_COOKIE_SAME_SITE=strict",
-            "ENABLE_PIP_INSTALL_FRONTMATTER_REQUIREMENTS=false",
-            "ENABLE_VERSION_UPDATE_CHECK=false",
-            "OFFLINE_MODE=true",
-            "ENABLE_API_KEYS=false",
-            "UVICORN_WORKERS=1",
-            "ENABLE_PROFILE_IMAGE_URL_FORWARDING=false",
-            "ENABLE_CODE_EXECUTION=false",
-            "ENABLE_CODE_INTERPRETER=false",
-            "ENABLE_AUTOMATIONS=false",
-            "ENABLE_CALENDAR=false",
-            "ENABLE_EVALUATION_ARENA_MODELS=false",
-            "ENABLE_RETRIEVAL_QUERY_GENERATION=false",
-            "VECTOR_DB=qdrant",
-            "QDRANT_COLLECTION_PREFIX=open-webui-rag-v1",
-            "ENABLE_QDRANT_MULTITENANCY_MODE=true",
-            "RAG_RERANKING_ENGINE=external",
-            "RAG_RERANKING_MODEL=zerank-2-GGUF",
-            "ENABLE_RAG_HYBRID_SEARCH=true",
-            "ENABLE_OLLAMA_API=false",
-            "OPENAI_API_BASE_URLS=http://127.0.0.1:13305/api/v1",
-            "OPENAI_API_KEYS=",
-            "RAG_OPENAI_API_BASE_URL=http://127.0.0.1:13305/api/v1",
-            "RAG_EXTERNAL_RERANKER_URL=http://127.0.0.1:13305/api/v1/rerank",
-            "RAG_EXTERNAL_RERANKER_TIMEOUT=30",
-            "ENABLE_STAR_SESSIONS_MIDDLEWARE=true",
-            "WEBSOCKET_MANAGER=redis",
+        for key, value in (
+            ("WEBUI_AUTH", "true"),
+            ("ENABLE_SIGNUP", "false"),
+            ("DEFAULT_USER_ROLE", "pending"),
+            ("WEBUI_SESSION_COOKIE_SECURE", "true"),
+            ("WEBUI_SESSION_COOKIE_SAME_SITE", "strict"),
+            ("ENABLE_PIP_INSTALL_FRONTMATTER_REQUIREMENTS", "false"),
+            ("ENABLE_VERSION_UPDATE_CHECK", "false"),
+            ("OFFLINE_MODE", "true"),
+            ("ENABLE_API_KEYS", "false"),
+            ("UVICORN_WORKERS", "1"),
+            ("ENABLE_PROFILE_IMAGE_URL_FORWARDING", "false"),
+            ("ENABLE_CODE_EXECUTION", "false"),
+            ("ENABLE_CODE_INTERPRETER", "false"),
+            ("ENABLE_AUTOMATIONS", "false"),
+            ("USER_PERMISSIONS_FEATURES_AUTOMATIONS", "false"),
+            ("VECTOR_DB", "qdrant"),
+            ("QDRANT_COLLECTION_PREFIX", "open-webui-rag-v1"),
+            ("ENABLE_QDRANT_MULTITENANCY_MODE", "true"),
+            ("ENABLE_STAR_SESSIONS_MIDDLEWARE", "true"),
+            ("WEBSOCKET_MANAGER", "redis"),
+            # No default model peer: neither Ollama nor api.openai.com.
+            ("ENABLE_OLLAMA_API", "false"),
+            ("ENABLE_OPENAI_API", "false"),
+            # The 0005 RAG gate qualifies only an external reranker, refuses
+            # non-hybrid retrieval, and refuses a reranker without a finite
+            # positive timeout, so these stay packaged.
+            ("RAG_RERANKING_ENGINE", "external"),
+            ("ENABLE_RAG_HYBRID_SEARCH", "true"),
+            ("RAG_EXTERNAL_RERANKER_TIMEOUT", "30"),
         ):
-            self.assertIn(setting, environment)
-        self.assertNotIn("RAG_RERANKING_ENGINE=openai", environment)
+            self.assertEqual(environment.get(key), value, key)
+
+    def test_household_settings_live_only_in_the_example_profile(self):
+        packaged = environment_assignments(read(OPEN_WEBUI / "open-webui.env"))
+        example_text = read(OPEN_WEBUI / "household.env.example")
+        example = environment_assignments(example_text)
+
+        self.assertEqual(set(packaged), PACKAGED_DEFAULT_KEYS)
+        self.assertEqual(set(example), HOUSEHOLD_PROFILE_KEYS)
+        # The profile overrides exactly one packaged value: it turns on the
+        # household's OpenAI-compatible connection.
+        self.assertEqual(set(packaged) & set(example), {"ENABLE_OPENAI_API"})
+        self.assertEqual(packaged["ENABLE_OPENAI_API"], "false")
+        self.assertEqual(example["ENABLE_OPENAI_API"], "true")
+        for key in (
+            "RAG_RERANKING_ENGINE",
+            "ENABLE_RAG_HYBRID_SEARCH",
+            "RAG_EXTERNAL_RERANKER_TIMEOUT",
+        ):
+            self.assertNotIn(key, example, key)
+        # The packaged defaults name no model provider: the only URL they
+        # carry is the package's own Qdrant dependency.
+        self.assertEqual(
+            {key for key, value in packaged.items() if re.match(r"https?://", value)},
+            {"QDRANT_URI"},
+        )
+        for key, suffix in (
+            ("OPENAI_API_BASE_URLS", "/api/v1"),
+            ("RAG_OPENAI_API_BASE_URL", "/api/v1"),
+            ("RAG_EXTERNAL_RERANKER_URL", "/api/v1/rerank"),
+        ):
+            self.assertEqual(example[key], f"<lemond>{suffix}", key)
+        self.assertEqual(example["OPENAI_API_KEYS"], "")
+        self.assertEqual(example["RAG_EMBEDDING_ENGINE"], "openai")
+        self.assertEqual(example["RAG_RERANKING_MODEL"], "zerank-2-GGUF")
+        # The canonical origin is documented but never set by the example.
+        for key in ("WEBUI_URL", "CORS_ALLOW_ORIGIN"):
+            self.assertNotIn(key, packaged, key)
+            self.assertNotIn(key, example, key)
+            self.assertIn(f"#{key}=https://<name>.<tailnet>.ts.net", example_text)
+
+    def test_household_example_carries_no_private_data(self):
+        text = read(OPEN_WEBUI / "household.env.example")
+        example = environment_assignments(text)
+
+        self.assertIsNone(re.search(r"\b\d{1,3}(?:\.\d{1,3}){3}\b", text))
+        self.assertNotIn("::", text)
+        self.assertNotIn("localhost", text.casefold())
+        self.assertIsNone(re.search(r"[0-9a-f]{32}", text.casefold()))
+        # Every origin is a placeholder.
+        for origin in re.findall(r"[a-z][a-z0-9+.-]*://[^/\s]+", text):
+            self.assertEqual(origin, "https://<name>.<tailnet>.ts.net")
+        for key, value in example.items():
+            if "://" in value or re.search(r"<[a-z]+>", value):
+                self.assertTrue(value.startswith("<lemond>/"), key)
+                self.assertEqual(re.findall(r"<([a-z]+)>", value), ["lemond"], key)
+            self.assertIsNone(re.search(r"[A-Za-z0-9_+/=-]{32,}", value), key)
+            if key.endswith(("_KEY", "_KEYS", "_SECRET", "_TOKEN", "_PASSWORD")):
+                self.assertEqual(value, "", key)
+
+    def test_service_reads_the_optional_household_profile_last(self):
+        service = read(OPEN_WEBUI / "open-webui.service")
+        recipe = read(OPEN_WEBUI / "PKGBUILD")
+        source_info = read(OPEN_WEBUI / ".SRCINFO")
+
+        # A missing profile is ignored, so a vanilla install still starts; the
+        # profile comes second, so its values override the packaged defaults.
+        self.assertEqual(
+            re.findall(r"(?m)^EnvironmentFile=(.*)$", service),
+            ["/etc/open-webui/open-webui.env", f"-{HOUSEHOLD_PROFILE}"],
+        )
+        self.assertIn("'household.env.example'", recipe)
+        self.assertIn("source = household.env.example", source_info)
+        self.assertIn(
+            'install -Dm644 "${srcdir}/household.env.example" \\\n'
+            f'    "${{pkgdir}}{HOUSEHOLD_EXAMPLE}"',
+            recipe,
+        )
+        # The package never ships or claims the live profile.
+        self.assertIn("backup=('etc/open-webui/open-webui.env')", recipe)
+        self.assertNotIn("etc/open-webui/household.env", recipe)
+        self.assertNotIn("etc/open-webui/household.env", source_info)
+
+    def test_public_text_keeps_no_connection_credential_wording(self):
+        for path in (
+            OPEN_WEBUI / "README.md",
+            OPEN_WEBUI / "open-webui.env",
+            OPEN_WEBUI / "household.env.example",
+            REPO_ROOT / "docs" / "maintainers" / "open-webui-household-envelope.md",
+            REPO_ROOT / "docs" / "maintainers" / "lemonade-provider-port-status-2026-08-19.md",
+        ):
+            self.assertNotIn("uses no credential", read(path), path.name)
+        self.assertIn(
+            "Open WebUI stores no secret for its model connections.",
+            read(OPEN_WEBUI / "household.env.example"),
+        )
 
     def test_embedding_prefixes_are_the_zembed_wrapper_heads(self):
-        environment = read(OPEN_WEBUI / "open-webui.env")
+        packaged = environment_assignments(read(OPEN_WEBUI / "open-webui.env"))
+        example = environment_assignments(read(OPEN_WEBUI / "household.env.example"))
         provider_path = REPO_ROOT / "tools" / "fixtures" / "open-webui-household" / "provider.py"
         spec = importlib.util.spec_from_file_location("open_webui_household_provider", provider_path)
         provider = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(provider)
 
         # No JSON discriminator: the wrapper heads travel as text prefixes.
-        self.assertNotIn("RAG_EMBEDDING_PREFIX_FIELD_NAME", environment)
+        self.assertNotIn("RAG_EMBEDDING_PREFIX_FIELD_NAME", packaged)
+        self.assertNotIn("RAG_EMBEDDING_PREFIX_FIELD_NAME", example)
         for setting, input_type in (
             ("RAG_EMBEDDING_QUERY_PREFIX", "query"),
             ("RAG_EMBEDDING_CONTENT_PREFIX", "document"),
         ):
+            self.assertNotIn(setting, packaged)
             # systemd reads a double-quoted EnvironmentFile value across lines.
-            match = re.search(rf'^{setting}="([^"]*)"$', environment, re.MULTILINE)
-            self.assertIsNotNone(match, setting)
-            prefix = match.group(1)
+            prefix = example[setting]
             # Open WebUI 0.11.4 joins a text prefix as f"{prefix}{text}".
             text = "household canary"
             self.assertTrue(
@@ -494,6 +698,16 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
         self.assertIn("npm ci --offline", notes)
         self.assertIn("uv --offline --no-index --require-hashes", notes)
         self.assertIn("integrated provider, restore, and rollback evidence", notes)
+        self.assertIn("## Household Profile", notes)
+        self.assertIn(
+            "sudo test ! -e /etc/open-webui/household.env &&\n"
+            "  sudo install -m 0600 /usr/share/open-webui/household.env.example"
+            " /etc/open-webui/household.env\n"
+            "sudoedit /etc/open-webui/household.env\n",
+            notes,
+        )
+        self.assertIn("-p EnvironmentFile=/etc/open-webui/household.env", notes)
+        self.assertNotIn("127.0.0.1:13305", notes)
         self.assertNotIn("0.9.5", notes)
         self.assertNotIn("127.0.0.1:8080", notes)
         self.assertNotIn("enable --now", notes)

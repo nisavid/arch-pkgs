@@ -16,6 +16,9 @@ RuntimeDirectoryMode=0750
 WorkingDirectory=/var/lib/open-webui
 Environment=HOME=/var/lib/open-webui
 EnvironmentFile=/etc/open-webui/open-webui.env
+# Optional host-owned profile, read second so that its values win. The package
+# never ships it; see /usr/share/open-webui/household.env.example.
+EnvironmentFile=-/etc/open-webui/household.env
 LoadCredentialEncrypted=webui-secret-key:/etc/credstore.encrypted/open-webui.webui-secret-key
 LoadCredentialEncrypted=oauth-client-info-encryption-key:/etc/credstore.encrypted/open-webui.oauth-client-info-encryption-key
 LoadCredentialEncrypted=oauth-session-token-encryption-key:/etc/credstore.encrypted/open-webui.oauth-session-token-encryption-key
