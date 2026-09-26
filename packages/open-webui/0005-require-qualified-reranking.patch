@@ -3,7 +3,8 @@
 # Open WebUI 0.11.4 sdist SHA-256: 1f1a31668a0dee733953c29d6183d78dd78984e696aa8eb0f2083f5796497be0
 # The package installs open-webui-rag-gate.py as open_webui/retrieval/rag_gate.py before build.
 # App startup remains available for ordinary chat when qualification fails; authenticated /api/v1/retrieval/health stays 503.
-# Gate scope: knowledge-base content and anything attached to a model or folder as knowledge. Unattached notes, chats, and memories are personal data outside it.
+# Gate scope: knowledge-base content, anything attached to a model or folder as knowledge, and chat attachments of any kind.
+# Personal data outside the gate means only the notes, chats, and memories tools and features; notes attached as knowledge stay gated.
 # Gate closed: a chat with any attachment returns the 503 detail. The builtin query_*_files, grep_*_files, view_file, and view_knowledge_file tools, and view_note for a knowledge-attached note, return it as a tool error; search_notes omits knowledge-attached notes.
 # Gate qualified: explicitly requested content is allowed whole, including full-context items and text, note, chat, and url attachments; search results are reranked. The global full-context and bypass modes stay refused.
 # Hybrid-search errors: when hybrid search raises anything but RAGUnavailableError, the request fails with the gate's 503 instead of upstream's unreranked vector-search fallback, and the gate stays qualified.

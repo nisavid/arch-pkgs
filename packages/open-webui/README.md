@@ -54,12 +54,13 @@ remains in
   closed (the authenticated `/api/v1/retrieval/health` probe returns 503)
   until one of those requalifies it; once the provider is healthy again,
   restart `open-webui.service`.
-- The gate covers knowledge-base content and anything attached to a model or
-  folder as knowledge; unattached notes, chats, and memories are personal data
-  outside it. While the gate is closed, a chat with any attachment returns that
-  503; the builtin `query_*_files`, `grep_*_files`, `view_file`, and
-  `view_knowledge_file` tools, and `view_note` for a knowledge-attached note,
-  return its message as a tool error; and `search_notes` omits
+- The gate covers knowledge-base content, anything attached to a model or folder
+  as knowledge, and chat attachments of any kind. Personal data outside it means
+  only the notes, chats, and memories tools and features; notes attached as
+  knowledge stay gated. While the gate is closed, a chat with any attachment
+  returns that 503; the builtin `query_*_files`, `grep_*_files`, `view_file`,
+  and `view_knowledge_file` tools, and `view_note` for a knowledge-attached
+  note, return its message as a tool error; and `search_notes` omits
   knowledge-attached notes. Once it is qualified, explicitly requested content,
   including full-context attachments, is allowed whole, and search results are
   reranked.
