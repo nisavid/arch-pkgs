@@ -65,22 +65,24 @@ remains in
   outside it means only the notes, chats, and memories tools and features: a
   note attached as knowledge only to a different model or folder, reached from
   another chat, goes through those personal-notes features and stays outside
-  the gate. While the gate is closed, a chat with any attachment returns that
-  503, even on a model whose file context capability is off; the builtin
+  the gate. While the gate is closed, a chat with any attachment is refused
+  with the gate's 503 detail, even on a model whose file context capability is
+  off: a direct API request gets HTTP 503, and a browser chat, whose request
+  returns at once, shows the detail as the reply's error. The builtin
   `query_*_files`, `grep_*_files`, `view_file`, and `view_knowledge_file`
   tools, and `view_note` for a note attached as knowledge to the chat's model
-  or folder, return its message as a tool error before reading anything; and
-  `search_notes` omits those notes. Once it is qualified, explicitly requested
-  content is allowed whole, including full-context items and `text`, `note`,
-  `chat`, and `url` attachments, and search results are reranked. The global
-  full-context and embedding-and-retrieval bypass modes stay refused even when
-  qualified.
+  or folder, return the same detail as a tool error before reading anything;
+  and `search_notes` omits those notes. Once it is qualified, explicitly
+  requested content is allowed whole, including full-context items and `text`,
+  `note`, `chat`, and `url` attachments, and search results are reranked. The
+  global full-context and embedding-and-retrieval bypass modes stay refused
+  even when qualified.
 - When hybrid search fails for every collection with any other error, such as
   a failed embedding or Qdrant search, the request fails with the same 503
-  instead of falling back to a vector search that skips the reranker. The gate
-  stays qualified and the health probe stays 200, so the next request retries;
-  the journal records the cause. This covers only errors that hybrid search
-  raises: a failed collection prefetch still yields empty sources
+  detail instead of falling back to a vector search that skips the reranker.
+  The gate stays qualified and the health probe stays 200, so the next request
+  retries; the journal records the cause. This covers only errors that hybrid
+  search raises: a failed collection prefetch still yields empty sources
   ([#98](https://github.com/nisavid/arch-pkgs/issues/98)).
 - When a search leaves no candidates to rerank, the reranker is not called and
   the search returns nothing; the gate stays qualified. Nothing unreranked

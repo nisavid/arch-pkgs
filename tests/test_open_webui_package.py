@@ -832,6 +832,12 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
             "systemd retries a refused start every five seconds", " ".join(household.split())
         )
         self.assertIn("`sudo systemctl stop open-webui.service`", household)
+        # A browser chat's request returns before the gate refuses it, so the
+        # gate bullets name the 503 detail, not an HTTP status the chat gets.
+        flat_notes = " ".join(notes.split())
+        self.assertIn("is refused with the gate's 503 detail", flat_notes)
+        self.assertIn("fails with the same 503 detail instead", flat_notes)
+        self.assertNotIn("returns that 503", flat_notes)
         self.assertNotIn("127.0.0.1:13305", notes)
         self.assertNotIn("0.9.5", notes)
         self.assertNotIn("127.0.0.1:8080", notes)
