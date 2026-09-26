@@ -24,6 +24,15 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_DIR = REPO_ROOT / "packages" / "open-webui"
 RAG_GATE = PACKAGE_DIR / "open-webui-rag-gate.py"
 RAG_PATCH = PACKAGE_DIR / "0005-require-qualified-reranking.patch"
+# 0005 helpers in tools/builtin.py that the gated builtin tools call.
+BUILTIN_GATE_HELPERS = frozenset(
+    {
+        "_knowledge_note_ids",
+        "_rag_closed",
+        "_rag_closed_tool_error",
+        "_rag_unavailable_tool_error",
+    }
+)
 EXTERNAL_RERANKER_PREIMAGE = (
     REPO_ROOT
     / "tools"
@@ -446,12 +455,7 @@ class OpenWebUIHouseholdRAGGateTests(unittest.TestCase):
                 for node in parsed.body
                 if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef))
                 and node.name
-                in {
-                    "query_chat_files",
-                    "query_knowledge_files",
-                    "_rag_unavailable_tool_error",
-                    "_rag_closed_tool_error",
-                }
+                in {"query_chat_files", "query_knowledge_files"} | BUILTIN_GATE_HELPERS
             ]
             namespace = {
                 # 0.11.4 serializes through JSONCodec, which is stdlib json
@@ -1128,7 +1132,7 @@ class OpenWebUIHouseholdRAGGateTests(unittest.TestCase):
         }
         defined = self.exec_patched_definitions(
             "backend/open_webui/tools/builtin.py",
-            set(tools) | {"_rag_unavailable_tool_error", "_rag_closed_tool_error"},
+            set(tools) | BUILTIN_GATE_HELPERS,
             namespace,
         )
         self.assertLessEqual(set(tools), defined)
@@ -1334,6 +1338,108 @@ class OpenWebUIHouseholdRAGGateTests(unittest.TestCase):
                 self.assertRaises(self.gate.RAGUnavailableError),
             ):
                 sources(**mode)
+
+    def test_knowledge_attached_notes_refuse_while_closed_but_personal_notes_stay(
+        self,
+    ):
+        # Notes attached to the model or its folder as knowledge are gated:
+        # view_note refuses them and search_notes omits them while the gate is
+        # closed. Unattached notes and chat attachments are personal data and
+        # stay readable. A qualified gate allows every note.
+        json_codec = __import__("json")
+        stored = {
+            note_id: SimpleNamespace(
+                id=note_id,
+                title=note_id,
+                user_id="fixture-user",
+                created_at=1,
+                updated_at=1,
+                data={"content": {"md": f"seed cabinet text of {note_id}"}},
+            )
+            for note_id in ("model-note", "folder-note", "chat-note", "own-note")
+        }
+        notes = SimpleNamespace(
+            get_note_by_id=mock.AsyncMock(side_effect=lambda note_id: stored[note_id]),
+            search_notes=mock.AsyncMock(
+                return_value=SimpleNamespace(items=list(stored.values()))
+            ),
+        )
+        access_grants = types.ModuleType("open_webui.models.access_grants")
+        vars(access_grants).update(AccessGrants=object())
+        namespace = {
+            "Groups": SimpleNamespace(
+                get_groups_by_member_id=mock.AsyncMock(return_value=[])
+            ),
+            "JSONCodec": json_codec,
+            "Notes": notes,
+            "Optional": __import__("typing").Optional,
+            "RAG_UNAVAILABLE_DETAIL": self.gate.RAG_UNAVAILABLE_DETAIL,
+            "RAGUnavailableError": self.gate.RAGUnavailableError,
+            "Request": object,
+            "log": mock.Mock(),
+            "require_required_reranker": self.gate.require_required_reranker,
+        }
+        self.exec_patched_definitions(
+            "backend/open_webui/tools/builtin.py",
+            {"view_note", "search_notes"} | BUILTIN_GATE_HELPERS,
+            namespace,
+        )
+        knowledge = [
+            {"type": "note", "id": "model-note", "source": "model"},
+            {"type": "note", "id": "folder-note", "source": "folder"},
+            {"type": "note", "id": "chat-note", "source": "chat"},
+        ]
+        request = SimpleNamespace(
+            app=SimpleNamespace(state=SimpleNamespace(RERANKING_FUNCTION=object()))
+        )
+        user = {"id": "fixture-user", "role": "user"}
+        refusal = {
+            "error": self.gate.RAG_UNAVAILABLE_DETAIL,
+            "status": HTTPStatus.SERVICE_UNAVAILABLE,
+        }
+
+        def view(note_id):
+            with mock.patch.dict(
+                sys.modules, {"open_webui.models.access_grants": access_grants}
+            ):
+                return json_codec.loads(
+                    asyncio.run(
+                        namespace["view_note"](
+                            note_id,
+                            __request__=request,
+                            __user__=user,
+                            __model_knowledge__=knowledge,
+                        )
+                    )
+                )
+
+        def search():
+            result = asyncio.run(
+                namespace["search_notes"](
+                    "seed cabinet",
+                    count=5,
+                    __request__=request,
+                    __user__=user,
+                    __model_knowledge__=knowledge,
+                )
+            )
+            return [note["id"] for note in json_codec.loads(result)]
+
+        self.gate.configure_required_reranker(True)
+        for note_id in ("model-note", "folder-note"):
+            with self.subTest(gate="closed", note=note_id):
+                self.assertEqual(view(note_id), refusal)
+        notes.get_note_by_id.assert_not_awaited()
+        for note_id in ("chat-note", "own-note"):
+            with self.subTest(gate="closed", note=note_id):
+                self.assertIn(note_id, view(note_id)["content"])
+        self.assertEqual(search(), ["chat-note", "own-note"])
+
+        self.gate.qualify_required_reranker([0.91, 0.08])
+        for note_id in stored:
+            with self.subTest(gate="qualified", note=note_id):
+                self.assertIn(note_id, view(note_id)["content"])
+        self.assertEqual(search(), list(stored))
 
     def test_patch_applies_to_retained_exact_open_webui_source_and_compiles(self):
         with tempfile.TemporaryDirectory() as temp_dir:

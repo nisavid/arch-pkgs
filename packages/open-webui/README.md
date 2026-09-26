@@ -54,12 +54,15 @@ remains in
   closed (the authenticated `/api/v1/retrieval/health` probe returns 503)
   until one of those requalifies it; once the provider is healthy again,
   restart `open-webui.service`.
-- While the gate is closed, a chat with any attachment returns that 503, and
-  the builtin `query_*_files`, `grep_*_files`, `view_file`, and
-  `view_knowledge_file` tools return its message as a tool error. Once it is
-  qualified, explicitly requested content, including full-context attachments
-  and whole text, note, chat, and URL attachments, is allowed whole, and search
-  results are reranked.
+- The gate covers knowledge-base content and anything attached to a model or
+  folder as knowledge; unattached notes, chats, and memories are personal data
+  outside it. While the gate is closed, a chat with any attachment returns that
+  503; the builtin `query_*_files`, `grep_*_files`, `view_file`, and
+  `view_knowledge_file` tools, and `view_note` for a knowledge-attached note,
+  return its message as a tool error; and `search_notes` omits
+  knowledge-attached notes. Once it is qualified, explicitly requested content,
+  including full-context attachments, is allowed whole, and search results are
+  reranked.
 - When hybrid search fails for every collection with any other error, such as
   a failed embedding or Qdrant search, the request fails with the same 503
   instead of falling back to a vector search that skips the reranker. The gate
