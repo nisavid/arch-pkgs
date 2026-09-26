@@ -57,6 +57,42 @@ class OpenWebUIHouseholdRAGGateTests(unittest.TestCase):
     def setUp(self):
         self.gate = load_module("household_rag_gate", RAG_GATE)
 
+    def exec_patched_definitions(
+        self, relative: str, names: set[str], namespace: dict
+    ) -> set[str]:
+        """Execute the named top-level definitions of one 0005-patched file."""
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source_root = Path(temp_dir)
+            path = source_root / relative
+            path.parent.mkdir(parents=True)
+            shutil.copyfile(self.upstream_source / relative, path)
+            applied = subprocess.run(
+                ["git", "apply", f"--include={relative}", str(RAG_PATCH)],
+                cwd=source_root,
+                text=True,
+                capture_output=True,
+                timeout=20,
+                check=False,
+            )
+            self.assertEqual(applied.returncode, 0, applied.stderr)
+            parsed = ast.parse(path.read_text(encoding="utf-8"))
+            nodes: list[ast.stmt] = [
+                node
+                for node in parsed.body
+                if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef))
+                and node.name in names
+            ]
+            exec(  # noqa: S102 - executes extracted definitions from the exact bound source
+                compile(
+                    ast.fix_missing_locations(ast.Module(body=nodes, type_ignores=[])),
+                    str(path),
+                    "exec",
+                ),
+                namespace,
+            )
+        return {getattr(node, "name", "") for node in nodes}
+
     def test_required_gate_starts_closed_and_only_semantic_qualification_reopens(self):
         self.gate.configure_required_reranker(True)
 
@@ -830,6 +866,163 @@ class OpenWebUIHouseholdRAGGateTests(unittest.TestCase):
         self.assertEqual(vector_searches, [])
         embedding_function.assert_not_awaited()
         self.gate.require_required_reranker(marker)
+
+    def test_mixed_full_context_chat_refuses_while_closed_and_passes_when_qualified(
+        self,
+    ):
+        # A full-context file beside a searched one makes all_full_context
+        # false. A closed gate still refuses the whole attachment set before
+        # query generation; a qualified gate passes the explicit full item on.
+        class FixtureConfig:
+            @classmethod
+            async def get_many(cls, *keys):
+                packaged = {
+                    "rag.enable_hybrid_search": True,
+                    "rag.full_context": False,
+                    "rag.bypass_embedding_and_retrieval": False,
+                }
+                return {key: packaged.get(key) for key in keys}
+
+        generate_queries = mock.AsyncMock(side_effect=RuntimeError("no task model"))
+        source_lookup = mock.AsyncMock(return_value=[])
+        namespace = {
+            "Config": FixtureConfig,
+            "RAGUnavailableError": self.gate.RAGUnavailableError,
+            "Request": object,
+            "UserModel": object,
+            "generate_queries": generate_queries,
+            "get_last_user_message": lambda messages: messages[-1]["content"],
+            "get_sources_from_items": source_lookup,
+            "log": mock.Mock(),
+            "require_file_rag_ready": self.gate.require_file_rag_ready,
+        }
+        self.exec_patched_definitions(
+            "backend/open_webui/utils/middleware.py",
+            {"chat_completion_files_handler"},
+            namespace,
+        )
+        request = SimpleNamespace(
+            app=SimpleNamespace(
+                state=SimpleNamespace(RERANKING_FUNCTION=lambda *_args, **_kwargs: [])
+            )
+        )
+        mixed = [
+            {"type": "file", "id": "full-file", "context": "full"},
+            {"type": "file", "id": "searched-file"},
+        ]
+
+        def chat():
+            return asyncio.run(
+                namespace["chat_completion_files_handler"](
+                    request,
+                    {
+                        "metadata": {"files": mixed},
+                        "messages": [{"role": "user", "content": "private query"}],
+                        "model": "chat",
+                    },
+                    {"__event_emitter__": mock.AsyncMock()},
+                    object(),
+                )
+            )
+
+        self.gate.configure_required_reranker(True)
+        with self.assertRaises(self.gate.RAGUnavailableError):
+            chat()
+        generate_queries.assert_not_awaited()
+        source_lookup.assert_not_awaited()
+
+        self.gate.qualify_required_reranker([0.91, 0.08])
+        chat()
+        source_lookup.assert_awaited_once()
+        lookup = source_lookup.await_args_list[0].kwargs
+        self.assertEqual(lookup["items"], mixed)
+        self.assertIs(lookup["full_context"], False)
+
+    def test_mixed_full_context_sources_refuse_while_closed_and_pass_when_qualified(
+        self,
+    ):
+        # get_sources_from_items serves the files handler and query_chat_files.
+        # A closed gate refuses before any item is read; a qualified gate
+        # returns the explicit full-context item whole and searches the rest.
+        whole_text = "whole explicitly requested document"
+        searched = {
+            "distances": [[0.97]],
+            "documents": [["reranked chunk"]],
+            "metadatas": [[{"file_id": "searched-file"}]],
+        }
+
+        class FixtureConfig:
+            @classmethod
+            async def get(cls, key):
+                return {"rag.bypass_embedding_and_retrieval": False}.get(key)
+
+        files = SimpleNamespace(
+            get_file_by_id=mock.AsyncMock(
+                return_value=SimpleNamespace(id="searched-file", user_id="fixture-user")
+            )
+        )
+        query_collection = mock.AsyncMock(return_value=searched)
+        namespace = {
+            "BYPASS_RETRIEVAL_ACCESS_CONTROL": False,
+            "Config": FixtureConfig,
+            "Files": files,
+            "RAGUnavailableError": self.gate.RAGUnavailableError,
+            "UserModel": object,
+            "asyncio": asyncio,
+            "filter_accessible_collections": mock.AsyncMock(
+                side_effect=lambda names, _user: names
+            ),
+            "log": mock.Mock(),
+            "query_collection": query_collection,
+            "require_safe_retrieval_mode": self.gate.require_safe_retrieval_mode,
+        }
+        self.exec_patched_definitions(
+            "backend/open_webui/retrieval/utils.py",
+            {"get_sources_from_items"},
+            namespace,
+        )
+        items = [
+            {
+                "type": "file",
+                "id": "full-file",
+                "name": "full.md",
+                "context": "full",
+                "file": {"data": {"content": whole_text}},
+            },
+            {"type": "file", "id": "searched-file"},
+        ]
+
+        def sources():
+            return asyncio.run(
+                namespace["get_sources_from_items"](
+                    None,
+                    [dict(item) for item in items],
+                    ["private query"],
+                    mock.AsyncMock(),
+                    3,
+                    lambda *_args, **_kwargs: [],
+                    3,
+                    0.0,
+                    0.5,
+                    True,
+                    full_context=False,
+                    user=SimpleNamespace(id="fixture-user", role="user"),
+                )
+            )
+
+        self.gate.configure_required_reranker(True)
+        with self.assertRaises(self.gate.RAGUnavailableError):
+            sources()
+        files.get_file_by_id.assert_not_awaited()
+        query_collection.assert_not_awaited()
+
+        self.gate.qualify_required_reranker([0.91, 0.08])
+        documents = [source["document"] for source in sources()]
+        self.assertEqual(documents, [[whole_text], ["reranked chunk"]])
+        self.assertEqual(
+            query_collection.await_args_list[0].kwargs["collection_names"],
+            {"file-searched-file"},
+        )
 
     def test_patch_applies_to_retained_exact_open_webui_source_and_compiles(self):
         with tempfile.TemporaryDirectory() as temp_dir:
