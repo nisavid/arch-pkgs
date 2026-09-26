@@ -1,0 +1,2 @@
+user default off
+user open-webui on #@PASSWORD_SHA256@ ~* &* +@all -@admin -flushall -flushdb
