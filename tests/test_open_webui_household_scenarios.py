@@ -816,6 +816,15 @@ class StubProviderTests(unittest.TestCase):
         handbook = scenarios.handbook_bytes().decode()
         self.assertEqual(answer(json.dumps({"id": "f1", "content": handbook})), scenarios.CANONICAL_FACT)
 
+    def test_stub_refuses_messages_that_hold_no_object(self):
+        # A message array of non-objects is a malformed request (HTTP 400),
+        # never an IndexError inside the stub.
+        request = {"model": stub.CHAT_MODEL, "messages": ["Call view_file", 3, None],
+                   "tools": [{"type": "function", "function": {"name": "view_file"}}]}
+        for answer in (stub.requested_tool_call, stub.chat_answer, stub.chat_completion):
+            with self.subTest(answer.__name__), self.assertRaisesRegex(stub.StubError, "message object"):
+                answer(request)
+
     def test_stub_parsing_stays_linear_on_hostile_prompts(self):
         self.assertEqual(stub._between("a<context>x</context>", "<context>", "</context>"), "x")
         self.assertIsNone(stub._between("a<context>x", "<context>", "</context>"))
