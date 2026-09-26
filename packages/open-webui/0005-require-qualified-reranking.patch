@@ -3,7 +3,8 @@
 # Open WebUI 0.11.4 sdist SHA-256: 1f1a31668a0dee733953c29d6183d78dd78984e696aa8eb0f2083f5796497be0
 # The package installs open-webui-rag-gate.py as open_webui/retrieval/rag_gate.py before build.
 # App startup remains available for ordinary chat when qualification fails; authenticated /api/v1/retrieval/health stays 503.
-# Gate closed: a chat with any attachment returns the 503 detail, and the builtin query_*_files, grep_*_files, view_file, and view_knowledge_file tools return it as a tool error.
+# Gate scope: knowledge-base content and anything attached to a model or folder as knowledge. Unattached notes, chats, and memories are personal data outside it.
+# Gate closed: a chat with any attachment returns the 503 detail. The builtin query_*_files, grep_*_files, view_file, and view_knowledge_file tools, and view_note for a knowledge-attached note, return it as a tool error; search_notes omits knowledge-attached notes.
 # Gate qualified: explicitly requested content is allowed whole, including full-context items and text, note, chat, and url attachments; search results are reranked. The global full-context and bypass modes stay refused.
 # Hybrid-search errors: when hybrid search raises anything but RAGUnavailableError, the request fails with the gate's 503 instead of upstream's unreranked vector-search fallback, and the gate stays qualified.
 # Empty candidates: RerankCompressor keeps 0.11.4's early return of [] without calling the reranker. Nothing unreranked reaches chat, and closing the gate on an empty knowledge base would only cause an outage.
@@ -378,7 +379,7 @@ index 8234604..fa44535 100644
              log.exception(e)
  
 diff --git a/backend/open_webui/tools/builtin.py b/backend/open_webui/tools/builtin.py
-index d80884d..ed9c30d 100644
+index d80884d..ffb3056 100644
 --- a/backend/open_webui/tools/builtin.py
 +++ b/backend/open_webui/tools/builtin.py
 @@ -29,6 +29,11 @@ from open_webui.models.memories import Memories
@@ -393,7 +394,55 @@ index d80884d..ed9c30d 100644
  from open_webui.retrieval.utils import filter_source_metadata, get_content_from_url
  from open_webui.retrieval.vector.async_client import ASYNC_VECTOR_DB_CLIENT
  from open_webui.routers.images import (
-@@ -2326,6 +2331,24 @@ async def search_knowledge_files(
+@@ -1131,6 +1136,7 @@ async def search_notes(
+     end_timestamp: Optional[int] = None,
+     __request__: Request = None,
+     __user__: dict = None,
++    __model_knowledge__: Optional[list[dict]] = None,
+ ) -> str:
+     """
+     Search the user's saved notes by title and content.
+@@ -1147,6 +1153,10 @@ async def search_notes(
+     if not __user__:
+         return JSONCodec.dumps({'error': 'User context not available'})
+ 
++    # While RAG is closed, notes attached as knowledge drop out of the results.
++    knowledge_note_ids = _knowledge_note_ids(__model_knowledge__)
++    hidden_note_ids = knowledge_note_ids if knowledge_note_ids and _rag_closed(__request__) else set()
++
+     try:
+         user_id = __user__.get('id')
+         user_group_ids = [group.id for group in await Groups.get_groups_by_member_id(user_id)]
+@@ -1169,6 +1179,9 @@ async def search_notes(
+ 
+         notes = []
+         for note in result.items:
++            if note.id in hidden_note_ids:
++                continue
++
+             # Apply date filters (updated_at is in nanoseconds)
+             if start_ts and note.updated_at < start_ts:
+                 continue
+@@ -1225,6 +1238,7 @@ async def view_note(
+     note_id: str,
+     __request__: Request = None,
+     __user__: dict = None,
++    __model_knowledge__: Optional[list[dict]] = None,
+ ) -> str:
+     """
+     Get the full content of a note by its ID.
+@@ -1238,6 +1252,10 @@ async def view_note(
+     if not __user__:
+         return JSONCodec.dumps({'error': 'User context not available'})
+ 
++    if note_id in _knowledge_note_ids(__model_knowledge__):
++        if refusal := _rag_closed_tool_error(__request__):
++            return refusal
++
+     try:
+         note = await Notes.get_note_by_id(note_id)
+ 
+@@ -2326,6 +2344,37 @@ async def search_knowledge_files(
          return JSONCodec.dumps({'error': str(e)})
  
  
@@ -406,19 +455,32 @@ index d80884d..ed9c30d 100644
 +    )
 +
 +
-+def _rag_closed_tool_error(request: Request) -> Optional[str]:
-+    """Refuse knowledge content with the gate's tool error while RAG is closed."""
++def _rag_closed(request: Request) -> bool:
 +    try:
 +        require_required_reranker(getattr(request.app.state, 'RERANKING_FUNCTION', None))
 +    except RAGUnavailableError:
-+        return _rag_unavailable_tool_error()
-+    return None
++        return True
++    return False
++
++
++def _rag_closed_tool_error(request: Request) -> Optional[str]:
++    """Refuse knowledge content with the gate's tool error while RAG is closed."""
++    return _rag_unavailable_tool_error() if _rag_closed(request) else None
++
++
++def _knowledge_note_ids(model_knowledge: Optional[list[dict]]) -> set:
++    """Notes attached as model or folder knowledge; chat attachments stay personal."""
++    return {
++        item.get('id')
++        for item in model_knowledge or []
++        if isinstance(item, dict) and item.get('type') == 'note' and item.get('source') != 'chat'
++    }
 +
 +
  async def _get_accessible_chat_files(
      files: Optional[list[dict]],
      user: dict,
-@@ -2476,6 +2499,9 @@ async def grep_chat_files(
+@@ -2476,6 +2525,9 @@ async def grep_chat_files(
      if not __user__:
          return JSONCodec.dumps({'error': 'User context not available'})
  
@@ -428,7 +490,7 @@ index d80884d..ed9c30d 100644
      if not pattern or not pattern.strip():
          return JSONCodec.dumps({'error': 'Pattern is required'})
  
-@@ -2621,6 +2647,8 @@ async def query_chat_files(
+@@ -2621,6 +2673,8 @@ async def query_chat_files(
                  chunks.append(chunk)
  
          return JSONCodec.dumps(chunks[:count], ensure_ascii=False)
@@ -437,7 +499,7 @@ index d80884d..ed9c30d 100644
      except Exception as e:
          log.exception(f'query_chat_files error: {e}')
          return JSONCodec.dumps({'error': str(e)})
-@@ -2654,6 +2682,9 @@ async def grep_knowledge_files(
+@@ -2654,6 +2708,9 @@ async def grep_knowledge_files(
      if not __user__:
          return JSONCodec.dumps({'error': 'User context not available'})
  
@@ -447,7 +509,7 @@ index d80884d..ed9c30d 100644
      if not pattern or not pattern.strip():
          return JSONCodec.dumps({'error': 'Pattern is required'})
  
-@@ -2775,6 +2806,9 @@ async def view_file(
+@@ -2775,6 +2832,9 @@ async def view_file(
      if not __user__:
          return JSONCodec.dumps({'error': 'User context not available'})
  
@@ -457,7 +519,7 @@ index d80884d..ed9c30d 100644
      # Coerce parameters from LLM tool calls (may come as strings)
      if isinstance(offset, str):
          try:
-@@ -2887,6 +2921,9 @@ async def view_knowledge_file(
+@@ -2887,6 +2947,9 @@ async def view_knowledge_file(
      if not __user__:
          return JSONCodec.dumps({'error': 'User context not available'})
  
@@ -467,7 +529,7 @@ index d80884d..ed9c30d 100644
      # Coerce parameters from LLM tool calls (may come as strings)
      if isinstance(offset, str):
          try:
-@@ -3172,6 +3209,9 @@ async def query_knowledge_files(
+@@ -3172,6 +3235,9 @@ async def query_knowledge_files(
      if not __user__:
          return JSONCodec.dumps({'error': 'User context not available'})
  
@@ -477,7 +539,7 @@ index d80884d..ed9c30d 100644
      # Coerce parameters from LLM tool calls (may come as strings)
      if isinstance(count, str):
          try:
-@@ -3364,6 +3404,8 @@ async def query_knowledge_files(
+@@ -3364,6 +3430,8 @@ async def query_knowledge_files(
          chunks = chunks[:count]
  
          return JSONCodec.dumps(chunks, ensure_ascii=False)
