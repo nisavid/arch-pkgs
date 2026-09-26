@@ -400,7 +400,7 @@ index 8234604..81188d4 100644
      # Save the pre-RAG message state so the native tool call loop can
      # restore to the true original (before file-source injection) rather
 diff --git a/backend/open_webui/tools/builtin.py b/backend/open_webui/tools/builtin.py
-index d80884d..711f159 100644
+index d80884d..902af9d 100644
 --- a/backend/open_webui/tools/builtin.py
 +++ b/backend/open_webui/tools/builtin.py
 @@ -29,6 +29,11 @@ from open_webui.models.memories import Memories
@@ -463,7 +463,7 @@ index d80884d..711f159 100644
      try:
          note = await Notes.get_note_by_id(note_id)
  
-@@ -2326,6 +2344,37 @@ async def search_knowledge_files(
+@@ -2326,6 +2344,40 @@ async def search_knowledge_files(
          return JSONCodec.dumps({'error': str(e)})
  
  
@@ -490,7 +490,10 @@ index d80884d..711f159 100644
 +
 +
 +def _knowledge_note_ids(model_knowledge: Optional[list[dict]]) -> set:
-+    """Notes attached as model or folder knowledge; chat attachments stay personal."""
++    """Notes attached as knowledge to the chat's model or folder.
++
++    Chat-attached notes are left out: while the gate is closed, process_chat_payload refuses their whole chat.
++    """
 +    return {
 +        item.get('id')
 +        for item in model_knowledge or []
@@ -501,7 +504,7 @@ index d80884d..711f159 100644
  async def _get_accessible_chat_files(
      files: Optional[list[dict]],
      user: dict,
-@@ -2476,6 +2525,9 @@ async def grep_chat_files(
+@@ -2476,6 +2528,9 @@ async def grep_chat_files(
      if not __user__:
          return JSONCodec.dumps({'error': 'User context not available'})
  
@@ -511,7 +514,7 @@ index d80884d..711f159 100644
      if not pattern or not pattern.strip():
          return JSONCodec.dumps({'error': 'Pattern is required'})
  
-@@ -2529,6 +2581,9 @@ async def query_chat_files(
+@@ -2529,6 +2584,9 @@ async def query_chat_files(
      if not __user__:
          return JSONCodec.dumps({'error': 'User context not available'})
  
@@ -521,7 +524,7 @@ index d80884d..711f159 100644
      if isinstance(file_id, str) and file_id.lower() in ('none', 'null', ''):
          file_id = None
      if isinstance(count, str):
-@@ -2621,6 +2676,8 @@ async def query_chat_files(
+@@ -2621,6 +2679,8 @@ async def query_chat_files(
                  chunks.append(chunk)
  
          return JSONCodec.dumps(chunks[:count], ensure_ascii=False)
@@ -530,7 +533,7 @@ index d80884d..711f159 100644
      except Exception as e:
          log.exception(f'query_chat_files error: {e}')
          return JSONCodec.dumps({'error': str(e)})
-@@ -2654,6 +2711,9 @@ async def grep_knowledge_files(
+@@ -2654,6 +2714,9 @@ async def grep_knowledge_files(
      if not __user__:
          return JSONCodec.dumps({'error': 'User context not available'})
  
@@ -540,7 +543,7 @@ index d80884d..711f159 100644
      if not pattern or not pattern.strip():
          return JSONCodec.dumps({'error': 'Pattern is required'})
  
-@@ -2775,6 +2835,9 @@ async def view_file(
+@@ -2775,6 +2838,9 @@ async def view_file(
      if not __user__:
          return JSONCodec.dumps({'error': 'User context not available'})
  
@@ -550,7 +553,7 @@ index d80884d..711f159 100644
      # Coerce parameters from LLM tool calls (may come as strings)
      if isinstance(offset, str):
          try:
-@@ -2887,6 +2950,9 @@ async def view_knowledge_file(
+@@ -2887,6 +2953,9 @@ async def view_knowledge_file(
      if not __user__:
          return JSONCodec.dumps({'error': 'User context not available'})
  
@@ -560,7 +563,7 @@ index d80884d..711f159 100644
      # Coerce parameters from LLM tool calls (may come as strings)
      if isinstance(offset, str):
          try:
-@@ -3172,6 +3238,9 @@ async def query_knowledge_files(
+@@ -3172,6 +3241,9 @@ async def query_knowledge_files(
      if not __user__:
          return JSONCodec.dumps({'error': 'User context not available'})
  
@@ -570,7 +573,7 @@ index d80884d..711f159 100644
      # Coerce parameters from LLM tool calls (may come as strings)
      if isinstance(count, str):
          try:
-@@ -3364,6 +3433,8 @@ async def query_knowledge_files(
+@@ -3364,6 +3436,8 @@ async def query_knowledge_files(
          chunks = chunks[:count]
  
          return JSONCodec.dumps(chunks, ensure_ascii=False)
