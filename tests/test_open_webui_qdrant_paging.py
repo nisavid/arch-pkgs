@@ -17,20 +17,20 @@ FIXTURE_ROOT = REPO_ROOT / "tools" / "fixtures" / "open-webui-household"
 QDRANT_CONFIG = REPO_ROOT / "packages" / "qdrant" / "qdrant.config.yaml"
 PATCH_0008 = PACKAGE_DIR / "0008-page-qdrant-scroll.patch"
 
-OPEN_WEBUI_COMMIT = "f9590b8017199e56d5e953657e6498e3cef1d246"
+OPEN_WEBUI_COMMIT = "8bd8b4fac5e059578ac0c74b3c18d11139f88b7d"
 OPEN_WEBUI_SDIST_SHA256 = (
-    "e28c4fa997bf0a678caa7a0db6441da2e0c33b9a4120677f959ec3e45fccf9e9"
+    "1f1a31668a0dee733953c29d6183d78dd78984e696aa8eb0f2083f5796497be0"
 )
 DBS = "backend/open_webui/retrieval/vector/dbs"
-# Exact bytes of the two clients in the pinned 0.11.0 sdist.
+# Exact bytes of the two clients in the pinned 0.11.4 sdist.
 PRISTINE_CLIENTS = {
     f"{DBS}/qdrant.py": (
-        FIXTURE_ROOT / "open-webui-0.11.0-pristine-qdrant.py",
-        "173e172f9ed71300dc0dd8dbd959c85c110d842270b69c6852934cf86e9978f8",
+        FIXTURE_ROOT / "open-webui-0.11.4-pristine-qdrant.py",
+        "eee72a5402471f04ce0309fad3660dff2e45a7e9ef6de519c72d59d6fe425eed",
     ),
     f"{DBS}/qdrant_multitenancy.py": (
-        FIXTURE_ROOT / "open-webui-0.11.0-pristine-qdrant-multitenancy.py",
-        "83b86f56b695160497246ba351a7e12afeec22463154741d73e1395ad81ea8ac",
+        FIXTURE_ROOT / "open-webui-0.11.4-pristine-qdrant-multitenancy.py",
+        "afee2d19757088bd87db5719882897f516dbb16ed9cfed53dceb3b2711f58b8f",
     ),
 }
 STRICT_LIMIT = 1000
@@ -185,6 +185,10 @@ def stub_module(name: str, **attributes: object) -> types.ModuleType:
     return module
 
 
+def unexpected_call(*args, **kwargs):
+    raise AssertionError("the paging tests do not exercise this helper")
+
+
 def stub_modules() -> dict[str, types.ModuleType]:
     modules = (
         stub_module("grpc"),
@@ -205,6 +209,12 @@ def stub_modules() -> dict[str, types.ModuleType]:
             SearchResult=GetResult,
             VectorDBBase=object,
             VectorItem=dict,
+        ),
+        # 0.11.4 imports these for search() and inserts, which no test here calls.
+        stub_module(
+            "open_webui.retrieval.vector.utils",
+            iter_filter_conditions=unexpected_call,
+            process_metadata=unexpected_call,
         ),
         stub_module("qdrant_client", QdrantClient=StrictScrollQdrant),
         stub_module("qdrant_client.http.models", PointStruct=dict),

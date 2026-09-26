@@ -132,7 +132,7 @@ def validate_package_metadata(metadata: str) -> None:
         "pkgname": "qdrant-web-ui",
         "pkgbase": "qdrant-web-ui",
         "xdata": "pkgtype=pkg",
-        "pkgver": "0.2.16-1",
+        "pkgver": "0.2.18-1",
         "pkgdesc": "Static dashboard assets for Qdrant",
         "url": "https://github.com/qdrant/qdrant-web-ui",
         "arch": "any",
@@ -306,7 +306,7 @@ def main() -> int:
         license_hash = hashlib.sha256(license_file.read_bytes()).hexdigest()
         if (
             license_hash
-            != "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4"
+            != "210b508429e913d9de5301f90508bc2cbf5b2281de5b45e607c04d58f0f3bd8f"
         ):
             raise SystemExit(f"unexpected Apache license SHA-256: {license_hash}")
 

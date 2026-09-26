@@ -1,6 +1,6 @@
 # open-webui
 
-Disposable Arch package candidate for Open WebUI 0.11.0 and the fresh household
+Disposable Arch package candidate for Open WebUI 0.11.4 and the fresh household
 native-RAG boundary.
 
 This candidate is not approved for production activation or publication. A
@@ -18,10 +18,10 @@ remains in
   (`open-webui-tailnet.service`) for the tailnet-only production route, and
   Caddy for a possible later route through a local TLS terminator. Neither
   joins the Open WebUI data group.
-- The package builds the exact 0.11.0 source archive, seeds and verifies the 60
+- The package builds the exact 0.11.4 source archive, seeds and verifies the 63
   release-authored Pyodide files from the exact release wheel, runs `npm ci`
-  from a verified 1,233-tarball npm cache, and installs a hash-locked
-  222-wheel private server closure. Both closure archives are immutable
+  from a verified npm cache, and installs a hash-locked private server
+  closure. Both closure archives are immutable
   `makepkg` sources and both installers run in offline mode.
 - The ML and native scientific stack remains pacman-owned. The package verifies
   that none of the 21 externalized provider distributions or their top-level
@@ -29,31 +29,65 @@ remains in
   `/opt/open-webui/lib/python3.14/site-packages`. The bundled browser-side
   Pyodide wheels are a separate WebAssembly runtime, not server providers or a
   security boundary.
-- Native RAG uses the five Qdrant collections under
-  `open-webui-rag-v1`, zembed query/document prefixes, and the external zerank
-  reranker (Lemonade model `zerank-2-GGUF`, the built-in entry that carries
-  the ZeroEntropy selected-logit adapter). The packaged defaults send embedding and reranking requests to
-  Lemonade at `http://127.0.0.1:13305/api/v1` and enable hybrid search,
-  because the reranker gate rejects non-hybrid document retrieval. Reranker
-  qualification is mandatory for document RAG; ordinary chat remains
-  available when that provider is unhealthy.
-- The packaged chat connection seed disables the Ollama API and names only
-  Lemonade at `http://127.0.0.1:13305/api/v1`, so a fresh instance has no
-  default Ollama or `api.openai.com` peer. Open WebUI copies these values, and
+- Native RAG uses the five Qdrant collections under `open-webui-rag-v1`, an
+  external reranker, and hybrid search. The packaged defaults select the
+  external reranker engine, a 30-second reranker timeout, and hybrid search,
+  because the reranker gate qualifies only an external reranker with a finite
+  timeout and rejects non-hybrid document retrieval. Reranker qualification is
+  mandatory for document RAG; ordinary chat remains available when that
+  provider is unhealthy. The model provider, the models, and the zembed
+  query/document prefixes come from the
+  [household profile](#household-profile), not the packaged defaults.
+- The packaged defaults disable both the Ollama and the OpenAI-compatible
+  APIs, so a fresh instance without a profile has no model peer, not even the
+  default Ollama or `api.openai.com` one. Open WebUI copies these values, and
   the other persistent settings such as `RAG_RERANKING_MODEL`, into its
   database the first time an instance starts. After that, the stored values
-  win over `open-webui.env`, so a later edit to the file or a package update
-  does not change an existing instance. Change them in the admin UI, or start
-  from a fresh data directory.
-- Open WebUI's Lemonade connection uses no credential in this refresh (owner
-  decision). The package still keeps the embedding and reranking API-key
-  settings out of persistent configuration and out of the document settings
-  form.
+  win over both environment files, so a later edit to a persistent setting in
+  either file, or a package update, does not change it on an existing
+  instance; change those in the admin UI, or start from a fresh data
+  directory. The zembed query and document prefixes are not persistent:
+  Open WebUI reads them from the environment at every start, so keep the
+  profile in place for the life of the instance, including across upgrades
+  and restores, and do not change the prefixes once documents are embedded.
+- Open WebUI stores no secret for its model connections while the profile's
+  `OPENAI_API_KEYS` is empty; a key set there becomes a persistent setting in
+  its database. The package keeps the embedding and reranking API-key settings
+  out of persistent configuration and out of the document settings form.
 - Qualification runs at service start and when an administrator saves the
   document settings. After any runtime reranker fault, document RAG stays
   closed (the authenticated `/api/v1/retrieval/health` probe returns 503)
   until one of those requalifies it; once the provider is healthy again,
   restart `open-webui.service`.
+- The gate covers knowledge-base content, anything attached to a model or folder
+  as knowledge, and chat attachments of any kind. For notes, it covers notes
+  attached as knowledge to the chat's model or the chat's folder. Personal data
+  outside it means only the notes, chats, and memories tools and features: a
+  note attached as knowledge only to a different model or folder, reached from
+  another chat, goes through those personal-notes features and stays outside
+  the gate. While the gate is closed, a chat with any attachment is refused
+  with the gate's 503 detail, even on a model whose file context capability is
+  off: a direct API request gets HTTP 503, and a browser chat, whose request
+  returns at once, shows the detail as the reply's error. The builtin
+  `query_*_files`, `grep_*_files`, `view_file`, and `view_knowledge_file`
+  tools, and `view_note` for a note attached as knowledge to the chat's model
+  or folder, return the same detail as a tool error before reading anything;
+  and `search_notes` omits those notes. Once it is qualified, explicitly
+  requested content is allowed whole, including full-context items and `text`,
+  `note`, `chat`, and `url` attachments, and search results are reranked. The
+  global full-context and embedding-and-retrieval bypass modes stay refused
+  even when qualified.
+- When hybrid search fails for every collection with any other error, such as
+  a failed embedding or Qdrant search, the request fails with the same 503
+  detail instead of falling back to a vector search that skips the reranker.
+  The gate stays qualified and the health probe stays 200, so the next request
+  retries; the journal records the cause. This covers only errors that hybrid
+  search raises: a failed collection prefetch still yields empty sources
+  ([#98](https://github.com/nisavid/arch-pkgs/issues/98)).
+- When a search leaves no candidates to rerank, the reranker is not called and
+  the search returns nothing; the gate stays qualified. Nothing unreranked
+  reaches chat, and closing the gate on an empty knowledge base would only
+  cause an outage.
 - Before service start, an operator with Qdrant administrative authority must
   precreate the exact 2560-dimensional cosine collections
   `open-webui-rag-v1_memories`, `open-webui-rag-v1_knowledge`,
@@ -66,9 +100,57 @@ remains in
   `/var/lib/open-webui-session-epoch` and is outside application snapshots and
   rollback state.
 - Signup, API keys, server-side package installation, profile-image URL
-  forwarding, code execution/interpreter, automations, calendar, evaluation
-  arena, update checks, and non-loopback IP egress are disabled by the packaged
-  baseline.
+  forwarding, code execution/interpreter, automations, update checks, and
+  non-loopback IP egress are disabled by the packaged baseline. The household
+  profile also turns off the calendar, evaluation arena models, and retrieval
+  query generation.
+
+## Household Profile
+
+The packaged `/etc/open-webui/open-webui.env` carries only generic and
+security defaults. On their own, they give a fresh instance no model
+connection and keep document RAG closed (the retrieval health probe returns
+503). The household's provider settings live in a host-owned profile,
+`/etc/open-webui/household.env`, which `open-webui.service` reads after the
+packaged file, so its values win. The package never ships or overwrites that
+file. `/usr/share/open-webui/household.env.example` documents each key, with
+placeholders for the host-specific values: `<lemond>` stands for the model
+server's origin. The example lives there rather than under
+`/usr/share/doc/open-webui/` because the cutover copies it, and pacman
+`NoExtract` rules often drop `/usr/share/doc`.
+
+Create the live profile once, before the first start, because the first start
+copies the persistent settings into the database. The first command copies the
+example only if no profile exists yet, readable by root and the `open-webui`
+group:
+
+```sh
+sudo test ! -e /etc/open-webui/household.env &&
+  sudo install -m 0640 -g open-webui /usr/share/open-webui/household.env.example /etc/open-webui/household.env
+sudoedit /etc/open-webui/household.env
+```
+
+Replace every `<...>` placeholder. The unit reads the profile with a `-`
+prefix, so it starts without one. Its first `ExecStartPre=` step runs as the
+`open-webui` user and fails the start, with a journal message, when the
+profile exists but is not a file that user can read. systemd retries a refused
+start every five seconds, and the first retry that passes is the first start,
+so after a refusal run `sudo systemctl stop open-webui.service` before fixing
+the profile, and start it again only after both checks below pass. systemd
+still silently ignores a profile it cannot parse. Check both before the first
+start:
+
+```sh
+sudo grep -nE '^[^#]*<[a-z]+>' /etc/open-webui/household.env
+sudo systemd-run --quiet --wait --pipe \
+  -p EnvironmentFile=/etc/open-webui/open-webui.env \
+  -p EnvironmentFile=/etc/open-webui/household.env \
+  /usr/bin/env | grep -E '^(ENABLE_OPENAI_API|OPENAI_API_BASE_URLS|RAG_EMBEDDING_MODEL|RAG_RERANKING_MODEL)='
+```
+
+The `grep` must print nothing. The `systemd-run` check reads both files the
+way the unit does, without the `-`, so a malformed profile fails there; it must
+print `ENABLE_OPENAI_API=true` and the profile's URL and model values.
 
 ## Mandatory Credentials
 
@@ -93,7 +175,7 @@ is limited to initial provisioning, deliberate rotation, or restore.
 ## zembed Prefixes
 
 zembed expects each input wrapped as a short chat transcript whose system turn
-names the input type. The packaged defaults carry the opening part of that
+names the input type. The household profile carries the opening part of that
 wrapper, with real newlines, as Open WebUI text prefixes:
 
 - `RAG_EMBEDDING_QUERY_PREFIX`:
@@ -101,12 +183,12 @@ wrapper, with real newlines, as Open WebUI text prefixes:
 - `RAG_EMBEDDING_CONTENT_PREFIX`:
   `<|im_start|>system\ndocument<|im_end|>\n<|im_start|>user\n`
 
-Each `\n` stands for a real newline. In `open-webui.env` each value is a
+Each `\n` stands for a real newline. In the profile each value is a
 double-quoted string that spans lines, which systemd reads with its newlines
 intact. `RAG_EMBEDDING_PREFIX_FIELD_NAME` stays unset, so Open WebUI sends no
 `input_type` request field.
 
-Open WebUI 0.11.0 joins a prefix directly to the text. Settings can only
+Open WebUI 0.11.4 joins a prefix directly to the text. Settings can only
 prefix, so the wrapper's closing `<|im_end|>` and newline are not sent. The
 zembed semantic canary in
 [Acceptance-deploy the Open WebUI household candidate set](https://github.com/nisavid/arch-pkgs/issues/89)
@@ -150,7 +232,9 @@ The helper signs in over the Unix socket and verifies exactly one intended
 administrator before it changes anything. It then changes the password through
 the exact 0.11 API, proves the bootstrap password no longer works, proves the
 final password works, verifies the sole administrator again, and verifies
-signup is false. After it succeeds, consume and remove every bootstrap input
+signup is false. Since 0.11.1 a password change revokes every session issued
+in the same whole second, so the helper waits for the next second before it
+signs in with the final password. After it succeeds, consume and remove every bootstrap input
 and temporary drop-in, restart `open-webui.service` normally, repeat the
 postconditions, and only then publish the tailnet route
 ([Tailnet Route](#tailnet-route) step 4).
@@ -224,14 +308,17 @@ command runs under `sudo`.
    `Drop:` line for it instead). Once
    `sudo tailscale --socket=/run/open-webui-tailnet/tailscaled.sock status --peers=false`
    shows the node online, retry once from a device the policy admits.
-3. Before the first Open WebUI start, set the canonical origin in
-   `/etc/open-webui/open-webui.env`:
+3. Before the first Open WebUI start, set the canonical origin in the
+   [household profile](#household-profile), `/etc/open-webui/household.env`,
+   by uncommenting its two origin lines and filling them in:
 
    ```text
    WEBUI_URL=https://<name>.<tailnet>.ts.net
    CORS_ALLOW_ORIGIN=https://<name>.<tailnet>.ts.net
    ```
 
+   A unit drop-in with `Environment=` lines works too, but set the origin in
+   one place only: the profile's values override `Environment=` lines.
    Settle the origin now. `WEBUI_URL` is persistent config: the first start
    copies it into Open WebUI's database, and the stored value wins after
    that, so later edits to this file have no effect. Change it later under
@@ -296,8 +383,8 @@ sudo systemctl stop open-webui-tailnet.service
 In userspace-networking mode, `tailscaled` forwards tailnet TCP and UDP
 traffic on any port it does not serve to that port on the host's `127.0.0.1`,
 whether the peer used the node's IPv4 or IPv6 tailnet address. That would open
-every service that listens on the host's `127.0.0.1`, such as Valkey, Qdrant,
-and Lemonade, to the tailnet. Tailscale 1.102.2 has no setting that turns the
+every service that listens on the host's `127.0.0.1`, such as Valkey and
+Qdrant, to the tailnet. Tailscale 1.102.2 has no setting that turns the
 forward off, and `--shields-up` would also block the serve route. The unit
 therefore sets `IPAddressDeny=127.0.0.1 ::1`. The forward never dials `::1`,
 so that entry only guards against a future change. Keep the deny unchanged:
@@ -427,12 +514,15 @@ points per request.
 
 ## Maintenance Baseline
 
-- `authoritative_reference`: exact-version AUR `open-webui` recipe at commit
-  `6a65fb1cc4583d1ab9a1215a9cdf74054b36655b`
-- `advisory_references`: upstream `open-webui/open-webui` 0.11.0 PyPI source
+- `authoritative_reference`: same-lane AUR `open-webui` recipe at commit
+  `713042bd9585b692ce0ecd02e5e9482d4daee6c2` (0.11.3-1); no 0.11.4 recipe
+  exists in Arch, CachyOS, or the AUR
+- `advisory_references`: upstream `open-webui/open-webui` 0.11.4 PyPI source
   archive and build metadata at tag commit
-  `f9590b8017199e56d5e953657e6498e3cef1d246`, source SHA-256
-  `e28c4fa997bf0a678caa7a0db6441da2e0c33b9a4120677f959ec3e45fccf9e9`,
+  `8bd8b4fac5e059578ac0c74b3c18d11139f88b7d`, source SHA-256
+  `1f1a31668a0dee733953c29d6183d78dd78984e696aa8eb0f2083f5796497be0`;
+  the AUR 0.11.0-1 recipe at `6a65fb1cc4583d1ab9a1215a9cdf74054b36655b`,
+  which differs from 0.11.3-1 only in its version strings;
   and repository issues
   [#63](https://github.com/nisavid/arch-pkgs/issues/63),
   [#66](https://github.com/nisavid/arch-pkgs/issues/66), and
@@ -451,6 +541,10 @@ points per request.
     configuration stay runtime state.
   - Page Qdrant scroll reads under the packaged strict-mode query limit
     ([Qdrant Scroll Paging](#qdrant-scroll-paging)).
+  - Keep the model provider and household choices out of the packaged
+    defaults: the unit reads an optional host-owned profile after them, and
+    the package ships only its documented example
+    ([Household Profile](#household-profile)).
 - `update_notes`:
   - Recompute the complete private closure from the immutable release lock and
     selected optional runtime backends; a digest without the full lock is not a
@@ -465,19 +559,22 @@ points per request.
 
 ### Private Python closure
 
-`open-webui-private-requirements.lock` is generated from the exact 0.11.0
+`open-webui-private-requirements.lock` is generated from the exact 0.11.4
 source archive, whose upstream `uv.lock` is SHA-256
-`bf42de5c836d5afe5628533cf8369e856d5d09bfd00efef302c31df3fa249947`.
-The package-local constraints select the audited release versions plus the
-`qdrant-client==1.18.0` optional backend and its
+`f0c49cfa1936887c3447cb4c33cbbfdd2064aa0937140ec1c0520523efae5392`.
+The package-local constraints select the 200 audited release versions,
+including the `qdrant-client==1.18.0` optional backend and its
 `portalocker==3.2.0` dependency. The separate provider list removes the 21
 pacman-owned distributions. Resolution is fixed to CPython 3.14 on
-`x86_64-unknown-linux-gnu`, uv 0.12.5, and the recorded index cutoff.
+`x86_64-unknown-linux-gnu`, uv 0.12.5, and the recorded index cutoff,
+`2026-09-21T19:31:44Z`: the first whole second after PyPI recorded the 0.11.4
+source archive upload. The lock therefore admits only index files that
+existed when upstream published the release.
 
 Regenerate and verify the lock from an exact downloaded source archive with:
 
 ```bash
-./generate-open-webui-private-lock.zsh ./open_webui-0.11.0.tar.gz
+./generate-open-webui-private-lock.zsh ./open_webui-0.11.4.tar.gz
 ```
 
 The generator verifies the source and upstream-lock digests, emits hashes for
@@ -489,13 +586,13 @@ bound constants deliberately when changing the release or provider boundary.
 
 The recipe binds two versioned release assets as `noextract` sources:
 
-- `open-webui-npm-offline-closure-0.11.0.tar.zst` contains the 1,233 unique
+- `open-webui-npm-offline-closure-0.11.4.tar.zst` contains the 1,231 unique
   registry tarballs required by the exact release lock. The tracked manifest
-  binds all 1,275 lock records to their SHA-512 integrity values and archive
+  binds all 1,273 lock records to their SHA-512 integrity values and archive
   members. `prepare()` verifies the archive and seeds an isolated npm cache;
   the frontend build then runs `npm ci --offline`.
-- `open-webui-python-offline-closure-0.11.0-cp314-x86_64.tar.zst` contains the
-  222 wheels selected for CPython 3.14 on x86_64 Linux. Its embedded manifest
+- `open-webui-python-offline-closure-0.11.4-cp314-x86_64.tar.zst` contains the
+  200 wheels selected for CPython 3.14 on x86_64 Linux. Its embedded manifest
   binds every file to the private requirements lock. `prepare()` verifies safe
   members and exact identities before extraction; installation uses
   `uv --offline --no-index --require-hashes` against only that wheelhouse.
@@ -507,9 +604,9 @@ the reviewed bytes at the recipe's versioned build-input release:
 
 ```bash
 python npm-offline-closure.py materialize \
-  --lock open_webui-0.11.0/package-lock.json \
+  --lock open_webui-0.11.4/package-lock.json \
   --manifest npm-offline-closure-manifest.json \
-  --archive open-webui-npm-offline-closure-0.11.0.tar.zst \
+  --archive open-webui-npm-offline-closure-0.11.4.tar.zst \
   --cache npm-download-cache
 
 python python-offline-closure.py materialize \
@@ -519,11 +616,17 @@ python python-offline-closure.py archive \
   --lock open-webui-private-requirements.lock \
   --manifest python-closure/manifest.json \
   --wheelhouse python-closure/wheelhouse \
-  --output open-webui-python-offline-closure-0.11.0-cp314-x86_64.tar.zst
+  --output open-webui-python-offline-closure-0.11.4-cp314-x86_64.tar.zst
 ```
 
-These inputs remove the dependency-network blocker. The subsequent no-egress
-pkgrel-3 build and payload-inspection gate passed and is recorded in
+The 0.11.4 archives were regenerated this way twice, in independent output
+directories with separate download caches, and both runs matched byte for
+byte. The recipe fetches them from its `open-webui-0.11.4-offline-closures-v1`
+build-input release.
+
+For 0.11.0, these inputs removed the dependency-network blocker. The
+subsequent no-egress 0.11.0 pkgrel-3 build and payload-inspection gate passed
+and is recorded in
 [`docs/maintainers/open-webui-offline-package-build-2026-08-19.md`](../../docs/maintainers/open-webui-offline-package-build-2026-08-19.md).
 Reproduce the compact, whole-archive inspection receipt from a retained package
 with:

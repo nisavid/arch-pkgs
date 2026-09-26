@@ -1,10 +1,18 @@
 # Household fail-closed RAG patch.
-# Open WebUI commit: f9590b8017199e56d5e953657e6498e3cef1d246
-# Open WebUI 0.11.0 sdist SHA-256: e28c4fa997bf0a678caa7a0db6441da2e0c33b9a4120677f959ec3e45fccf9e9
+# Open WebUI commit: 8bd8b4fac5e059578ac0c74b3c18d11139f88b7d
+# Open WebUI 0.11.4 sdist SHA-256: 1f1a31668a0dee733953c29d6183d78dd78984e696aa8eb0f2083f5796497be0
 # The package installs open-webui-rag-gate.py as open_webui/retrieval/rag_gate.py before build.
 # App startup remains available for ordinary chat when qualification fails; authenticated /api/v1/retrieval/health stays 503.
+# Gate scope: knowledge-base content, anything attached to a model or folder as knowledge, and chat attachments of any kind. For notes, the gate covers notes attached as knowledge to the chat's model or the chat's folder.
+# Personal data outside the gate means only the notes, chats, and memories tools and features: a note attached as knowledge only to a different model or folder, reached from another chat, goes through those personal-notes features and stays outside the gate.
+# Gate closed: a chat with any attachment returns the 503 detail, even on a model whose file context capability is off. The builtin query_*_files, grep_*_files, view_file, and view_knowledge_file tools, and view_note for a note attached as knowledge to the chat's model or folder, return it as a tool error before reading anything; search_notes omits those notes.
+# Gate qualified: explicitly requested content is allowed whole, including full-context items and text, note, chat, and url attachments; search results are reranked. The global full-context and embedding-and-retrieval bypass modes stay refused even when qualified.
+# Hybrid-search errors: when hybrid search raises anything but RAGUnavailableError, the request fails with the gate's 503 instead of upstream's unreranked vector-search fallback. The gate stays qualified, so the health probe stays 200 and the next request retries.
+# Hybrid-search errors cover only exceptions hybrid search raises; a failed collection prefetch still yields empty sources (#98).
+# Empty candidates: RerankCompressor keeps 0.11.4's early return of [] without calling the reranker, and the gate stays qualified. Nothing unreranked reaches chat, and closing the gate on an empty knowledge base would only cause an outage.
+# tests/test_open_webui_household_rag_gate.py pins each gate path above.
 diff --git a/backend/open_webui/retrieval/models/external.py b/backend/open_webui/retrieval/models/external.py
-index 6d2849e..f02026d 100644
+index a66a2c5..82b99e2 100644
 --- a/backend/open_webui/retrieval/models/external.py
 +++ b/backend/open_webui/retrieval/models/external.py
 @@ -1,10 +1,20 @@
@@ -61,8 +69,8 @@ index 6d2849e..f02026d 100644
 @@ -36,7 +56,6 @@ class ExternalReranker(BaseReranker):
  
          try:
-             log.info(f'ExternalReranker:predict:model {self.model}')
--            log.info(f'ExternalReranker:predict:query {query}')
+             log.info('ExternalReranker:predict:model %s', self.model)
+-            log.info('ExternalReranker:predict:query %s', query)
  
              headers = {
                  'Content-Type': 'application/json',
@@ -70,24 +78,20 @@ index 6d2849e..f02026d 100644
  
              r.raise_for_status()
              data = r.json()
--
++            if not isinstance(data, dict):
++                raise RAGUnavailableError()
++            return validate_external_rerank_results(data.get('results'), len(docs))
++        except RAGUnavailableError:
++            raise
++        except Exception as e:
++            raise RAGUnavailableError() from e
+ 
 -            if 'results' in data:
 -                sorted_results = sorted(data['results'], key=lambda x: x['index'])
 -                return [result['relevance_score'] for result in sorted_results]
 -            else:
 -                log.error('No results found in external reranking response')
 -                return None
--
-+            if not isinstance(data, dict):
-+                raise RAGUnavailableError()
-+            return validate_external_rerank_results(data.get('results'), len(docs))
-+        except RAGUnavailableError:
-+            raise
-         except Exception as e:
--            log.exception(f'Error in external reranking: {e}')
--            return None
-+            raise RAGUnavailableError() from e
-+
 +    def qualify(self) -> None:
 +        try:
 +            scores = self._predict(
@@ -100,7 +104,10 @@ index 6d2849e..f02026d 100644
 +        except RAGUnavailableError:
 +            close_required_reranker()
 +            raise
-+
+ 
+-        except Exception as e:
+-            log.exception(f'Error in external reranking: {e}')
+-            return None
 +    def predict(self, sentences: List[Tuple[str, str]], user=None) -> List[float]:
 +        require_required_reranker(self)
 +        try:
@@ -109,10 +116,10 @@ index 6d2849e..f02026d 100644
 +            close_required_reranker()
 +            raise
 diff --git a/backend/open_webui/retrieval/utils.py b/backend/open_webui/retrieval/utils.py
-index 952b1e6..e71bc2d 100644
+index 055f750..2630388 100644
 --- a/backend/open_webui/retrieval/utils.py
 +++ b/backend/open_webui/retrieval/utils.py
-@@ -43,6 +43,12 @@ from open_webui.models.notes import Notes
+@@ -46,6 +46,12 @@ from open_webui.models.notes import Notes
  from open_webui.models.config import Config
  from open_webui.models.users import UserModel
  from open_webui.retrieval.loaders.youtube import YoutubeLoader
@@ -124,17 +131,17 @@ index 952b1e6..e71bc2d 100644
 +)
  from open_webui.retrieval.vector.async_client import ASYNC_VECTOR_DB_CLIENT
  from open_webui.retrieval.external import retrieve_external_knowledge
- from open_webui.retrieval.vector.factory import VECTOR_DB_CLIENT
-@@ -457,6 +463,8 @@ async def query_doc_with_native_hybrid_search(
+ from open_webui.retrieval.vector.factory import get_vector_db_client
+@@ -485,6 +491,8 @@ async def query_doc_with_native_hybrid_search(
              'documents': [documents],
              'metadatas': [metadatas],
          }
 +    except RAGUnavailableError:
 +        raise
      except Exception as e:
-         log.debug(f'Native hybrid search failed for {collection_name}, falling back to legacy hybrid search: {e}')
+         log.debug('Native hybrid search failed for %s, falling back to legacy hybrid search: %s', collection_name, e)
          return None
-@@ -683,19 +691,27 @@ async def query_collection(
+@@ -705,19 +713,27 @@ async def query_collection(
  ) -> dict:
      config = await Config.get_many(
          'rag.enable_hybrid_search',
@@ -167,25 +174,30 @@ index 952b1e6..e71bc2d 100644
              return await query_collection_with_hybrid_search(
                  collection_names=collection_names,
                  queries=queries,
-@@ -707,6 +723,8 @@ async def query_collection(
+@@ -729,8 +745,12 @@ async def query_collection(
                  hybrid_bm25_weight=config.get('rag.hybrid_bm25_weight'),
                  enable_enriched_texts=config.get('rag.enable_hybrid_search_enriched_texts'),
              )
 +        except RAGUnavailableError:
 +            raise
          except Exception as e:
-             log.debug(f'Hybrid search failed, falling back to vector search: {e}')
+-            log.debug('Hybrid search failed, falling back to vector search: %s', e)
++            # The vector-search fallback below never reranks; fail closed instead.
++            log.error('Hybrid search failed; refusing the unreranked vector-search fallback: %s', e)
++            raise RAGUnavailableError() from e
  
-@@ -831,6 +849,8 @@ async def query_collection_with_hybrid_search(
+     results = []
+     last_error = None
+@@ -860,6 +880,8 @@ async def query_collection_with_hybrid_search(
                  native_hybrid_search=False,
              )
-             return result, None
+             return result, None, collection_name
 +        except RAGUnavailableError:
 +            raise
          except Exception as e:
-             log.exception(f'Error when querying the collection with hybrid_search: {e}')
-             return None, e
-@@ -1335,9 +1355,19 @@ async def get_sources_from_items(
+             return None, e, collection_name
+ 
+@@ -1381,9 +1403,20 @@ async def get_sources_from_items(
      full_context=False,
      user: UserModel | None = None,
  ):
@@ -198,16 +210,17 @@ index 952b1e6..e71bc2d 100644
 +        len(queries),
 +        full_context,
 +    )
++    # Explicit full-context items pass once qualified; the global mode does not.
 +    require_safe_retrieval_mode(
 +        reranking_function,
-+        full_context=full_context is True,
++        full_context=(await Config.get('rag.full_context')) is True,
 +        hybrid_search=hybrid_search is True,
 +        bypass_embedding_and_retrieval=bypass_embedding_and_retrieval is True,
 +    )
      extracted_collections = []
      query_results = []
      folder_items = set()
-@@ -1630,6 +1660,8 @@ async def get_sources_from_items(
+@@ -1689,6 +1722,8 @@ async def get_sources_from_items(
                          embedding_function=embedding_function,
                          k=k,
                      )
@@ -216,7 +229,7 @@ index 952b1e6..e71bc2d 100644
              except Exception as e:
                  log.exception(e)
  
-@@ -1744,7 +1776,11 @@ class RerankCompressor(BaseDocumentCompressor):
+@@ -1818,34 +1853,34 @@ class RerankCompressor(BaseDocumentCompressor):
  
          scores = None
          if reranking:
@@ -227,11 +240,10 @@ index 952b1e6..e71bc2d 100644
 +                close_required_reranker()
 +                raise
          else:
-             from sentence_transformers import util as st_util
- 
-@@ -1753,27 +1789,23 @@ class RerankCompressor(BaseDocumentCompressor):
+             query_embedding = await self.embedding_function(query, RAG_EMBEDDING_QUERY_PREFIX)
+             doc_texts = [doc.page_content for doc in documents]
              document_embedding = await self.embedding_function(doc_texts, RAG_EMBEDDING_CONTENT_PREFIX)
-             scores = st_util.cos_sim(query_embedding, document_embedding)[0]
+             scores = cosine_similarity(query_embedding, document_embedding)
  
 -        if scores is not None:
 -            docs_with_scores = list(
@@ -239,9 +251,6 @@ index 952b1e6..e71bc2d 100644
 -                    documents,
 -                    scores.tolist() if not isinstance(scores, list) else scores,
 -                )
--            )
--            if self.r_score:
--                docs_with_scores = [(d, s) for d, s in docs_with_scores if s >= self.r_score]
 +        try:
 +            scores = validate_rerank_scores(scores, len(documents))
 +        except RAGUnavailableError:
@@ -250,7 +259,19 @@ index 952b1e6..e71bc2d 100644
 +        docs_with_scores = list(zip(documents, scores))
 +        if self.r_score:
 +            docs_with_scores = [(d, s) for d, s in docs_with_scores if s >= self.r_score]
- 
++
++        result = sorted(docs_with_scores, key=operator.itemgetter(1), reverse=True)
++        final_results = []
++        for doc, doc_score in result[: self.top_n]:
++            metadata = doc.metadata
++            metadata['score'] = doc_score
++            doc = Document(
++                page_content=doc.page_content,
++                metadata=metadata,
+             )
+-            if self.r_score:
+-                docs_with_scores = [(d, s) for d, s in docs_with_scores if s >= self.r_score]
+-
 -            result = sorted(docs_with_scores, key=operator.itemgetter(1), reverse=True)
 -            final_results = []
 -            for doc, doc_score in result[: self.top_n]:
@@ -265,25 +286,16 @@ index 952b1e6..e71bc2d 100644
 -        else:
 -            log.warning('No valid scores found, check your reranking function. Returning original documents.')
 -            return documents
-+        result = sorted(docs_with_scores, key=operator.itemgetter(1), reverse=True)
-+        final_results = []
-+        for doc, doc_score in result[: self.top_n]:
-+            metadata = doc.metadata
-+            metadata['score'] = doc_score
-+            doc = Document(
-+                page_content=doc.page_content,
-+                metadata=metadata,
-+            )
 +            final_results.append(doc)
 +        return final_results
 diff --git a/backend/open_webui/utils/middleware.py b/backend/open_webui/utils/middleware.py
-index 271d072..733382a 100644
+index 8234604..81188d4 100644
 --- a/backend/open_webui/utils/middleware.py
 +++ b/backend/open_webui/utils/middleware.py
-@@ -49,6 +49,10 @@ from open_webui.models.oauth_sessions import OAuthSessions
+@@ -54,6 +54,10 @@ from open_webui.models.notes import Notes
+ from open_webui.models.oauth_sessions import OAuthSessions
  from open_webui.models.users import UserModel, Users
- from open_webui.events import EVENTS, publish_event
- from open_webui.retrieval.utils import get_sources_from_items
+ from open_webui.retrieval.utils import filter_source_metadata, get_sources_from_items
 +from open_webui.retrieval.rag_gate import (
 +    RAGUnavailableError,
 +    require_file_rag_ready,
@@ -291,7 +303,7 @@ index 271d072..733382a 100644
  from open_webui.routers.images import (
      CreateImageForm,
      EditImageForm,
-@@ -1834,6 +1838,29 @@ async def chat_completion_files_handler(
+@@ -2057,6 +2061,29 @@ async def chat_completion_files_handler(
          # Check if all files are in full context mode
          all_full_context = all(item.get('context') == 'full' for item in files)
  
@@ -313,7 +325,7 @@ index 271d072..733382a 100644
 +        require_file_rag_ready(
 +            files,
 +            reranking_function,
-+            full_context=(all_full_context or rag_config.get('rag.full_context')) is True,
++            full_context=rag_config.get('rag.full_context') is True,
 +            hybrid_search=rag_config.get('rag.enable_hybrid_search') is True,
 +            bypass_embedding_and_retrieval=(rag_config.get('rag.bypass_embedding_and_retrieval') is True),
 +        )
@@ -321,7 +333,7 @@ index 271d072..733382a 100644
          queries = []
          if not all_full_context:
              try:
-@@ -1880,15 +1907,6 @@ async def chat_completion_files_handler(
+@@ -2103,15 +2130,6 @@ async def chat_completion_files_handler(
              queries = [get_last_user_message(body['messages']) or '']
  
          try:
@@ -337,7 +349,7 @@ index 271d072..733382a 100644
              # Directly await async get_sources_from_items (no thread needed - fully async now)
              sources = await get_sources_from_items(
                  request=request,
-@@ -1898,11 +1916,7 @@ async def chat_completion_files_handler(
+@@ -2121,11 +2139,7 @@ async def chat_completion_files_handler(
                      query, prefix=prefix, user=user
                  ),
                  k=rag_config.get('rag.top_k'),
@@ -350,7 +362,7 @@ index 271d072..733382a 100644
                  k_reranker=rag_config.get('rag.top_k_reranker'),
                  r=rag_config.get('rag.relevance_threshold'),
                  hybrid_bm25_weight=rag_config.get('rag.hybrid_bm25_weight'),
-@@ -1910,6 +1924,8 @@ async def chat_completion_files_handler(
+@@ -2133,6 +2147,8 @@ async def chat_completion_files_handler(
                  full_context=all_full_context or rag_config.get('rag.full_context'),
                  user=user,
              )
@@ -359,7 +371,7 @@ index 271d072..733382a 100644
          except Exception as e:
              log.exception(e)
  
-@@ -2928,6 +2944,8 @@ async def process_chat_payload(request, form_data, user, metadata, model):
+@@ -3210,8 +3226,17 @@ async def process_chat_payload(request, form_data, user, metadata, model):
          try:
              form_data, flags = await chat_completion_files_handler(request, form_data, extra_params, user)
              sources.extend(flags.get('sources', []))
@@ -367,55 +379,201 @@ index 271d072..733382a 100644
 +            raise
          except Exception as e:
              log.exception(e)
++    else:
++        # With file context off, attachments reach the model only through
++        # tools, so refuse the whole chat here while the gate is closed.
++        require_file_rag_ready(
++            [item for item in (metadata.get('files') or []) if item.get('type') != 'filesystem'],
++            request.app.state.RERANKING_FUNCTION,
++        )
  
+     # Save the pre-RAG message state so the native tool call loop can
+     # restore to the true original (before file-source injection) rather
 diff --git a/backend/open_webui/tools/builtin.py b/backend/open_webui/tools/builtin.py
-index 1b721f1..f677dd4 100644
+index d80884d..711f159 100644
 --- a/backend/open_webui/tools/builtin.py
 +++ b/backend/open_webui/tools/builtin.py
-@@ -30,6 +30,10 @@ from open_webui.models.memories import Memories
+@@ -29,6 +29,11 @@ from open_webui.models.memories import Memories
  from open_webui.models.messages import Message, Messages
  from open_webui.models.notes import Notes
  from open_webui.models.users import UserModel
 +from open_webui.retrieval.rag_gate import (
 +    RAG_UNAVAILABLE_DETAIL,
 +    RAGUnavailableError,
++    require_required_reranker,
 +)
- from open_webui.retrieval.utils import get_content_from_url
+ from open_webui.retrieval.utils import filter_source_metadata, get_content_from_url
  from open_webui.retrieval.vector.async_client import ASYNC_VECTOR_DB_CLIENT
  from open_webui.routers.images import (
-@@ -2460,6 +2464,13 @@ async def query_chat_files(
+@@ -1131,6 +1136,7 @@ async def search_notes(
+     end_timestamp: Optional[int] = None,
+     __request__: Request = None,
+     __user__: dict = None,
++    __model_knowledge__: Optional[list[dict]] = None,
+ ) -> str:
+     """
+     Search the user's saved notes by title and content.
+@@ -1147,6 +1153,10 @@ async def search_notes(
+     if not __user__:
+         return JSONCodec.dumps({'error': 'User context not available'})
+ 
++    # While RAG is closed, notes attached as knowledge drop out of the results.
++    knowledge_note_ids = _knowledge_note_ids(__model_knowledge__)
++    hidden_note_ids = knowledge_note_ids if knowledge_note_ids and _rag_closed(__request__) else set()
++
+     try:
+         user_id = __user__.get('id')
+         user_group_ids = [group.id for group in await Groups.get_groups_by_member_id(user_id)]
+@@ -1169,6 +1179,9 @@ async def search_notes(
+ 
+         notes = []
+         for note in result.items:
++            if note.id in hidden_note_ids:
++                continue
++
+             # Apply date filters (updated_at is in nanoseconds)
+             if start_ts and note.updated_at < start_ts:
+                 continue
+@@ -1225,6 +1238,7 @@ async def view_note(
+     note_id: str,
+     __request__: Request = None,
+     __user__: dict = None,
++    __model_knowledge__: Optional[list[dict]] = None,
+ ) -> str:
+     """
+     Get the full content of a note by its ID.
+@@ -1238,6 +1252,10 @@ async def view_note(
+     if not __user__:
+         return JSONCodec.dumps({'error': 'User context not available'})
+ 
++    if note_id in _knowledge_note_ids(__model_knowledge__):
++        if refusal := _rag_closed_tool_error(__request__):
++            return refusal
++
+     try:
+         note = await Notes.get_note_by_id(note_id)
+ 
+@@ -2326,6 +2344,37 @@ async def search_knowledge_files(
+         return JSONCodec.dumps({'error': str(e)})
+ 
+ 
++def _rag_unavailable_tool_error() -> str:
++    return JSONCodec.dumps(
++        {
++            'error': RAG_UNAVAILABLE_DETAIL,
++            'status': RAGUnavailableError.status_code,
++        }
++    )
++
++
++def _rag_closed(request: Request) -> bool:
++    try:
++        require_required_reranker(getattr(request.app.state, 'RERANKING_FUNCTION', None))
++    except RAGUnavailableError:
++        return True
++    return False
++
++
++def _rag_closed_tool_error(request: Request) -> Optional[str]:
++    """Refuse knowledge content with the gate's tool error while RAG is closed."""
++    return _rag_unavailable_tool_error() if _rag_closed(request) else None
++
++
++def _knowledge_note_ids(model_knowledge: Optional[list[dict]]) -> set:
++    """Notes attached as model or folder knowledge; chat attachments stay personal."""
++    return {
++        item.get('id')
++        for item in model_knowledge or []
++        if isinstance(item, dict) and item.get('type') == 'note' and item.get('source') != 'chat'
++    }
++
++
+ async def _get_accessible_chat_files(
+     files: Optional[list[dict]],
+     user: dict,
+@@ -2476,6 +2525,9 @@ async def grep_chat_files(
+     if not __user__:
+         return JSONCodec.dumps({'error': 'User context not available'})
+ 
++    if refusal := _rag_closed_tool_error(__request__):
++        return refusal
++
+     if not pattern or not pattern.strip():
+         return JSONCodec.dumps({'error': 'Pattern is required'})
+ 
+@@ -2529,6 +2581,9 @@ async def query_chat_files(
+     if not __user__:
+         return JSONCodec.dumps({'error': 'User context not available'})
+ 
++    if refusal := _rag_closed_tool_error(__request__):
++        return refusal
++
+     if isinstance(file_id, str) and file_id.lower() in ('none', 'null', ''):
+         file_id = None
+     if isinstance(count, str):
+@@ -2621,6 +2676,8 @@ async def query_chat_files(
                  chunks.append(chunk)
  
-         return json.dumps(chunks[:count], ensure_ascii=False)
+         return JSONCodec.dumps(chunks[:count], ensure_ascii=False)
 +    except RAGUnavailableError:
-+        return json.dumps(
-+            {
-+                'error': RAG_UNAVAILABLE_DETAIL,
-+                'status': RAGUnavailableError.status_code,
-+            }
-+        )
++        return _rag_unavailable_tool_error()
      except Exception as e:
          log.exception(f'query_chat_files error: {e}')
-         return json.dumps({'error': str(e)})
-@@ -3203,6 +3214,13 @@ async def query_knowledge_files(
+         return JSONCodec.dumps({'error': str(e)})
+@@ -2654,6 +2711,9 @@ async def grep_knowledge_files(
+     if not __user__:
+         return JSONCodec.dumps({'error': 'User context not available'})
+ 
++    if refusal := _rag_closed_tool_error(__request__):
++        return refusal
++
+     if not pattern or not pattern.strip():
+         return JSONCodec.dumps({'error': 'Pattern is required'})
+ 
+@@ -2775,6 +2835,9 @@ async def view_file(
+     if not __user__:
+         return JSONCodec.dumps({'error': 'User context not available'})
+ 
++    if refusal := _rag_closed_tool_error(__request__):
++        return refusal
++
+     # Coerce parameters from LLM tool calls (may come as strings)
+     if isinstance(offset, str):
+         try:
+@@ -2887,6 +2950,9 @@ async def view_knowledge_file(
+     if not __user__:
+         return JSONCodec.dumps({'error': 'User context not available'})
+ 
++    if refusal := _rag_closed_tool_error(__request__):
++        return refusal
++
+     # Coerce parameters from LLM tool calls (may come as strings)
+     if isinstance(offset, str):
+         try:
+@@ -3172,6 +3238,9 @@ async def query_knowledge_files(
+     if not __user__:
+         return JSONCodec.dumps({'error': 'User context not available'})
+ 
++    if refusal := _rag_closed_tool_error(__request__):
++        return refusal
++
+     # Coerce parameters from LLM tool calls (may come as strings)
+     if isinstance(count, str):
+         try:
+@@ -3364,6 +3433,8 @@ async def query_knowledge_files(
          chunks = chunks[:count]
  
-         return json.dumps(chunks, ensure_ascii=False)
+         return JSONCodec.dumps(chunks, ensure_ascii=False)
 +    except RAGUnavailableError:
-+        return json.dumps(
-+            {
-+                'error': RAG_UNAVAILABLE_DETAIL,
-+                'status': RAGUnavailableError.status_code,
-+            }
-+        )
++        return _rag_unavailable_tool_error()
      except Exception as e:
          log.exception(f'query_knowledge_files error: {e}')
-         return json.dumps({'error': str(e)})
+         return JSONCodec.dumps({'error': str(e)})
 diff --git a/backend/open_webui/routers/retrieval.py b/backend/open_webui/routers/retrieval.py
-index 4bb2fbc..ac7fe75 100644
+index c36b0b8..da5bde4 100644
 --- a/backend/open_webui/routers/retrieval.py
 +++ b/backend/open_webui/routers/retrieval.py
-@@ -77,6 +77,12 @@ from open_webui.retrieval.utils import (
+@@ -82,6 +82,12 @@ from open_webui.retrieval.utils import (
      query_doc,
      query_doc_with_hybrid_search,
  )
@@ -426,9 +584,9 @@ index 4bb2fbc..ac7fe75 100644
 +    require_safe_retrieval_mode,
 +)
  from open_webui.retrieval.vector.async_client import ASYNC_VECTOR_DB_CLIENT
- from open_webui.retrieval.vector.factory import VECTOR_DB_CLIENT
+ from open_webui.retrieval.vector.factory import get_vector_db_client
  from open_webui.retrieval.vector.utils import filter_metadata
-@@ -171,8 +177,11 @@ def get_rf(
+@@ -178,17 +184,22 @@ def get_rf(
      auto_update: bool = RAG_RERANKING_MODEL_AUTO_UPDATE,
  ):
      rf = None
@@ -439,20 +597,22 @@ index 4bb2fbc..ac7fe75 100644
 +        timeout_value = external_reranker_timeout
 +    else:
 +        timeout_value = float(external_reranker_timeout) if external_reranker_timeout else None
+     if reranking_model and engine == 'external':
+         from open_webui.retrieval.models.external import ExternalReranker
+ 
+-        return ExternalReranker(
++        rf = ExternalReranker(
+             url=external_reranker_url,
+             api_key=external_reranker_api_key,
+             model=reranking_model,
+             timeout=timeout_value,
+         )
++        rf.qualify()
++        return rf
+     if USE_SLIM:
+         return None
      if reranking_model:
-         if any(model in reranking_model for model in ['jinaai/jina-colbert-v2']):
-             try:
-@@ -197,6 +206,9 @@ def get_rf(
-                         model=reranking_model,
-                         timeout=timeout_value,
-                     )
-+                    rf.qualify()
-+                except RAGUnavailableError:
-+                    raise
-                 except Exception as e:
-                     log.error(f'ExternalReranking: {e}')
-                     raise Exception(ERROR_MESSAGES.DEFAULT(e, 'Error loading reranking model'))
-@@ -249,6 +261,22 @@ def get_rf(
+@@ -251,6 +262,22 @@ def get_rf(
  
  router = APIRouter()
  
@@ -475,7 +635,7 @@ index 4bb2fbc..ac7fe75 100644
  RETRIEVAL_CONFIG_KEYS = {
      'ALLOWED_FILE_EXTENSIONS': 'rag.file.allowed_extensions',
      'AZURE_AI_SEARCH_API_KEY': 'web.search.azure_ai_search_api_key',
-@@ -1165,6 +1193,10 @@ async def update_rag_config(request: Request, form_data: ConfigForm, user=Depend
+@@ -1231,6 +1258,10 @@ async def update_rag_config(request: Request, form_data: ConfigForm, user=Depend
          config.RAG_RERANKING_MODEL = (
              form_data.RAG_RERANKING_MODEL if form_data.RAG_RERANKING_MODEL is not None else config.RAG_RERANKING_MODEL
          )
@@ -486,7 +646,7 @@ index 4bb2fbc..ac7fe75 100644
  
          try:
              if config.ENABLE_RAG_HYBRID_SEARCH and not config.BYPASS_EMBEDDING_AND_RETRIEVAL:
-@@ -1182,9 +1214,16 @@ async def update_rag_config(request: Request, form_data: ConfigForm, user=Depend
+@@ -1248,9 +1279,16 @@ async def update_rag_config(request: Request, form_data: ConfigForm, user=Depend
                      request.app.state.rf,
                      reranking_batch_size=config.RAG_RERANKING_BATCH_SIZE,
                  )
@@ -503,7 +663,7 @@ index 4bb2fbc..ac7fe75 100644
      except Exception as e:
          log.exception(f'Problem updating reranking model: {e}')
          raise HTTPException(
-@@ -2750,6 +2789,19 @@ async def query_doc_handler(
+@@ -3083,6 +3121,19 @@ async def query_doc_handler(
      await _validate_collection_access([form_data.collection_name], user)
  
      try:
@@ -523,7 +683,7 @@ index 4bb2fbc..ac7fe75 100644
          if config.ENABLE_RAG_HYBRID_SEARCH and (form_data.hybrid is None or form_data.hybrid):
              return await query_doc_with_hybrid_search(
                  collection_name=form_data.collection_name,
-@@ -2759,11 +2811,7 @@ async def query_doc_handler(
+@@ -3092,11 +3143,7 @@ async def query_doc_handler(
                      query, prefix=prefix, user=user
                  ),
                  k=form_data.k if form_data.k else config.TOP_K,
@@ -536,7 +696,7 @@ index 4bb2fbc..ac7fe75 100644
                  k_reranker=form_data.k_reranker or config.TOP_K_RERANKER,
                  r=(form_data.r if form_data.r else config.RELEVANCE_THRESHOLD),
                  hybrid_bm25_weight=(
-@@ -2785,6 +2833,11 @@ async def query_doc_handler(
+@@ -3118,6 +3165,11 @@ async def query_doc_handler(
                  k=form_data.k if form_data.k else config.TOP_K,
                  user=user,
              )
@@ -548,7 +708,7 @@ index 4bb2fbc..ac7fe75 100644
      except HTTPException:
          raise
      except Exception as e:
-@@ -2816,6 +2869,19 @@ async def query_collection_handler(
+@@ -3149,6 +3201,19 @@ async def query_collection_handler(
      await _validate_collection_access(form_data.collection_names, user)
  
      try:
@@ -568,7 +728,7 @@ index 4bb2fbc..ac7fe75 100644
          if config.ENABLE_RAG_HYBRID_SEARCH and (form_data.hybrid is None or form_data.hybrid):
              return await query_collection_with_hybrid_search(
                  collection_names=form_data.collection_names,
-@@ -2824,11 +2890,7 @@ async def query_collection_handler(
+@@ -3157,11 +3222,7 @@ async def query_collection_handler(
                      query, prefix=prefix, user=user
                  ),
                  k=form_data.k if form_data.k else config.TOP_K,
@@ -581,7 +741,7 @@ index 4bb2fbc..ac7fe75 100644
                  k_reranker=form_data.k_reranker or config.TOP_K_RERANKER,
                  r=(form_data.r if form_data.r else config.RELEVANCE_THRESHOLD),
                  hybrid_bm25_weight=(
-@@ -2853,6 +2915,11 @@ async def query_collection_handler(
+@@ -3186,6 +3247,11 @@ async def query_collection_handler(
                  k=form_data.k if form_data.k else config.TOP_K,
              )
  
@@ -594,10 +754,10 @@ index 4bb2fbc..ac7fe75 100644
          raise
      except Exception as e:
 diff --git a/backend/open_webui/main.py b/backend/open_webui/main.py
-index 55613ac..75e930b 100644
+index e7c2915..b372e87 100644
 --- a/backend/open_webui/main.py
 +++ b/backend/open_webui/main.py
-@@ -175,6 +175,10 @@ from open_webui.routers.retrieval import (
+@@ -185,6 +185,10 @@ from open_webui.routers.retrieval import (
      get_reranking_function,
      get_rf,
  )
@@ -608,7 +768,7 @@ index 55613ac..75e930b 100644
  from open_webui.socket.main import (
      MODELS,
      get_event_emitter,
-@@ -619,6 +623,10 @@ async def initialize_runtime_config(app: FastAPI):
+@@ -681,6 +685,10 @@ async def initialize_runtime_config(app: FastAPI):
              'rag.external_reranker_api_key',
              'rag.external_reranker_timeout',
          )
@@ -619,7 +779,7 @@ index 55613ac..75e930b 100644
          app.state.ef = get_ef(rag_config.get('rag.embedding_engine'), rag_config.get('rag.embedding_model'))
          if rag_config.get('rag.enable_hybrid_search') and not rag_config.get('rag.bypass_embedding_and_retrieval'):
              app.state.rf = get_rf(
-@@ -1617,7 +1625,16 @@ async def chat_completion(
+@@ -1717,7 +1725,16 @@ async def chat_completion(
                  # a proper HTTP response; without this the function would
                  # return None which FastAPI serializes as null.  #23924
                  raise HTTPException(
@@ -637,4 +797,3 @@ index 55613ac..75e930b 100644
                      detail=error_detail,
                  )
          finally:
-

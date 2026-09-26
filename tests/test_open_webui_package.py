@@ -1,10 +1,17 @@
+import contextlib
 import hashlib
+import importlib.machinery
 import importlib.util
+import json
 import os
 import re
+import shlex
+import socketserver
 import subprocess
 import tempfile
+import threading
 import unittest
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from unittest import mock
 
@@ -17,17 +24,145 @@ def read(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def environment_assignments(text: str) -> dict[str, str]:
+    """Parse the active assignments of a systemd EnvironmentFile.
+
+    Covers the forms these files use: comments, blank lines, plain values, and
+    double-quoted values that span lines.
+    """
+
+    values: dict[str, str] = {}
+    lines = iter(text.splitlines())
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith(("#", ";")):
+            continue
+        key, separator, value = stripped.partition("=")
+        if not separator:
+            continue
+        if value.startswith('"'):
+            value = value[1:]
+            while not value.endswith('"'):
+                value += "\n" + next(lines)
+            value = value[:-1]
+        if key in values:
+            raise ValueError(f"{key} is assigned twice")
+        values[key] = value
+    return values
+
+
+# The settings the household profile carries. Only ENABLE_OPENAI_API also
+# appears in open-webui.env (as false); every other packaged key is a generic,
+# security, or RAG-gate default.
+HOUSEHOLD_PROFILE_KEYS = frozenset(
+    {
+        "ENABLE_OPENAI_API",
+        "OPENAI_API_BASE_URLS",
+        "OPENAI_API_KEYS",
+        "RAG_EMBEDDING_ENGINE",
+        "RAG_OPENAI_API_BASE_URL",
+        "RAG_EMBEDDING_MODEL",
+        "RAG_EMBEDDING_BATCH_SIZE",
+        "RAG_EMBEDDING_CONCURRENT_REQUESTS",
+        "RAG_EMBEDDING_QUERY_PREFIX",
+        "RAG_EMBEDDING_CONTENT_PREFIX",
+        "RAG_RERANKING_MODEL",
+        "RAG_EXTERNAL_RERANKER_URL",
+        "RAG_RERANKING_BATCH_SIZE",
+        "ENABLE_CALENDAR",
+        "ENABLE_EVALUATION_ARENA_MODELS",
+        "ENABLE_RETRIEVAL_QUERY_GENERATION",
+    }
+)
+PACKAGED_DEFAULT_KEYS = frozenset(
+    {
+        "ENV",
+        "FROM_INIT_PY",
+        "UVICORN_WORKERS",
+        "FRONTEND_BUILD_DIR",
+        "STATIC_DIR",
+        "DATA_DIR",
+        "DATABASE_URL",
+        "CACHE_DIR",
+        "HF_HOME",
+        "SENTENCE_TRANSFORMERS_HOME",
+        "TIKTOKEN_CACHE_DIR",
+        "WHISPER_MODEL_DIR",
+        "WEBUI_AUTH",
+        "ENABLE_SIGNUP",
+        "DEFAULT_USER_ROLE",
+        "ENABLE_API_KEYS",
+        "ENABLE_PERSISTENT_CONFIG",
+        "WEBUI_SESSION_COOKIE_SECURE",
+        "WEBUI_SESSION_COOKIE_SAME_SITE",
+        "WEBUI_AUTH_COOKIE_SECURE",
+        "WEBUI_AUTH_COOKIE_SAME_SITE",
+        "BYPASS_ADMIN_ACCESS_CONTROL",
+        "BYPASS_MODEL_ACCESS_CONTROL",
+        "BYPASS_RETRIEVAL_ACCESS_CONTROL",
+        "ENABLE_PLUGINS",
+        "ENABLE_PIP_INSTALL_FRONTMATTER_REQUIREMENTS",
+        "ENABLE_DIRECT_CONNECTIONS",
+        "ENABLE_OPENAI_API_PASSTHROUGH",
+        "ENABLE_FORWARD_USER_INFO_HEADERS",
+        "ENABLE_VERSION_UPDATE_CHECK",
+        "OFFLINE_MODE",
+        "ENABLE_PROFILE_IMAGE_URL_FORWARDING",
+        "ENABLE_CODE_EXECUTION",
+        "ENABLE_CODE_INTERPRETER",
+        "USER_PERMISSIONS_FEATURES_CODE_INTERPRETER",
+        "ENABLE_AUTOMATIONS",
+        "USER_PERMISSIONS_FEATURES_AUTOMATIONS",
+        "ENABLE_OLLAMA_API",
+        "ENABLE_OPENAI_API",
+        "VECTOR_DB",
+        "QDRANT_URI",
+        "QDRANT_ON_DISK",
+        "QDRANT_PREFER_GRPC",
+        "QDRANT_COLLECTION_PREFIX",
+        "ENABLE_QDRANT_MULTITENANCY_MODE",
+        "RAG_RERANKING_ENGINE",
+        "ENABLE_RAG_HYBRID_SEARCH",
+        "RAG_EXTERNAL_RERANKER_TIMEOUT",
+        "REDIS_KEY_PREFIX",
+        "ENABLE_STAR_SESSIONS_MIDDLEWARE",
+        "WEBSOCKET_MANAGER",
+        "SCARF_NO_ANALYTICS",
+        "DO_NOT_TRACK",
+        "ANONYMIZED_TELEMETRY",
+    }
+)
+HOUSEHOLD_PROFILE = "/etc/open-webui/household.env"
+HOUSEHOLD_EXAMPLE = "/usr/share/open-webui/household.env.example"
+HOUSEHOLD_PROFILE_GUARD = (
+    "ExecStartPre=/bin/sh -c '"
+    f"if [ -e {HOUSEHOLD_PROFILE} ] || [ -L {HOUSEHOLD_PROFILE} ]; then "
+    f"[ -f {HOUSEHOLD_PROFILE} ] && [ -r {HOUSEHOLD_PROFILE} ] || "
+    f'{{ echo "open-webui: {HOUSEHOLD_PROFILE} exists but is not a file this '
+    'service can read" >&2; exit 1; }; fi\''
+)
+
+
+def household_profile_guard(service: str) -> list[str]:
+    """The guard's argv, as systemd splits its unit-file quoting."""
+
+    line = next(
+        line for line in service.splitlines() if line.startswith("ExecStartPre=/bin/sh ")
+    )
+    return shlex.split(line.removeprefix("ExecStartPre="))
+
+
 class OpenWebUIPackageContractTests(unittest.TestCase):
     def test_recipe_binds_exact_release_and_frozen_closures(self):
         recipe = read(OPEN_WEBUI / "PKGBUILD")
 
-        self.assertIn("pkgver=0.11.0", recipe)
+        self.assertIn("pkgver=0.11.4", recipe)
         self.assertIn(
-            "e28c4fa997bf0a678caa7a0db6441da2e0c33b9a4120677f959ec3e45fccf9e9",
+            "1f1a31668a0dee733953c29d6183d78dd78984e696aa8eb0f2083f5796497be0",
             recipe,
         )
         self.assertIn(
-            "71c266be87d0fb2cd79d9172d0e86a3b1b59d550d7054622b831344df07d361b",
+            "e4c2b02607ae984ec8ec08f3f9e02a8de06b1226af0f2df37fe2fab7f9d52523",
             recipe,
         )
         self.assertIn("open-webui-private-requirements.lock", recipe)
@@ -63,7 +198,7 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
         self.assertGreaterEqual(recipe.count("--no-deps"), 2)
         self.assertIn("npm ci", read(OPEN_WEBUI / "0003-build-frozen-frontend.patch"))
         self.assertIn(
-            "57b3bc90e6ebca23c0cec1736e470fbb2fee1c6b05531551b8871f3cbdab185c",
+            "0ab15d00cda8a7dca4499d11960ea4532db5827ad5f55975c1062f6434cfbe9a",
             recipe,
         )
         self.assertIn("LC_ALL=C sort -z", recipe)
@@ -76,13 +211,13 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
         lock = lock_bytes.decode()
         entries = re.findall(r"(?m)^([A-Za-z0-9][A-Za-z0-9._-]*)==([^ \\\n]+)", lock)
 
-        self.assertEqual(len(entries), 222)
-        self.assertEqual(len({name.casefold().replace("_", "-") for name, _ in entries}), 222)
+        self.assertEqual(len(entries), 200)
+        self.assertEqual(len({name.casefold().replace("_", "-") for name, _ in entries}), 200)
         self.assertIn(("qdrant-client", "1.18.0"), entries)
         self.assertIn(("portalocker", "3.2.0"), entries)
         self.assertEqual(
             hashlib.sha256(lock_bytes).hexdigest(),
-            "df99fc265998cf7029d22b01faa81f3dc015d255754748e3e6512d84cce95007",
+            "8a3532e0b4e30a0edcbdb8255e915fca70ec583690266e17169ad48dbac6a1f5",
         )
         for block in re.split(r"(?m)(?=^[A-Za-z0-9][A-Za-z0-9._-]*==)", lock):
             if re.search(r"(?m)^[A-Za-z0-9][A-Za-z0-9._-]*==", block):
@@ -124,15 +259,15 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
             text=True,
         ).stdout
 
-        self.assertIn("pkgrel=7", recipe)
+        self.assertIn("pkgrel=1", recipe)
         for asset, digest in (
             (
-                "open-webui-npm-offline-closure-0.11.0.tar.zst",
-                "6238b436c6669a311623d97724c6b2ada0e77090d0e5219860acc38c53fb32b1",
+                "open-webui-npm-offline-closure-0.11.4.tar.zst",
+                "617abc7d60da12f080faa690de989fff38eb4cd40b519256cce35a48086b9438",
             ),
             (
-                "open-webui-python-offline-closure-0.11.0-cp314-x86_64.tar.zst",
-                "bcd3c5c651fc42e8e5a73a4c81f4b5760e82f6b39eb714caf999700bad4ed27c",
+                "open-webui-python-offline-closure-0.11.4-cp314-x86_64.tar.zst",
+                "005be1c5605e5291b37ccc789454f8f37ec894302bc064fcfcae5e1b4a9a0f13",
             ),
         ):
             self.assertIn(asset, source_info)
@@ -163,16 +298,16 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
         verifier = read(OPEN_WEBUI / "verify-open-webui-private-lock.py")
 
         self.assertTrue(lock.startswith("# Generated by generate-open-webui-private-lock.zsh"))
-        self.assertEqual(len(constraints), 222)
+        self.assertEqual(len(constraints), 200)
         self.assertEqual(constraints, sorted(set(constraints)))
         self.assertEqual(len(providers), 21)
         self.assertEqual(providers, sorted(set(providers)))
         self.assertIn("portalocker==3.2.0", constraints)
         self.assertIn("qdrant-client==1.18.0", constraints)
         for binding in (
-            "bf42de5c836d5afe5628533cf8369e856d5d09bfd00efef302c31df3fa249947",
+            "f0c49cfa1936887c3447cb4c33cbbfdd2064aa0937140ec1c0520523efae5392",
             "x86_64-unknown-linux-gnu",
-            "2026-08-18T06:25:20Z",
+            "2026-09-21T19:31:44Z",
             "--generate-hashes",
             "--default-index https://pypi.org/simple",
             "--no-header",
@@ -337,12 +472,32 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
         )
         self.assertIn("CREDENTIALS_DIRECTORY", wrapper)
         self.assertIn("exit 78", wrapper)
-        self.assertNotIn("qdrant-admin", service.casefold())
-        self.assertNotIn("lemonade-admin", service.casefold())
-        self.assertNotIn("qdrant-admin", wrapper.casefold())
-        self.assertNotIn("lemonade-admin", wrapper.casefold())
-        # Open WebUI's Lemonade connection uses no credential in this refresh.
-        self.assertNotIn("lemonade-inference-api-key", service)
+        # The service loads exactly these credentials: no administrative
+        # identity, and Open WebUI stores no secret for its model connections.
+        self.assertEqual(
+            re.findall(r"(?m)^LoadCredential(?:Encrypted)?=([^:]+):", service),
+            [
+                "webui-secret-key",
+                "oauth-client-info-encryption-key",
+                "oauth-session-token-encryption-key",
+                "valkey-url",
+                "qdrant-runtime-api-key",
+                "session-epoch",
+            ],
+        )
+        self.assertEqual(
+            re.findall(r"(?m)^\s*load_credential (\S+) ", wrapper),
+            [
+                "webui-secret-key",
+                "oauth-client-info-encryption-key",
+                "oauth-session-token-encryption-key",
+                "valkey-url",
+                "qdrant-runtime-api-key",
+                "admin-email",
+                "admin-name",
+                "admin-bootstrap-password",
+            ],
+        )
         self.assertNotIn("RAG_OPENAI_API_KEY", wrapper)
         self.assertNotIn("RAG_EXTERNAL_RERANKER_API_KEY", wrapper)
         self.assertIn("IPAddressDeny=any", service)
@@ -374,63 +529,259 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
         for value in credential_values.values():
             self.assertNotIn(value, result.stderr)
 
-    def test_household_defaults_close_signup_and_server_code_installation(self):
-        environment = read(OPEN_WEBUI / "open-webui.env")
+    def test_packaged_defaults_close_signup_and_server_code_installation(self):
+        environment = environment_assignments(read(OPEN_WEBUI / "open-webui.env"))
 
-        for setting in (
-            "WEBUI_AUTH=true",
-            "ENABLE_SIGNUP=false",
-            "DEFAULT_USER_ROLE=pending",
-            "WEBUI_SESSION_COOKIE_SECURE=true",
-            "WEBUI_SESSION_COOKIE_SAME_SITE=strict",
-            "ENABLE_PIP_INSTALL_FRONTMATTER_REQUIREMENTS=false",
-            "ENABLE_VERSION_UPDATE_CHECK=false",
-            "OFFLINE_MODE=true",
-            "ENABLE_API_KEYS=false",
-            "UVICORN_WORKERS=1",
-            "ENABLE_PROFILE_IMAGE_URL_FORWARDING=false",
-            "ENABLE_CODE_EXECUTION=false",
-            "ENABLE_CODE_INTERPRETER=false",
-            "ENABLE_AUTOMATIONS=false",
-            "ENABLE_CALENDAR=false",
-            "ENABLE_EVALUATION_ARENA_MODELS=false",
-            "ENABLE_RETRIEVAL_QUERY_GENERATION=false",
-            "VECTOR_DB=qdrant",
-            "QDRANT_COLLECTION_PREFIX=open-webui-rag-v1",
-            "ENABLE_QDRANT_MULTITENANCY_MODE=true",
-            "RAG_RERANKING_ENGINE=external",
-            "RAG_RERANKING_MODEL=zerank-2-GGUF",
-            "ENABLE_RAG_HYBRID_SEARCH=true",
-            "ENABLE_OLLAMA_API=false",
-            "OPENAI_API_BASE_URLS=http://127.0.0.1:13305/api/v1",
-            "OPENAI_API_KEYS=",
-            "RAG_OPENAI_API_BASE_URL=http://127.0.0.1:13305/api/v1",
-            "RAG_EXTERNAL_RERANKER_URL=http://127.0.0.1:13305/api/v1/rerank",
-            "RAG_EXTERNAL_RERANKER_TIMEOUT=30",
-            "ENABLE_STAR_SESSIONS_MIDDLEWARE=true",
-            "WEBSOCKET_MANAGER=redis",
+        for key, value in (
+            ("WEBUI_AUTH", "true"),
+            ("ENABLE_SIGNUP", "false"),
+            ("DEFAULT_USER_ROLE", "pending"),
+            ("WEBUI_SESSION_COOKIE_SECURE", "true"),
+            ("WEBUI_SESSION_COOKIE_SAME_SITE", "strict"),
+            ("ENABLE_PIP_INSTALL_FRONTMATTER_REQUIREMENTS", "false"),
+            ("ENABLE_VERSION_UPDATE_CHECK", "false"),
+            ("OFFLINE_MODE", "true"),
+            ("ENABLE_API_KEYS", "false"),
+            ("UVICORN_WORKERS", "1"),
+            ("ENABLE_PROFILE_IMAGE_URL_FORWARDING", "false"),
+            ("ENABLE_CODE_EXECUTION", "false"),
+            ("ENABLE_CODE_INTERPRETER", "false"),
+            ("ENABLE_AUTOMATIONS", "false"),
+            ("USER_PERMISSIONS_FEATURES_AUTOMATIONS", "false"),
+            ("VECTOR_DB", "qdrant"),
+            ("QDRANT_COLLECTION_PREFIX", "open-webui-rag-v1"),
+            ("ENABLE_QDRANT_MULTITENANCY_MODE", "true"),
+            ("ENABLE_STAR_SESSIONS_MIDDLEWARE", "true"),
+            ("WEBSOCKET_MANAGER", "redis"),
+            # No default model peer: neither Ollama nor api.openai.com.
+            ("ENABLE_OLLAMA_API", "false"),
+            ("ENABLE_OPENAI_API", "false"),
+            # The 0005 RAG gate qualifies only an external reranker, refuses
+            # non-hybrid retrieval, and refuses a reranker without a finite
+            # positive timeout, so these stay packaged.
+            ("RAG_RERANKING_ENGINE", "external"),
+            ("ENABLE_RAG_HYBRID_SEARCH", "true"),
+            ("RAG_EXTERNAL_RERANKER_TIMEOUT", "30"),
         ):
-            self.assertIn(setting, environment)
-        self.assertNotIn("RAG_RERANKING_ENGINE=openai", environment)
+            self.assertEqual(environment.get(key), value, key)
+
+    def test_household_settings_live_only_in_the_example_profile(self):
+        packaged = environment_assignments(read(OPEN_WEBUI / "open-webui.env"))
+        example_text = read(OPEN_WEBUI / "household.env.example")
+        example = environment_assignments(example_text)
+
+        self.assertEqual(set(packaged), PACKAGED_DEFAULT_KEYS)
+        self.assertEqual(set(example), HOUSEHOLD_PROFILE_KEYS)
+        # The profile overrides exactly one packaged value: it turns on the
+        # household's OpenAI-compatible connection.
+        self.assertEqual(set(packaged) & set(example), {"ENABLE_OPENAI_API"})
+        self.assertEqual(
+            PACKAGED_DEFAULT_KEYS & HOUSEHOLD_PROFILE_KEYS, {"ENABLE_OPENAI_API"}
+        )
+        self.assertEqual(packaged["ENABLE_OPENAI_API"], "false")
+        self.assertEqual(example["ENABLE_OPENAI_API"], "true")
+        for key in (
+            "RAG_RERANKING_ENGINE",
+            "ENABLE_RAG_HYBRID_SEARCH",
+            "RAG_EXTERNAL_RERANKER_TIMEOUT",
+        ):
+            self.assertNotIn(key, example, key)
+        # The packaged defaults name no model provider: the only URL they
+        # carry is the package's own Qdrant dependency.
+        self.assertEqual(
+            {key for key, value in packaged.items() if re.match(r"https?://", value)},
+            {"QDRANT_URI"},
+        )
+        for key, suffix in (
+            ("OPENAI_API_BASE_URLS", "/api/v1"),
+            ("RAG_OPENAI_API_BASE_URL", "/api/v1"),
+            ("RAG_EXTERNAL_RERANKER_URL", "/api/v1/rerank"),
+        ):
+            self.assertEqual(example[key], f"<lemond>{suffix}", key)
+        self.assertEqual(example["OPENAI_API_KEYS"], "")
+        self.assertEqual(example["RAG_EMBEDDING_ENGINE"], "openai")
+        self.assertEqual(example["RAG_RERANKING_MODEL"], "zerank-2-GGUF")
+        # The canonical origin is documented but never set by the example.
+        for key in ("WEBUI_URL", "CORS_ALLOW_ORIGIN"):
+            self.assertNotIn(key, packaged, key)
+            self.assertNotIn(key, example, key)
+            self.assertIn(f"#{key}=https://<name>.<tailnet>.ts.net", example_text)
+
+    def test_household_example_carries_no_private_data(self):
+        text = read(OPEN_WEBUI / "household.env.example")
+        example = environment_assignments(text)
+
+        self.assertIsNone(re.search(r"\b\d{1,3}(?:\.\d{1,3}){3}\b", text))
+        self.assertNotIn("::", text)
+        self.assertNotIn("localhost", text.casefold())
+        self.assertIsNone(re.search(r"[0-9a-f]{32}", text.casefold()))
+        # Every origin is a placeholder.
+        for origin in re.findall(r"[a-z][a-z0-9+.-]*://[^/\s]+", text):
+            self.assertEqual(origin, "https://<name>.<tailnet>.ts.net")
+        for key, value in example.items():
+            if "://" in value or re.search(r"<[a-z]+>", value):
+                self.assertTrue(value.startswith("<lemond>/"), key)
+                self.assertEqual(re.findall(r"<([a-z]+)>", value), ["lemond"], key)
+            self.assertIsNone(re.search(r"[A-Za-z0-9_+/=-]{32,}", value), key)
+            if key.endswith(("_KEY", "_KEYS", "_SECRET", "_TOKEN", "_PASSWORD")):
+                self.assertEqual(value, "", key)
+
+    def test_service_reads_the_optional_household_profile_last(self):
+        service = read(OPEN_WEBUI / "open-webui.service")
+        recipe = read(OPEN_WEBUI / "PKGBUILD")
+        source_info = read(OPEN_WEBUI / ".SRCINFO")
+
+        # A missing profile is ignored, so a vanilla install still starts; the
+        # profile comes second, so its values override the packaged defaults.
+        self.assertEqual(
+            re.findall(r"(?m)^EnvironmentFile=(.*)$", service),
+            ["/etc/open-webui/open-webui.env", f"-{HOUSEHOLD_PROFILE}"],
+        )
+        self.assertIn("'household.env.example'", recipe)
+        self.assertIn("source = household.env.example", source_info)
+        self.assertIn(
+            'install -Dm644 "${srcdir}/household.env.example" \\\n'
+            f'    "${{pkgdir}}{HOUSEHOLD_EXAMPLE}"',
+            recipe,
+        )
+        # The package never ships or claims the live profile.
+        self.assertIn("backup=('etc/open-webui/open-webui.env')", recipe)
+        self.assertNotIn("etc/open-webui/household.env", recipe)
+        self.assertNotIn("etc/open-webui/household.env", source_info)
+
+    def test_service_refuses_a_household_profile_it_cannot_read(self):
+        service = read(OPEN_WEBUI / "open-webui.service")
+
+        # The guard runs first and as the service user (no "+" prefix), before
+        # the privileged runtime-directory steps.
+        self.assertEqual(
+            re.findall(r"(?m)^ExecStartPre=.*$", service),
+            [
+                HOUSEHOLD_PROFILE_GUARD,
+                "ExecStartPre=+/usr/bin/chgrp open-webui-proxy /run/open-webui",
+                "ExecStartPre=+/usr/bin/chmod 2750 /run/open-webui",
+            ],
+        )
+        # systemd would expand "$" and "%" in an Exec line.
+        self.assertNotIn("$", HOUSEHOLD_PROFILE_GUARD)
+        self.assertNotIn("%", HOUSEHOLD_PROFILE_GUARD)
+
+    def test_household_profile_guard_passes_only_a_missing_or_readable_file(self):
+        argv = household_profile_guard(read(OPEN_WEBUI / "open-webui.service"))
+        self.assertEqual(argv[:2], ["/bin/sh", "-c"])
+        self.assertEqual(len(argv), 3)
+
+        with tempfile.TemporaryDirectory() as directory:
+            profile = Path(directory) / "household.env"
+            script = argv[2].replace(HOUSEHOLD_PROFILE, str(profile))
+            self.assertNotIn(HOUSEHOLD_PROFILE, script)
+
+            def guard() -> subprocess.CompletedProcess[str]:
+                return subprocess.run(
+                    [argv[0], argv[1], script],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+
+            def refused(case: str) -> None:
+                result = guard()
+                self.assertEqual(result.returncode, 1, case)
+                self.assertEqual(
+                    result.stderr,
+                    f"open-webui: {profile} exists but is not a file this service can read\n",
+                    case,
+                )
+
+            with self.subTest("missing"):
+                result = guard()
+                self.assertEqual((result.returncode, result.stderr), (0, ""))
+
+            profile.write_text("ENABLE_OPENAI_API=true\n", encoding="utf-8")
+            profile.chmod(0o640)
+            with self.subTest("readable"):
+                result = guard()
+                self.assertEqual((result.returncode, result.stderr), (0, ""))
+
+            profile.chmod(0o000)
+            with self.subTest("unreadable"):
+                if os.geteuid() == 0:
+                    self.skipTest("root can read a mode-0000 file")
+                refused("unreadable")
+            profile.chmod(0o600)
+            profile.unlink()
+
+            profile.mkdir()
+            with self.subTest("directory"):
+                refused("directory")
+            profile.rmdir()
+
+            profile.symlink_to(Path(directory) / "missing")
+            with self.subTest("dangling symlink"):
+                refused("dangling symlink")
+
+    def test_public_text_keeps_no_connection_credential_wording(self):
+        for path in (
+            OPEN_WEBUI / "README.md",
+            OPEN_WEBUI / "open-webui.env",
+            OPEN_WEBUI / "household.env.example",
+            REPO_ROOT / "docs" / "maintainers" / "open-webui-household-envelope.md",
+            REPO_ROOT / "docs" / "maintainers" / "lemonade-provider-port-status-2026-08-19.md",
+        ):
+            self.assertNotIn("uses no credential", read(path), path.name)
+        # The README scopes the generic phrase to an empty key, and the
+        # example's key comment says where a key set there is stored and names
+        # the environment-only RAG key variables for a provider that requires a
+        # key. Both are generic: neither names the model server or states its
+        # key needs.
+        readme = read(OPEN_WEBUI / "README.md")
+        secret_bullet = next(
+            bullet for bullet in readme.split("\n- ") if "stores no secret" in bullet
+        )
+        self.assertIn(
+            "Open WebUI stores no secret for its model connections while the"
+            " profile's `OPENAI_API_KEYS` is empty; a key set there becomes a"
+            " persistent setting in its database.",
+            " ".join(secret_bullet.split()),
+        )
+        example = read(OPEN_WEBUI / "household.env.example")
+        key_comments = re.findall(r"(?m)((?:^#.*\n)+)OPENAI_API_KEYS=\n", example)
+        self.assertEqual(
+            key_comments,
+            [
+                "# OPENAI_API_KEYS: set to the provider's API key if it requires"
+                " one; otherwise\n# leave empty. A key set here is a persistent"
+                " setting: the first start stores\n# it in Open WebUI's database,"
+                " not in a systemd credential.\n"
+                "# If the embedding or reranking provider requires a key, set\n"
+                "# RAG_OPENAI_API_KEY or RAG_EXTERNAL_RERANKER_API_KEY here,"
+                " respectively\n# (environment-only: Open WebUI never stores them"
+                " in its database or shows\n# them in its document settings form).\n"
+            ],
+        )
+        for text in (secret_bullet, *key_comments):
+            self.assertIsNone(re.search(r"lemonade|lemond", text, re.IGNORECASE))
+        self.assertNotIn("stores no secret", example)
 
     def test_embedding_prefixes_are_the_zembed_wrapper_heads(self):
-        environment = read(OPEN_WEBUI / "open-webui.env")
+        packaged = environment_assignments(read(OPEN_WEBUI / "open-webui.env"))
+        example = environment_assignments(read(OPEN_WEBUI / "household.env.example"))
         provider_path = REPO_ROOT / "tools" / "fixtures" / "open-webui-household" / "provider.py"
         spec = importlib.util.spec_from_file_location("open_webui_household_provider", provider_path)
         provider = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(provider)
 
         # No JSON discriminator: the wrapper heads travel as text prefixes.
-        self.assertNotIn("RAG_EMBEDDING_PREFIX_FIELD_NAME", environment)
+        self.assertNotIn("RAG_EMBEDDING_PREFIX_FIELD_NAME", packaged)
+        self.assertNotIn("RAG_EMBEDDING_PREFIX_FIELD_NAME", example)
         for setting, input_type in (
             ("RAG_EMBEDDING_QUERY_PREFIX", "query"),
             ("RAG_EMBEDDING_CONTENT_PREFIX", "document"),
         ):
+            self.assertNotIn(setting, packaged)
             # systemd reads a double-quoted EnvironmentFile value across lines.
-            match = re.search(rf'^{setting}="([^"]*)"$', environment, re.MULTILINE)
-            self.assertIsNotNone(match, setting)
-            prefix = match.group(1)
-            # Open WebUI 0.11.0 joins a text prefix as f"{prefix}{text}".
+            prefix = example[setting]
+            # Open WebUI 0.11.4 joins a text prefix as f"{prefix}{text}".
             text = "household canary"
             self.assertTrue(
                 provider.format_zembed_input(text, input_type).startswith(f"{prefix}{text}"),
@@ -455,7 +806,7 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
     def test_operator_notes_describe_only_the_disposable_candidate(self):
         notes = read(OPEN_WEBUI / "README.md")
 
-        self.assertIn("Open WebUI 0.11.0", notes)
+        self.assertIn("Open WebUI 0.11.4", notes)
         self.assertIn("not approved for production activation or publication", notes)
         self.assertIn("/run/open-webui/open-webui.sock", notes)
         self.assertIn("open-webui-session-epoch-ledger reserve", notes)
@@ -468,6 +819,32 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
         self.assertIn("npm ci --offline", notes)
         self.assertIn("uv --offline --no-index --require-hashes", notes)
         self.assertIn("integrated provider, restore, and rollback evidence", notes)
+        self.assertIn("## Household Profile", notes)
+        self.assertIn(
+            "sudo test ! -e /etc/open-webui/household.env &&\n"
+            "  sudo install -m 0640 -g open-webui /usr/share/open-webui/household.env.example"
+            " /etc/open-webui/household.env\n"
+            "sudoedit /etc/open-webui/household.env\n",
+            notes,
+        )
+        self.assertIn("-p EnvironmentFile=/etc/open-webui/household.env", notes)
+        # The unit retries a refused start every five seconds, so the section
+        # says to stop it before fixing the profile.
+        self.assertIn(
+            "\nRestart=on-failure\nRestartSec=5s\n", read(OPEN_WEBUI / "open-webui.service")
+        )
+        household = notes.split("## Household Profile\n", 1)[1].split("\n## ", 1)[0]
+        self.assertIn(
+            "systemd retries a refused start every five seconds", " ".join(household.split())
+        )
+        self.assertIn("`sudo systemctl stop open-webui.service`", household)
+        # A browser chat's request returns before the gate refuses it, so the
+        # gate bullets name the 503 detail, not an HTTP status the chat gets.
+        flat_notes = " ".join(notes.split())
+        self.assertIn("is refused with the gate's 503 detail", flat_notes)
+        self.assertIn("fails with the same 503 detail instead", flat_notes)
+        self.assertNotIn("returns that 503", flat_notes)
+        self.assertNotIn("127.0.0.1:13305", notes)
         self.assertNotIn("0.9.5", notes)
         self.assertNotIn("127.0.0.1:8080", notes)
         self.assertNotIn("enable --now", notes)
@@ -553,6 +930,155 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
         self.assertIn('intended.get("name")', helper)
         self.assertNotIn("argparse", helper)
         self.assertNotRegex(helper, r"sys\.argv\[[1-9]")
+
+
+def load_commissioning_helper():
+    path = OPEN_WEBUI / "open-webui-commission-admin"
+    loader = importlib.machinery.SourceFileLoader(
+        "open_webui_commission_admin", str(path)
+    )
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+class FakeClock:
+    """A wall clock that moves only when the code under test sleeps."""
+
+    def __init__(self, now: float):
+        self.now = now
+
+    def time(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        if seconds < 0:
+            raise ValueError("sleep length must be non-negative")
+        self.now += seconds
+
+
+class FakeOpenWebUI:
+    """The 0.11.4 auth routes the helper calls, served on a real Unix socket.
+
+    A password change records its whole second and rejects every token whose
+    whole-second iat is at or before it, as upstream is_valid_token does in
+    backend/open_webui/utils/auth.py.
+    """
+
+    def __init__(self, clock: FakeClock, email: str, name: str, password: str):
+        self.clock = clock
+        self.email = email
+        self.name = name
+        self.password = password
+        self.revoked_at: int | None = None
+        self.requests: list[tuple[str, str, int]] = []
+
+    def respond(self, method, path, token, payload):
+        if method == "POST" and path == "/api/v1/auths/signin":
+            if payload != {"email": self.email, "password": self.password}:
+                return 400, {"detail": "incorrect credentials"}
+            return 200, {"token": f"admin:{int(self.clock.time())}"}
+        if token is None or not token.startswith("admin:"):
+            return 401, {"detail": "Not authenticated"}
+        issued_at = int(token.removeprefix("admin:"))
+        if self.revoked_at is not None and issued_at <= self.revoked_at:
+            return 401, {"detail": "Invalid token"}
+        if method == "POST" and path == "/api/v1/auths/update/password":
+            if payload is None or payload.get("password") != self.password:
+                return 400, {"detail": "incorrect password"}
+            self.password = payload["new_password"]
+            self.revoked_at = int(self.clock.time())
+            return 200, True
+        if method == "GET" and path == "/api/v1/users/":
+            user = {"email": self.email, "name": self.name, "role": "admin"}
+            return 200, {"total": 1, "users": [user]}
+        if method == "GET" and path == "/api/config":
+            return 200, {"features": {"enable_signup": False}}
+        return 404, {"detail": "Not Found"}
+
+    def handler(self):
+        fake = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def _dispatch(self):
+                length = int(self.headers.get("Content-Length", "0"))
+                payload = json.loads(self.rfile.read(length)) if length else None
+                authorization = self.headers.get("Authorization", "")
+                token = authorization.removeprefix("Bearer ") or None
+                status, body = fake.respond(self.command, self.path, token, payload)
+                fake.requests.append((self.command, self.path, status))
+                encoded = json.dumps(body).encode()
+                self.send_response(status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(encoded)))
+                self.end_headers()
+                self.wfile.write(encoded)
+
+            do_GET = _dispatch
+            do_POST = _dispatch
+
+            def log_message(self, _format, *_args):
+                return
+
+        return Handler
+
+
+@contextlib.contextmanager
+def serving_unix_socket(socket_path: Path, handler):
+    server = socketserver.ThreadingUnixStreamServer(str(socket_path), handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+class CommissioningHelperTests(unittest.TestCase):
+    def test_final_session_outlives_the_password_change_revocation(self):
+        helper = load_commissioning_helper()
+        # Start mid-second so every request before the helper's wait falls in
+        # the second that the password change revokes.
+        start = 1_790_000_000.25
+        clock = FakeClock(start)
+        server = FakeOpenWebUI(
+            clock, "admin@example.invalid", "Administrator", "bootstrap-secret"
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            credentials = root / "credentials"
+            credentials.mkdir()
+            for name, value in (
+                ("admin-email", "Admin@Example.invalid"),
+                ("admin-name", "Administrator"),
+                ("admin-bootstrap-password", "bootstrap-secret"),
+                ("admin-final-password", "final-secret"),
+            ):
+                (credentials / name).write_text(f"{value}\n", encoding="utf-8")
+            socket_path = root / "open-webui.sock"
+            environment = {
+                "CREDENTIALS_DIRECTORY": str(credentials),
+                "OPEN_WEBUI_SOCKET": str(socket_path),
+            }
+            with (
+                serving_unix_socket(socket_path, server.handler()),
+                mock.patch.dict(os.environ, environment),
+                mock.patch.object(helper, "time", clock),
+                contextlib.redirect_stdout(open(os.devnull, "w")),
+            ):
+                self.assertEqual(helper.main(), 0)
+
+        self.assertEqual(server.password, "final-secret")
+        self.assertNotIn(401, [status for _, _, status in server.requests])
+        self.assertEqual(
+            server.requests[-2:],
+            [("GET", "/api/v1/users/", 200), ("GET", "/api/config", 200)],
+        )
+        # The helper waits out only the rest of the revoked second.
+        self.assertLess(clock.now - start, 1.0)
 
 
 class RapidOCRPackageContractTests(unittest.TestCase):

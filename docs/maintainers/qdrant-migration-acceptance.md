@@ -12,7 +12,7 @@ the final acceptance index.
 
 The supported retained-data route is exactly:
 
-`1.17.1 → 1.18.3 → 1.19.0`
+`1.17.1 → 1.18.3 → 1.19.1`
 
 Qdrant storage migrations are irreversible. Never open storage migrated by a
 newer minor with an older binary. Rollback always pairs a retained binary and
@@ -25,15 +25,26 @@ Pin and record these independent identities before running a fixture:
 
 | Artifact | Release and built-artifact identity | SHA-256 |
 | --- | --- | --- |
-| Qdrant final | 1.19.0; tag object `af875b4bfd98103f7c0ee34fe4f25c5099893ca9`; commit `74f3e85b9473c62560006c043e13737ce6b48412`; package `qdrant-1.19.0-1-x86_64.pkg.tar.zst`, size `28018464`; executable size `72134360` | source `e0c9a030ae47d95f7c739598343bd2529c817fe262c4e7b2a4f1070ff82a024e`; package `15f15fe2c0c774691bf3193bc8fc7883fa530c89db697f7c0bcc2720d231b011`; executable `bf24efd92208fab1a8f4769a56158280b458b7a42850095ac875824571005f8c` |
+| Qdrant final | 1.19.1; tag object `de333e3c04660fe475d6275e9efc9fb9f54138fe`; commit `6ab21cac18ebb6f4ae29102c7f8f5cc11affd5de`; package `qdrant-1.19.1-1-x86_64.pkg.tar.zst`, size `28289048`; executable size `72942392` | source `ca9f0cb5a6954d253b51f249161cb63e2c3fee2a3bf360056cf01f0e70b2b878`; package `56208d6725771df687563b9d12e3c963b39c63120b1412f2335411f32c21ed85`; executable `70099d4d48aa749f8ced02a89f34ac1e308268a580e8125e5be0caac5611ad35` |
 | Qdrant migration intermediate | 1.18.3; tag object `3ea8cf7ce633256fb1b2a75b0de9d9ce60b22254`; commit `db8fa43fcb6aedec1e739487e17a99731b74590a`; package `qdrant-migration-1.18.3-1-x86_64.pkg.tar.zst`, size `26721008`; executable size `72145432` | source `c5f918b4f37279ec00b22b718ca54bca7b43c9d17628b28b8eba363beceb0c96`; package `591f16328fcff0fc0193353a65f4c783afc1d24258ae251d3a8927283276ce9e`; executable `97c16f4582cc0b9f86c7b451d88f7ea8ca56a1e45582168241de7487d31546a7` |
 | Retained Qdrant baseline package | `qdrant` 1.17.1-1, x86_64; archive size `25531392`; embedded binary `1d9e300802fe1588c6b6aef5167c32f8d215b5d79c07eaf6699ea1a80d92bf72`; embedded configuration `23f9b7628f8886edf1d6dbd45216a3755eb28bcf00c1e38d391087de58c81bde` | package archive `d237ac6b804c7b4ec3f73f8ef57340ebaba62abff7853636286f140c8affd5cb` |
-| Qdrant Web UI | 0.2.16; tag object `018e83a869a3d2b831e92664e8d33f51ec7981b1`; commit `d3f7a1174933ab637d9711ea45456d32b878b50e` | source `be85d9cffc5d5ad8122c4fe332cd6731cddcd508a61d77ee918626fc4d977577`; `dist-qdrant.zip` `4446f0cea024078011c78cd24a592c9b563656d15205818563fa6b22d394dd29`; license `c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4` |
+| Qdrant Web UI | 0.2.18; tag object `c904d06ed0f5983ab412ddf558b3e47ceb166689`; commit `6f8536529934672a0d2631cfaa0d0779967922bc`; package `qdrant-web-ui-0.2.18-1-any.pkg.tar.zst`, size `5728430` | source `3fa78da022fdee695469c3a35fb41124955250a1b1e4f066831229bbea701874`; `dist-qdrant.zip` `fdce24c04ec1627d2369cb8fe610ee06ad9236f82aad214aa7f294ac37372859`; license `210b508429e913d9de5301f90508bc2cbf5b2281de5b45e607c04d58f0f3bd8f`; package `962d2b7659fb66bd2eb3b2f425ef90a91cbe7701a66c31b4fd622caeb0e0f283` |
 
-The G3 harness rejects any 1.18.3 or 1.19.0 executable whose SHA-256 differs
-from this table, even when its reported version matches. The G0/G1 manifest
-must independently bind each executable to the matching package payload and
-package archive.
+The G0–G3 records for this set are in
+[`evidence/qdrant-1.19.1-1/`](evidence/qdrant-1.19.1-1/). The earlier accepted
+final3 set is superseded by this 1.19.1 re-baseline. Its records stay in
+[`evidence/qdrant-1.19.0-1/`](evidence/qdrant-1.19.0-1/) as history; neither
+the G3 harness nor the production cutover accepts these artifacts:
+
+| Superseded artifact | Release and built-artifact identity | SHA-256 |
+| --- | --- | --- |
+| Qdrant final3 | 1.19.0; tag object `af875b4bfd98103f7c0ee34fe4f25c5099893ca9`; commit `74f3e85b9473c62560006c043e13737ce6b48412`; package `qdrant-1.19.0-1-x86_64.pkg.tar.zst`, size `28018464`; executable size `72134360` | source `e0c9a030ae47d95f7c739598343bd2529c817fe262c4e7b2a4f1070ff82a024e`; package `15f15fe2c0c774691bf3193bc8fc7883fa530c89db697f7c0bcc2720d231b011`; executable `bf24efd92208fab1a8f4769a56158280b458b7a42850095ac875824571005f8c` |
+| Qdrant Web UI final3 | 0.2.16; tag object `018e83a869a3d2b831e92664e8d33f51ec7981b1`; commit `d3f7a1174933ab637d9711ea45456d32b878b50e`; package `qdrant-web-ui-0.2.16-1-any.pkg.tar.zst`, size `5719063` | source `be85d9cffc5d5ad8122c4fe332cd6731cddcd508a61d77ee918626fc4d977577`; `dist-qdrant.zip` `4446f0cea024078011c78cd24a592c9b563656d15205818563fa6b22d394dd29`; license `c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4`; package `f3d46e6ff09b8eb87b1465ee6a17a7cc35c574596b7fbf30518d3bc1d42fe10a` |
+
+The G3 harness rejects any 1.18.3 or 1.19.1 executable whose SHA-256 differs
+from the accepted table, even when its reported version matches. The G0/G1
+manifest must independently bind each executable to the matching package
+payload and package archive.
 
 Pass the retained package archive as a first-class input. The harness verifies
 its regular non-symlink identity, filename, size, SHA-256, exact `.PKGINFO`
@@ -67,7 +78,7 @@ The 1.19 snapshot-recovery changes are accepted only through the G3 collection
 and full-storage, corruption rejection, retry, and restart matrix. URL snapshot
 recovery remains disabled and snapshot storage remains local.
 
-Web UI 0.2.16 Usage Quotas is accepted as a read-only view of the authenticated
+Web UI 0.2.18 Usage Quotas is accepted as a read-only view of the authenticated
 global quota state. Usage Quotas does not relax API authentication or grant
 users direct dashboard or API access.
 
@@ -96,7 +107,7 @@ tools/validate_qdrant_migration.zsh --plan \
   --qdrant-1.17.1-package <retained-qdrant-1.17.1-1-package> \
   --qdrant-1.17.1 <retained-1.17.1-binary> \
   --qdrant-1.18.3 <built-1.18.3-binary> \
-  --qdrant-1.19.0 <built-1.19.0-binary>
+  --qdrant-1.19.1 <built-1.19.1-binary>
 ```
 
 Plan mode must verify that all three exact inputs are present, describe both
@@ -119,14 +130,14 @@ tools/validate_qdrant_migration.zsh --execute \
   --qdrant-1.17.1-package <retained-qdrant-1.17.1-1-package> \
   --qdrant-1.17.1 <retained-1.17.1-binary> \
   --qdrant-1.18.3 <built-1.18.3-binary> \
-  --qdrant-1.19.0 <built-1.19.0-binary>
+  --qdrant-1.19.1 <built-1.19.1-binary>
 ```
 
 The work root must not exist before execution. Ports must be distinct integers
 from 1024 through 65535 and must be free on loopback; 16333 and 16334 are the
 defaults. Before creating the work root or invoking any candidate, the harness
 must bind 1.17.1 to the exact retained package payload and verify the accepted
-1.18.3 and 1.19.0 binary digests. Plan mode never invokes those binaries. The
+1.18.3 and 1.19.1 binary digests. Plan mode never invokes those binaries. The
 isolated execution records each accepted binary's exact reported version and
 rejects a runtime record that does not match the expected versions. Preserve
 the completed work root until its evidence has been reviewed; cleanup is a
@@ -174,7 +185,7 @@ tools/validate_qdrant_migration.zsh --probe-interrupt INT \
   --qdrant-1.17.1-package <retained-qdrant-1.17.1-1-package> \
   --qdrant-1.17.1 <retained-1.17.1-binary> \
   --qdrant-1.18.3 <built-1.18.3-binary> \
-  --qdrant-1.19.0 <built-1.19.0-binary>
+  --qdrant-1.19.1 <built-1.19.1-binary>
 
 tools/validate_qdrant_migration.zsh --probe-interrupt TERM \
   --receipt /tmp/qdrant-migration-interrupt-TERM.json \
@@ -182,7 +193,7 @@ tools/validate_qdrant_migration.zsh --probe-interrupt TERM \
   --qdrant-1.17.1-package <retained-qdrant-1.17.1-1-package> \
   --qdrant-1.17.1 <retained-1.17.1-binary> \
   --qdrant-1.18.3 <built-1.18.3-binary> \
-  --qdrant-1.19.0 <built-1.19.0-binary>
+  --qdrant-1.19.1 <built-1.19.1-binary>
 ```
 
 The INT probe must exit 130 and the TERM probe must exit 143. Each writes its
@@ -237,8 +248,9 @@ secrets remain untracked run artifacts.
 
 1. Verify every tag object, commit, archive, Web UI distribution, and license
    digest against the accepted artifact set.
-2. Compare the 1.18.3 AUR `qdrant` reference and record every local dependency,
-   service, configuration, authentication, dashboard, and hardening divergence.
+2. Compare the exact-version AUR `qdrant` reference and record every local
+   dependency, service, configuration, authentication, dashboard, and
+   hardening divergence.
 3. Regenerate all three `.SRCINFO` files and prove each matches its `PKGBUILD`.
 4. Confirm the final package hard-depends on `qdrant-web-ui` and the migration
    package cannot replace the active `/usr/bin/qdrant` producer.
@@ -359,9 +371,9 @@ Aggregate only the three reviewed offline outputs in a new candidate directory.
 The exact output-set validator must accept exactly the three declared archives:
 
 ```zsh
-expected_outputs=$'f qdrant-1.19.0-1-x86_64.pkg.tar.zst\n'\
+expected_outputs=$'f qdrant-1.19.1-1-x86_64.pkg.tar.zst\n'\
 $'f qdrant-migration-1.18.3-1-x86_64.pkg.tar.zst\n'\
-$'f qdrant-web-ui-0.2.16-1-any.pkg.tar.zst'
+$'f qdrant-web-ui-0.2.18-1-any.pkg.tar.zst'
 actual_outputs=$(find <candidate-output-root> -mindepth 1 -maxdepth 1 -printf '%y %f\n' \
   | LC_ALL=C sort)
 [[ $actual_outputs == $expected_outputs ]]
@@ -432,12 +444,12 @@ acceptable. Rebuild from the neutral build root and re-run G1 instead.
 
 The pacman dependency on `qdrant-web-ui` is deliberately unversioned so the UI
 can follow its independent release cadence. This refresh's accepted artifact
-manifest binds Web UI 0.2.16; every later UI revision must independently pass
+manifest binds Web UI 0.2.18; every later UI revision must independently pass
 G0–G2 before it can enter an accepted manifest.
 
 ## G2 — Fresh Runtime And Security
 
-Start 1.19.0 on fresh disposable storage and verify:
+Start 1.19.1 on fresh disposable storage and verify:
 
 1. The service refuses to start when the secret environment file is absent,
    empty, malformed, or incorrectly permissioned.
@@ -459,7 +471,7 @@ Start 1.19.0 on fresh disposable storage and verify:
    snapshot, quota, and configuration operations.
 7. On the already loopback-only HTTP endpoint, the narrow upstream public root
    banner is accepted only when unauthenticated `GET /` returns exactly
-   `{"title":"qdrant - vector search engine","version":"1.19.0"}`.
+   `{"title":"qdrant - vector search engine","version":"1.19.1"}`.
    Unauthenticated `GET /collections` and `GET /quotas` must return 401; both
    requests must pass with the admin secret.
 8. The configured 64-collection, 80% resident-memory, 85% disk, ten-point
@@ -480,10 +492,10 @@ Run both routes even if the later live preflight reports an empty service.
    digest-recorded copy as the rollback anchor.
 2. Prove the migration-only 1.18.3 binary and its matching empty state start and
    stop cleanly without becoming the active package producer.
-3. Start 1.19.0 against a separate, fresh empty storage root.
+3. Start 1.19.1 against a separate, fresh empty storage root.
 4. Seed the final target, verify all retrieval cases, restart it, and verify
    restart persistence.
-5. Snapshot 1.19.0, restore it into a separate empty target, and repeat the
+5. Snapshot 1.19.1, restore it into a separate empty target, and repeat the
    retrieval checks.
 
 ### Retained-data route
@@ -492,7 +504,7 @@ At each boundary, stop and freeze writers before copying state:
 
 1. Create a verified 1.17.1 cold copy, collection snapshot, and full-storage
    recovery artifact.
-2. Start 1.18.3 only on a copy that has never been opened by 1.19.0. Verify
+2. Start 1.18.3 only on a copy that has never been opened by 1.19.1. Verify
    collection metadata, aliases, stable explicit IDs, point counts, and dense,
    sparse, and hybrid retrieval equivalence; then verify restart persistence.
 3. Exercise a same-minor snapshot restore into a separate empty target.
@@ -500,10 +512,10 @@ At each boundary, stop and freeze writers before copying state:
    same externally visible state.
 5. Restore the preserved 1.17.1 full-storage snapshot into a 1.18.3 target,
    then verify the complete fixture and a clean restart.
-6. Preserve a verified 1.18.3 cold copy and snapshots before starting 1.19.0.
-7. Start 1.19.0 only on the 1.18.3 copy. Repeat metadata, retrieval, restart,
+6. Preserve a verified 1.18.3 cold copy and snapshots before starting 1.19.1.
+7. Start 1.19.1 only on the 1.18.3 copy. Repeat metadata, retrieval, restart,
    same-minor snapshot, and next-minor snapshot checks.
-8. Restore the preserved 1.18.3 full-storage snapshot into a 1.19.0 target,
+8. Restore the preserved 1.18.3 full-storage snapshot into a 1.19.1 target,
    then verify the complete fixture and a clean restart.
 9. For collection snapshots, perform separate alias replay and prove the alias
    selects the restored collection atomically.
@@ -515,13 +527,13 @@ the separate empty target recoverable for a clean retry.
 
 The snapshot matrix is mandatory: restore the preserved 1.17.1 collection
 snapshot with both 1.17.1 (same-minor) and 1.18.3 (next-minor), then restore the
-preserved 1.18.3 collection snapshot with both 1.18.3 (same-minor) and 1.19.0
+preserved 1.18.3 collection snapshot with both 1.18.3 (same-minor) and 1.19.1
 (next-minor). Each truncated and checksum-mismatched rejection at the two
 version boundaries must be followed by a successful retry against the same
-disposable recovery target. The 1.19.0 empty-state snapshot also requires a
+disposable recovery target. The 1.19.1 empty-state snapshot also requires a
 separate same-minor restore. The full-storage matrix is independently
 mandatory: consume the 1.17.1 full-storage artifact in a separate 1.18.3 target
-and consume the 1.18.3 full-storage artifact in a separate 1.19.0 target. Each
+and consume the 1.18.3 full-storage artifact in a separate 1.19.1 target. Each
 full-storage restore must preserve the complete externally visible fixture and
 survive a clean target restart.
 
@@ -612,10 +624,10 @@ separately retained raw work root, never in that public manifest.
 Any failed or inconclusive item leaves all three Qdrant catalog lanes deferred
 with Publication eligible: no. Complete G0–G3 evidence still does not change
 that disposition: all three lanes remain deferred with Publication eligible:
-no until G4 composes the accepted 1.19.0 server with the selected Haystack and
+no until G4 composes the accepted 1.19.1 server with the selected Haystack and
 Hayhooks packages. G4 cannot retroactively waive G0–G3.
 
 After a separately authorized live cutover, retain the untouched 1.17.1 anchor,
-the tested 1.18.3 and 1.19.0 artifacts, and their matching recovery state until
+the tested 1.18.3 and 1.19.1 artifacts, and their matching recovery state until
 a post-cutover 1.19 snapshot restores successfully and the deployment runs
 cleanly for seven days. Removing any anchor requires separate explicit approval.

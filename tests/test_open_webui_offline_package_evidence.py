@@ -118,10 +118,13 @@ class OpenWebUIOfflinePackageEvidenceTests(unittest.TestCase):
             self.record["build"]["node_build_dependency"]["size_bytes"], 15781130
         )
 
+        # The record is the dated 0.11.0-3 checkpoint. The recipe now builds
+        # from the 0.11.4 closures, which test_open_webui_package binds, so
+        # the record's assets are no longer recipe inputs.
         srcinfo = (PACKAGE_DIR / ".SRCINFO").read_text(encoding="utf-8")
         for asset in release["assets"]:
-            self.assertIn(asset["name"], srcinfo)
-            self.assertIn(asset["sha256"], srcinfo)
+            self.assertNotIn(asset["name"], srcinfo)
+            self.assertNotIn(asset["sha256"], srcinfo)
 
     def test_record_binds_archive_inspection_receipt(self):
         package = self.record["package"]

@@ -19,12 +19,13 @@ LEDGER_HELPER = (
 SOURCE_PATCH = (
     REPO_ROOT / "packages" / "open-webui" / "0006-enforce-session-epoch.patch"
 )
-PRISTINE_INIT = FIXTURE_ROOT / "open-webui-0.11.0-pristine-init.py"
-UDS_PATCH = FIXTURE_ROOT / "0001-open-webui-0.11-measurement-uds.patch"
+PRISTINE_INIT = FIXTURE_ROOT / "open-webui-0.11.4-pristine-init.py"
+# prepare() applies the package's own Unix-socket patch before 0006.
+UDS_PATCH = REPO_ROOT / "packages" / "open-webui" / "0004-support-unix-socket.patch"
 
-OPEN_WEBUI_COMMIT = "f9590b8017199e56d5e953657e6498e3cef1d246"
+OPEN_WEBUI_COMMIT = "8bd8b4fac5e059578ac0c74b3c18d11139f88b7d"
 OPEN_WEBUI_SDIST_SHA256 = (
-    "e28c4fa997bf0a678caa7a0db6441da2e0c33b9a4120677f959ec3e45fccf9e9"
+    "1f1a31668a0dee733953c29d6183d78dd78984e696aa8eb0f2083f5796497be0"
 )
 
 
@@ -368,17 +369,17 @@ class OpenWebUISessionEpochPatchContractTests(unittest.TestCase):
         self.assertIn(f"X-Open-WebUI-Sdist-SHA256: {OPEN_WEBUI_SDIST_SHA256}", patch)
         self.assertIn(
             "X-Open-WebUI-Init-SHA256: "
-            "11cd2fad929db12c687795239ab3b6af1b5ea6f3ad7363deedfabf9651dd22d4",
+            "efaa6278ec425396d95e7537d454781b126bf178cdbfb8f91ab1e699ace027f1",
             patch,
         )
         self.assertIn(
             "X-Open-WebUI-Auth-SHA256: "
-            "d78b5f3fc2249d0b1719d0d280eb9aeef83922ef7b55c87cd843eedbd2e25c34",
+            "92f420f90be1fec49eababf9d1b9771fc94ab94a8d0fb003b4fb6148d6402559",
             patch,
         )
         self.assertIn(
             "X-Open-WebUI-Auth-Router-SHA256: "
-            "32bf3812b9a44face4bfa7efe4a0770577dc8608127bcbb41f25ea15a6085945",
+            "4be0ed8e69bba85c0392fdddf006efe5592c322a4973c669120a0a0c3c2424c7",
             patch,
         )
 
@@ -394,7 +395,7 @@ class OpenWebUISessionEpochPatchContractTests(unittest.TestCase):
                 shutil.copyfile(PRISTINE_INIT, init_path)
                 if predecessor is not None:
                     prepared = subprocess.run(
-                        ["git", "apply", str(predecessor)],
+                        ["git", "apply", "-p2", str(predecessor)],
                         cwd=source_root,
                         text=True,
                         capture_output=True,
@@ -471,7 +472,7 @@ class OpenWebUISessionEpochPatchContractTests(unittest.TestCase):
 
         self.assertEqual(
             hashlib.sha256(PRISTINE_INIT.read_bytes()).hexdigest(),
-            "11cd2fad929db12c687795239ab3b6af1b5ea6f3ad7363deedfabf9651dd22d4",
+            "efaa6278ec425396d95e7537d454781b126bf178cdbfb8f91ab1e699ace027f1",
         )
 
 

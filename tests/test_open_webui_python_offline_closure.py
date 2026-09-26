@@ -31,15 +31,15 @@ class OpenWebUiPythonOfflineClosureTests(unittest.TestCase):
             text=True,
         )
 
-    def test_lock_inventory_is_exactly_the_targeted_222_distributions(self) -> None:
+    def test_lock_inventory_is_exactly_the_targeted_200_distributions(self) -> None:
         result = self.run_tool("inventory", "--lock", LOCK)
 
         self.assertEqual(result.returncode, 0, result.stderr)
         inventory = json.loads(result.stdout)
         self.assertEqual(inventory["format"], "open-webui-python-offline-closure-v1")
         self.assertEqual(inventory["target"], "cp314-manylinux_2_28_x86_64")
-        self.assertEqual(inventory["distribution_count"], 222)
-        self.assertEqual(len(inventory["requirements"]), 222)
+        self.assertEqual(inventory["distribution_count"], 200)
+        self.assertEqual(len(inventory["requirements"]), 200)
         self.assertEqual(
             [entry["name"] for entry in inventory["requirements"]],
             sorted(entry["name"] for entry in inventory["requirements"]),

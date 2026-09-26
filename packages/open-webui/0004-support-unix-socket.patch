@@ -1,6 +1,6 @@
 --- a/backend/open_webui/__init__.py
 +++ b/backend/open_webui/__init__.py
-@@ -31,9 +31,17 @@ def main(
+@@ -34,9 +34,17 @@ def main(
  
  @app.command()
  def serve(
@@ -20,7 +20,7 @@
      os.environ['FROM_INIT_PY'] = 'true'
      if os.getenv('WEBUI_SECRET_KEY') is None:
          typer.echo('Loading WEBUI_SECRET_KEY from file, not provided as an environment variable.')
-@@ -78,14 +86,18 @@ def serve(
+@@ -81,15 +89,19 @@ def serve(
      # asyncio.run() respect the WindowsSelectorEventLoopPolicy set in db.py.
      loop = 'none' if sys.platform == 'win32' else 'auto'
  
@@ -30,11 +30,13 @@
 -        port=port,
 -        forwarded_allow_ips='*',
 -        workers=UVICORN_WORKERS,
+-        ws_per_message_deflate=UVICORN_WS_PER_MESSAGE_DEFLATE,
 -        loop=loop,
 -    )
 +    options = {
 +        'forwarded_allow_ips': '*',
 +        'workers': UVICORN_WORKERS,
++        'ws_per_message_deflate': UVICORN_WS_PER_MESSAGE_DEFLATE,
 +        'loop': loop,
 +    }
 +    if uds is not None:

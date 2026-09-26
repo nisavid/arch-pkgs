@@ -220,10 +220,10 @@ The manifest is JSON:
   "archives": [
     {
       "package": "qdrant",
-      "version": "1.19.0-1",
+      "version": "1.19.1-1",
       "arch": "x86_64",
-      "filename": "qdrant-1.19.0-1-x86_64.pkg.tar.zst",
-      "size": 28018464,
+      "filename": "qdrant-1.19.1-1-x86_64.pkg.tar.zst",
+      "size": 28289048,
       "sha256": "<64 hex digits>",
       "source": "<candidate-store subdirectory, relative>",
       "source_commit": "<optional 40-character commit>",

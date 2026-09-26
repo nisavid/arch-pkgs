@@ -1,0 +1,1080 @@
+{
+  "schema": "arch-pkgs.qdrant.g0-g1.reconstruction.v1",
+  "scope": "Public-safe G0 provenance and G1 package evidence for the Qdrant 1.19.1 re-baseline: qdrant 1.19.1-1 and qdrant-web-ui 0.2.18-1 built with the reconstruction procedure, the retained qdrant-migration 1.18.3-1 archive, and the retained Qdrant 1.17.1 G3 input",
+  "evidence_date": "2026-09-25",
+  "sources": {
+    "qdrant_1_19_1": {
+      "repository": "https://github.com/qdrant/qdrant",
+      "release": "https://github.com/qdrant/qdrant/releases/tag/v1.19.1",
+      "release_id": 382158009,
+      "published_at": "2026-09-04T07:59:14Z",
+      "release_body": {
+        "sha256": "a081f4b19461e1fbeba1e59f6330d9f212b563eeead638623f04c690c0b50efc",
+        "size": 4344,
+        "capture": "GitHub REST release body with one trailing newline"
+      },
+      "tag": "v1.19.1",
+      "tag_type": "annotated",
+      "tag_object": "de333e3c04660fe475d6275e9efc9fb9f54138fe",
+      "tag_verification": {
+        "verified": true,
+        "reason": "valid"
+      },
+      "resolved_commit": "6ab21cac18ebb6f4ae29102c7f8f5cc11affd5de",
+      "commit_verification": {
+        "provider": "GitHub REST API",
+        "verified": true,
+        "reason": "valid"
+      },
+      "license": {
+        "spdx": "Apache-2.0",
+        "sha256": "210b508429e913d9de5301f90508bc2cbf5b2281de5b45e607c04d58f0f3bd8f",
+        "size": 11351
+      },
+      "archive": {
+        "name": "qdrant-1.19.1.tar.gz",
+        "url": "https://github.com/qdrant/qdrant/archive/v1.19.1.tar.gz",
+        "sha256": "ca9f0cb5a6954d253b51f249161cb63e2c3fee2a3bf360056cf01f0e70b2b878",
+        "size": 6721783,
+        "independent_live_refetch_matches": true
+      },
+      "cargo_lock": {
+        "sha256": "db6e210971ca69a0397e29bed08e3d9bc2add854d5df109e17139f6a2329779b",
+        "size": 233277,
+        "matches_source_archive": true
+      }
+    },
+    "qdrant_1_18_3": {
+      "repository": "https://github.com/qdrant/qdrant",
+      "release": "https://github.com/qdrant/qdrant/releases/tag/v1.18.3",
+      "release_id": 355693746,
+      "published_at": "2026-07-17T13:18:39Z",
+      "release_body": {
+        "sha256": "cc169a60c8b03a0b054e560832f529d81a9640c930cc453c77bd964c7d136560",
+        "size": 135,
+        "capture": "GitHub REST release body with one trailing newline"
+      },
+      "tag": "v1.18.3",
+      "tag_type": "annotated",
+      "tag_object": "3ea8cf7ce633256fb1b2a75b0de9d9ce60b22254",
+      "tag_verification": {
+        "verified": true,
+        "reason": "valid PGP signature"
+      },
+      "resolved_commit": "db8fa43fcb6aedec1e739487e17a99731b74590a",
+      "commit_verification": {
+        "provider": "GitHub REST API",
+        "verified": true,
+        "reason": "valid"
+      },
+      "archive": {
+        "name": "qdrant-1.18.3.tar.gz",
+        "url": "https://github.com/qdrant/qdrant/archive/v1.18.3.tar.gz",
+        "sha256": "c5f918b4f37279ec00b22b718ca54bca7b43c9d17628b28b8eba363beceb0c96",
+        "size": 5229711,
+        "independent_live_refetch_matches": true
+      },
+      "cargo_lock": {
+        "sha256": "dffa39a15c56c6653ba36f4eb6bfb27322fdb428927910b6991ade72fa064d0e",
+        "size": 230171,
+        "matches_source_archive": true
+      },
+      "license": {
+        "spdx": "Apache-2.0",
+        "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+        "size": 11357
+      }
+    },
+    "cargo_sbom_0_10_0": {
+      "archive": {
+        "name": "cargo-sbom-0.10.0.tar.gz",
+        "url": "https://static.crates.io/crates/cargo-sbom/cargo-sbom-0.10.0.crate",
+        "sha256": "4ffe4b49660f4f4331fb5efcf7074a318b10f5f8fd75e42351a7ca32c58c2723",
+        "size": 20815,
+        "independent_live_refetch_matches": true
+      },
+      "cargo_lock": {
+        "sha256": "406626ccbde0bec46b88bc756511d02da8a38b7cda8a7164e9556200ee812dd0",
+        "size": 32782,
+        "matches_source_archive": true
+      },
+      "build": "cargo build --release --locked",
+      "generation_network": "disabled by the recipe for SBOM generation and by the network-none final build"
+    },
+    "qdrant_web_ui_0_2_18": {
+      "repository": "https://github.com/qdrant/qdrant-web-ui",
+      "release": "https://github.com/qdrant/qdrant-web-ui/releases/tag/v0.2.18",
+      "release_id": 381952430,
+      "published_at": "2026-09-03T11:09:34Z",
+      "release_body": {
+        "sha256": "38e0b9de817f645c4bec37c0d4a3e58baecccb040f5718dc069a72c7385a0bed",
+        "size": 5,
+        "capture": "GitHub REST release body with one trailing newline"
+      },
+      "tag": "v0.2.18",
+      "tag_type": "annotated",
+      "tag_object": "c904d06ed0f5983ab412ddf558b3e47ceb166689",
+      "tag_verification": {
+        "verified": false,
+        "reason": "unsigned"
+      },
+      "resolved_commit": "6f8536529934672a0d2631cfaa0d0779967922bc",
+      "commit_verification": {
+        "provider": "GitHub REST API",
+        "verified": true,
+        "reason": "valid"
+      },
+      "license": {
+        "spdx": "Apache-2.0",
+        "sha256": "210b508429e913d9de5301f90508bc2cbf5b2281de5b45e607c04d58f0f3bd8f",
+        "size": 11351
+      },
+      "release_asset": {
+        "name": "dist-qdrant.zip",
+        "sha256": "fdce24c04ec1627d2369cb8fe610ee06ad9236f82aad214aa7f294ac37372859",
+        "size": 7189135,
+        "github_published_digest_matches": true,
+        "independent_live_refetch_matches": true
+      },
+      "tagged_source_archive": {
+        "name": "qdrant-web-ui-0.2.18.tar.gz",
+        "sha256": "3fa78da022fdee695469c3a35fb41124955250a1b1e4f066831229bbea701874",
+        "size": 5252450,
+        "independent_live_refetch_matches": true
+      }
+    }
+  },
+  "reference_package": {
+    "authority": "AUR qdrant",
+    "commit": "f8a80b0650725c1ce14031c779d37f206a02cc83",
+    "version": "1.19.1-1",
+    "url": "https://aur.archlinux.org/cgit/aur.git/tree/PKGBUILD?h=qdrant&id=f8a80b0650725c1ce14031c779d37f206a02cc83",
+    "pkgbuild": {
+      "sha256": "5eb9dbc5bd8a8e512199f79494ea86f27fbc282098c3ca56bbe74a6979104336",
+      "size": 1286
+    },
+    "srcinfo": {
+      "sha256": "5622174ba211fb39f6692b0d6f5937e7c08f77e9d4fdd40e425613b533e480ab",
+      "size": 509
+    },
+    "source_digest_matches_local_recipe": true,
+    "difference_from_prior_reference_51762d7": "version and source digest only",
+    "comparison": {
+      "preserved": [
+        "source-built x86_64 Qdrant",
+        "Apache-2.0 license declaration",
+        "gcc-libs and glibc runtime dependencies",
+        "cargo, cmake, mold, clang, and protobuf build dependencies"
+      ],
+      "deliberate_divergences": [
+        "active server advanced to 1.19.1 while 1.18.3 remains a versioned migration-only binary",
+        "locked Cargo fetches and builds",
+        "pinned cargo-sbom source and canonical SPDX payloads",
+        "managed loopback-only service, configuration, user, directories, secret preflight, and Web UI",
+        "same-origin browser headers, privacy defaults, egress restrictions, and resource limits",
+        "exact !debug and !lto recipe options for native packages"
+      ]
+    }
+  },
+  "release_deltas": {
+    "qdrant_1_19_1": {
+      "source_release_body_sha256": "a081f4b19461e1fbeba1e59f6330d9f212b563eeead638623f04c690c0b50efc",
+      "scope": "Patch release on the accepted 1.19 surface: performance work, crash-safety fixes, input validation, and bug fixes. It adds no configuration the maintained package must set.",
+      "scroll_limit": {
+        "upstream": "Qdrant PR 10382 stops a scroll request without an explicit limit from bypassing strict-mode max_query_limit.",
+        "maintained_contract": "The packaged max_query_limit of 1000 now also bounds limitless scrolls; clients page at or below 1000 points per request."
+      },
+      "collection_names": {
+        "upstream": "Qdrant PR 10242 rejects . and .. as collection names.",
+        "maintained_contract": "No maintained collection uses either name."
+      },
+      "storage_recovery": {
+        "upstream": "Qdrant PR 10399 fixes a Gridstore panic on a new page after an unsafe shutdown and repairs preexisting failures; PR 10181 propagates mmap read errors.",
+        "maintained_contract": "Storage and recovery behavior are re-accepted only through the complete G3 migration, restore, corruption-rejection, retry, pressure, and restart matrix on the exact 1.19.1 binary."
+      },
+      "turboquant": {
+        "upstream": "4-bit TurboQuant SIMD rework (PRs 10391, 10392, 10362, 10437, 10439, 10381).",
+        "maintained_contract": "TurboQuant stays disabled; no configuration enables it."
+      },
+      "global_quotas": {
+        "upstream": "Qdrant PR 10035 adds the global quota API and deprecates strict-mode max_resident_memory_percent.",
+        "maintained_contract": "Authenticated GET /quotas is authoritative; the deprecated strict-mode field is not preserved. The configured resident-memory value is under storage.quotas."
+      },
+      "snapshot_recovery": {
+        "upstream": "Qdrant PR 9732 supports recovery of streamable-segment snapshots without a nested files directory.",
+        "maintained_contract": "The change requires separate G3 recovery acceptance. URL recovery remains disabled and snapshot storage remains local."
+      }
+    },
+    "qdrant_web_ui_0_2_18": {
+      "source_release_body_sha256": "38e0b9de817f645c4bec37c0d4a3e58baecccb040f5718dc069a72c7385a0bed",
+      "release_body": "empty (null)",
+      "compare_v0_2_16_to_v0_2_18": {
+        "total_commits": 11,
+        "notable": [
+          "Console editor response-panel code folding and scroll past last line (PRs 431, 434)",
+          "Real shard count for custom sharding in the collections list (PR 440)",
+          "Datasets manifest response validation (PR 439, V-001)",
+          "LICENSE copyright holder set (PR 438), which moves the exact-tag license digest",
+          "Development-only fake backend and npm audit CI changes (PRs 432, 433, 441)"
+        ]
+      },
+      "maintained_contract": "The package still replaces the external datasets manifest with the package-owned empty datasets.json, so the hardened external fetch path stays unreachable; Usage Quotas remains a read-only authenticated view.",
+      "usage_quotas": {
+        "upstream": "The 0.2.16 release adds Settings page Usage Quotas in PR 428.",
+        "maintained_contract": "The dashboard is a read-only authenticated view of global quota state and does not relax API authorization."
+      }
+    }
+  },
+  "builder": {
+    "containerfile": {
+      "path": "containers/qdrant-builder/Containerfile",
+      "sha256": "df1ce8916a482f886f21ff03039f0741c1a6b3290be2321f0fc690ced5fb300f",
+      "size": 342,
+      "from": "docker.io/library/archlinux@sha256:ee205c220399524a683cf495d411691b921baed8ab47cdc6d732efa782fae484"
+    },
+    "image": {
+      "repository_digest": "localhost/arch-pkgs-qdrant-builder@sha256:876d4b2bfe03167c6d29f368def3050d4b1d16b3f89deead8379b61ccada10b0",
+      "image_id_sha256": "e4c00aadeb4a4d52f48ebd3d2ea32ae9433a02761e925589b0a6d619a837166f",
+      "architecture": "amd64",
+      "os": "linux",
+      "created": "2026-08-17T18:01:46.926430998Z",
+      "user": "builder",
+      "uid": 1000,
+      "gid": 1000,
+      "working_directory": "/build",
+      "rootfs_layers": [
+        "sha256:bdae34e075d9efbae3c072c394fa64edf176e10fb0ec4176842716991d107a32",
+        "sha256:585066505da2e99884682497913503d045afe9b05c688b75a5acc5ac24f1ed73",
+        "sha256:53958a7f5dfd7827d04522d53985db4f537934809d2943890c3c52f3cefb0d90",
+        "sha256:cf487c1899dbaa16d46f4be1db8c08fed01d09417ac903bc47be0b1d36cf8c47"
+      ]
+    },
+    "runtime": {
+      "podman": "6.1.0",
+      "pull_policy": "never"
+    },
+    "toolchain": {
+      "makepkg": "7.1.0",
+      "pacman": "7.1.0",
+      "libalpm": "16.0.1",
+      "fakeroot": "1.37.2",
+      "rustc": "1.97.1 (8bab26f4f 2026-07-14) (Arch Linux rust 1:1.97.1-1)",
+      "cargo": "1.97.1 (c980f4866 2026-06-30) (Arch Linux rust 1:1.97.1-1)",
+      "gcc": "16.2.1 20260810",
+      "clang": "22.1.8",
+      "mold": "2.42.0 (441dc1d1fd3c72f41bc9d30f440431d34738def3)",
+      "cmake": "4.4.2",
+      "protoc": "35.1",
+      "jq": "1.8.2",
+      "libarchive_bsdtar": "3.8.9",
+      "zstd": "1.5.7",
+      "python": "3.14.7",
+      "zsh": "5.9.2"
+    },
+    "native_recipe_options": {
+      "qdrant": [
+        "!debug",
+        "!lto"
+      ],
+      "qdrant_migration": [
+        "!debug",
+        "!lto"
+      ],
+      "evidence": "The exact PKGBUILD and regenerated .SRCINFO for each native lane contain both values.",
+      "buildinfo_global_option_disclosure": "Each selected .BUILDINFO records builder-global debug and lto options from makepkg.conf. Those fields do not represent the recipe-effective overrides. The exact native recipes and .SRCINFO files declare !debug and !lto; each final output root contains one regular archive, no debug archive, and no usr/lib/debug payload. Upstream Rust release LTO remains enabled independently of makepkg native LTO."
+    }
+  },
+  "reconstruction": {
+    "procedure": "docs/maintainers/qdrant-migration-acceptance.md reconstruction procedure: empty per-lane SRCDEST and CARGO_HOME caches, a checksum-bound network-enabled prefetch, reflink copies of the verified caches into fresh final cache roots, path-neutral sorted manifests recorded before the final invocation, an incomplete-cache negative control in throwaway copies, and network-disabled final builds with CARGO_NET_OFFLINE=true in fresh neutral package, build, and artifact roots.",
+    "prefetch_command": "podman run --rm --userns=keep-id --pull=never --cgroups=split --network=pasta --env BUILDDIR=/build/build --env PKGDEST=/build/artifacts --env SRCDEST=/build/sources --env CARGO_HOME=/build/cargo --env CARGO_BUILD_JOBS=8 --env SOURCE_DATE_EPOCH=<lane-epoch> --volume <prefetch-package-root>:/build/package:Z --volume <prefetch-build-root>:/build/build:Z --volume <prefetch-artifact-root>:/build/artifacts:Z --volume <source-cache-root>:/build/sources:Z --volume <cargo-cache-root>:/build/cargo:Z localhost/arch-pkgs-qdrant-builder@sha256:876d4b2bfe03167c6d29f368def3050d4b1d16b3f89deead8379b61ccada10b0 zsh -fc 'cd /build/package && makepkg --verifysource && makepkg --nodeps -o'",
+    "final_command": "podman run --rm --userns=keep-id --pull=never --cgroups=split --network=none --env CARGO_NET_OFFLINE=true --env BUILDDIR=/build/build --env PKGDEST=/build/artifacts --env SRCDEST=/build/sources --env CARGO_HOME=/build/cargo --env CARGO_BUILD_JOBS=8 --env SOURCE_DATE_EPOCH=<lane-epoch> --volume <fresh-package-root>:/build/package:Z --volume <fresh-build-root>:/build/build:Z --volume <fresh-artifact-root>:/build/artifacts:Z --volume <final-source-cache-root>:/build/sources:Z --volume <final-cargo-cache-root>:/build/cargo:Z localhost/arch-pkgs-qdrant-builder@sha256:876d4b2bfe03167c6d29f368def3050d4b1d16b3f89deead8379b61ccada10b0 zsh -fc 'cd /build/package && makepkg --verifysource && makepkg --nodeps --cleanbuild --force'",
+    "prefetch_network_mode": "pasta",
+    "final_network_mode": "none",
+    "tree_manifest_format": "Sorted (C collation) newline-terminated lines. Directories: d, octal mode, relative path. Regular files: f, octal mode, size, SHA-256, relative path. Symbolic links: l, target, relative path. Fields are tab-separated; the digest is the SHA-256 of the listing.",
+    "prefetch_outputs_discarded": true,
+    "prefetch_roots_reused": false,
+    "lanes": {
+      "qdrant-web-ui": {
+        "source_date_epoch": 1786983811,
+        "pkgbuild_sha256": "27d23809e2cf5a97edf2fb9f647c19c10912b9554d2eacd291fc5f05d7752831",
+        "srcinfo_sha256": "95bfc93775ab62ba7382e1723526f842504ccae7a2afc1f128560382706193bf",
+        "package_input_manifest": {
+          "sha256": "5169a07a9b564e8d9026825a01bdee2d4a5a2c8dcdcb887f313a45de4c13ffdc",
+          "entries": 8,
+          "files": 8,
+          "recipe_commit": "41208bdcd3ecd4f73a4e1c27a3a7b4f7a65bc4ae"
+        },
+        "cargo_lock_sha256": "not-applicable",
+        "cargo_sbom_lock_sha256": "not-applicable",
+        "source_cache_manifest": {
+          "sha256": "01835fadbf76a752f79f84ef6c8a044ede784fe3f4a878967d3154ccd0103575",
+          "entries": 2,
+          "files": 2
+        },
+        "cargo_cache_manifest": {
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "entries": 0,
+          "note": "empty; the static lane uses no Cargo cache"
+        },
+        "output_set_manifest": {
+          "sha256": "92571b6fbaa7451e90e90b923ea601620dee71bac0a416e9cad53124f963d08d",
+          "entries": 1,
+          "files": 1
+        },
+        "output_listing": [
+          "f qdrant-web-ui-0.2.18-1-any.pkg.tar.zst"
+        ],
+        "negative_controls": [
+          {
+            "case": "missing-source",
+            "removed": "sources/dist-qdrant-0.2.18.zip",
+            "result": "failed-before-output",
+            "output_root_empty": true
+          }
+        ]
+      },
+      "qdrant": {
+        "source_date_epoch": 1786981317,
+        "pkgbuild_sha256": "f6c9b029a9c6a0b0a18d3822e01d719afb97aebc99b35c464bf4637aa9b8b637",
+        "srcinfo_sha256": "1b314f51df9968c4771d03c76bb377dd671c1b642f94b63070f1c3c7056c35d3",
+        "package_input_manifest": {
+          "sha256": "9419923ee50c0dee9c56b01c965c573bc955cfecc7f9f078235dd0f69d2822a6",
+          "entries": 9,
+          "files": 9,
+          "recipe_commit": "41208bdcd3ecd4f73a4e1c27a3a7b4f7a65bc4ae"
+        },
+        "cargo_lock_sha256": "db6e210971ca69a0397e29bed08e3d9bc2add854d5df109e17139f6a2329779b",
+        "cargo_sbom_lock_sha256": "406626ccbde0bec46b88bc756511d02da8a38b7cda8a7164e9556200ee812dd0",
+        "source_cache_manifest": {
+          "sha256": "7151c1da69178727ddb5a5f93e8d6e1308ce7a3ece40f1d6fb32b2a5ec160192",
+          "entries": 2,
+          "files": 2
+        },
+        "cargo_cache_manifest": {
+          "sha256": "8c2a00d7bb052ca13f8875021383e6726e804284113961288fba2598dd5b89c9",
+          "entries": 69355,
+          "files": 58488
+        },
+        "output_set_manifest": {
+          "sha256": "8f123b855c90c9c23a1f1d9e67a536be7f2dd1a2c29e67e453909464fb37a284",
+          "entries": 1,
+          "files": 1
+        },
+        "output_listing": [
+          "f qdrant-1.19.1-1-x86_64.pkg.tar.zst"
+        ],
+        "negative_controls": [
+          {
+            "case": "missing-crate",
+            "removed": "cargo/registry/cache/index.crates.io-1949cf8c6b5b557f/actix-codec-0.5.2.crate",
+            "result": "failed-before-output",
+            "output_root_empty": true
+          },
+          {
+            "case": "missing-source",
+            "removed": "sources/qdrant-1.19.1.tar.gz",
+            "result": "failed-before-output",
+            "output_root_empty": true
+          }
+        ],
+        "cargo_cache_integrity": {
+          "registry_archives_present": 982,
+          "unique_locked_registry_packages": 982,
+          "locked_archives_missing": 0,
+          "locked_archive_checksum_mismatches": 0,
+          "unreferenced_registry_archives": 0,
+          "locked_git_dependencies": [
+            {
+              "repository": "https://github.com/qdrant/tonic",
+              "commit": "a40343f9359c4380fa8fe7c10f8c8b9f4d8a8e08",
+              "checkout_head_matches": true,
+              "tracked_content_clean": true
+            },
+            {
+              "repository": "https://github.com/tikv/raft-rs",
+              "commit": "aafb07c7bab439c6139926a77dfafc5b10e9bc84",
+              "checkout_head_matches": true,
+              "tracked_content_clean": true
+            }
+          ],
+          "checked_against_pre_final_manifest": true,
+          "cache_sources_unchanged_by_final_build": true,
+          "comparison_scope": "registry archives and Git databases and checkouts, excluding checkout .git/index stat caches"
+        }
+      }
+    },
+    "procedure_deviations": [
+      "Prefetch used --network=pasta because this podman rejects slirp4netns; prefetch outputs were discarded and are not candidates.",
+      "Every build used --userns=keep-id, as the accepted final3 builds did.",
+      "CARGO_BUILD_JOBS=8 bounded Cargo parallelism for host memory; it does not change the recipe or the Cargo profile.",
+      "Each podman run used --cgroups=split inside a memory-capped transient user scope so the build's memory.peak could be recorded; this changes no build input.",
+      "qdrant-migration was not rebuilt: its recipe is unchanged, and the retained accepted archive is reused byte for byte."
+    ]
+  },
+  "final_builds": {
+    "common": {
+      "image_id_sha256": "e4c00aadeb4a4d52f48ebd3d2ea32ae9433a02761e925589b0a6d619a837166f",
+      "pull_policy": "never",
+      "network_mode": "none",
+      "user_namespace": "keep-id",
+      "outer_cargo_net_offline_environment_set": true,
+      "cleanbuild_option_used": true,
+      "root_policy": "Each package copy, build directory, and artifact directory was a fresh generic root; only reflink copies of the verified prefetch caches were mounted as SRCDEST and CARGO_HOME."
+    },
+    "qdrant": {
+      "source_date_epoch": 1786981317,
+      "command": "podman run --rm --userns=keep-id --pull=never --cgroups=split --network=none --env CARGO_NET_OFFLINE=true --env BUILDDIR=/build/build --env PKGDEST=/build/artifacts --env SRCDEST=/build/sources --env CARGO_HOME=/build/cargo --env CARGO_BUILD_JOBS=8 --env SOURCE_DATE_EPOCH=1786981317 --volume <fresh-package-root>:/build/package:Z --volume <fresh-build-root>:/build/build:Z --volume <fresh-artifact-root>:/build/artifacts:Z --volume <final-source-cache-root>:/build/sources:Z --volume <final-cargo-cache-root>:/build/cargo:Z localhost/arch-pkgs-qdrant-builder@sha256:876d4b2bfe03167c6d29f368def3050d4b1d16b3f89deead8379b61ccada10b0 zsh -fc 'cd /build/package && makepkg --verifysource && makepkg --nodeps --cleanbuild --force'",
+      "nodeps_scope": "The isolated builder did not install qdrant-web-ui. The package metadata retains the hard dependency, and this record binds the exact matching Web UI candidate."
+    },
+    "qdrant_web_ui": {
+      "source_date_epoch": 1786983811,
+      "command": "podman run --rm --userns=keep-id --pull=never --cgroups=split --network=none --env CARGO_NET_OFFLINE=true --env BUILDDIR=/build/build --env PKGDEST=/build/artifacts --env SRCDEST=/build/sources --env CARGO_HOME=/build/cargo --env CARGO_BUILD_JOBS=8 --env SOURCE_DATE_EPOCH=1786983811 --volume <fresh-package-root>:/build/package:Z --volume <fresh-build-root>:/build/build:Z --volume <fresh-artifact-root>:/build/artifacts:Z --volume <final-source-cache-root>:/build/sources:Z --volume <final-cargo-cache-root>:/build/cargo:Z localhost/arch-pkgs-qdrant-builder@sha256:876d4b2bfe03167c6d29f368def3050d4b1d16b3f89deead8379b61ccada10b0 zsh -fc 'cd /build/package && makepkg --verifysource && makepkg --nodeps --cleanbuild --force'"
+    },
+    "qdrant_migration": {
+      "source_date_epoch": 1786981596,
+      "status": "retained accepted final3 archive; not rebuilt"
+    }
+  },
+  "source_and_cache_boundary": {
+    "source_acquisition": "The network-enabled prefetch downloaded every declared source into the empty per-lane SRCDEST and ran makepkg --verifysource; every final build reran makepkg --verifysource offline against the sealed copy.",
+    "native_locked_cargo_cache": {
+      "shared_by": [
+        "qdrant"
+      ],
+      "historical_population_command_retained": true,
+      "population_command": "podman run --rm --userns=keep-id --pull=never --cgroups=split --network=pasta --env BUILDDIR=/build/build --env PKGDEST=/build/artifacts --env SRCDEST=/build/sources --env CARGO_HOME=/build/cargo --env CARGO_BUILD_JOBS=8 --env SOURCE_DATE_EPOCH=<lane-epoch> --volume <prefetch-package-root>:/build/package:Z --volume <prefetch-build-root>:/build/build:Z --volume <prefetch-artifact-root>:/build/artifacts:Z --volume <source-cache-root>:/build/sources:Z --volume <cargo-cache-root>:/build/cargo:Z localhost/arch-pkgs-qdrant-builder@sha256:876d4b2bfe03167c6d29f368def3050d4b1d16b3f89deead8379b61ccada10b0 zsh -fc 'cd /build/package && makepkg --verifysource && makepkg --nodeps -o'",
+      "final_prepare_command": "cargo fetch --locked",
+      "source_locks": {
+        "qdrant_1_19_1_sha256": "db6e210971ca69a0397e29bed08e3d9bc2add854d5df109e17139f6a2329779b",
+        "cargo_sbom_0_10_0_sha256": "406626ccbde0bec46b88bc756511d02da8a38b7cda8a7164e9556200ee812dd0",
+        "all_match_pinned_source_archives": true
+      },
+      "read_only_integrity_check": {
+        "registry_archives_present": 982,
+        "unique_locked_registry_packages": 982,
+        "locked_archives_missing": 0,
+        "locked_archive_checksum_mismatches": 0,
+        "unreferenced_registry_archives": 0,
+        "locked_git_dependencies": [
+          {
+            "repository": "https://github.com/qdrant/tonic",
+            "commit": "a40343f9359c4380fa8fe7c10f8c8b9f4d8a8e08",
+            "checkout_head_matches": true,
+            "tracked_content_clean": true
+          },
+          {
+            "repository": "https://github.com/tikv/raft-rs",
+            "commit": "aafb07c7bab439c6139926a77dfafc5b10e9bc84",
+            "checkout_head_matches": true,
+            "tracked_content_clean": true
+          }
+        ],
+        "checked_against_pre_final_manifest": true,
+        "cache_sources_unchanged_by_final_build": true,
+        "comparison_scope": "registry archives and Git databases and checkouts, excluding checkout .git/index stat caches"
+      },
+      "acceptance_scope": "The cache was populated from empty by the recorded prefetch command, sealed and manifested before the offline final build, and exercised by an incomplete-cache negative control. Cache-population byte reproducibility across time is not claimed: registry and Git metadata can change upstream."
+    }
+  },
+  "artifacts": {
+    "qdrant": {
+      "package_metadata": {
+        "pkgname": "qdrant",
+        "pkgver": "1.19.1-1",
+        "arch": "x86_64",
+        "license": "Apache-2.0",
+        "installed_size": 73819640,
+        "depends": [
+          "bash",
+          "coreutils",
+          "gcc-libs",
+          "glibc",
+          "qdrant-web-ui"
+        ],
+        "backup": [
+          "etc/qdrant/config.yaml"
+        ]
+      },
+      "archive": {
+        "entry_count_including_package_metadata": 25,
+        "name": "qdrant-1.19.1-1-x86_64.pkg.tar.zst",
+        "sha256": "56208d6725771df687563b9d12e3c963b39c63120b1412f2335411f32c21ed85",
+        "size": 28289048,
+        "installed_debug_payload": false
+      },
+      "pkginfo": {
+        "sha256": "2eda81e8815da626b650e6fb4dc69d50fd1965d0c0eb1e25eeac1a87674827cb",
+        "size": 564
+      },
+      "buildinfo": {
+        "sha256": "27ce9eb8c627e6b6bea55cd167357c209aa8f98aa6753524719a2e6db4870b02",
+        "size": 7791,
+        "pkgbuild_sha256sum": "f6c9b029a9c6a0b0a18d3822e01d719afb97aebc99b35c464bf4637aa9b8b637",
+        "builddate": 1786981317,
+        "builddir": "/build/build",
+        "startdir": "/build/package",
+        "buildtool": "makepkg",
+        "buildtoolver": "7.1.0",
+        "builder_global_options_include_debug_and_lto": true,
+        "recipe_effective_options": [
+          "!debug",
+          "!lto"
+        ]
+      },
+      "mtree": {
+        "sha256": "ed2d39644b1e61c8f3ba28d61ed49fe907f61dd30cda20b20895c187ed3a7284",
+        "size": 777
+      },
+      "payload_manifest": {
+        "sha256": "36eb4d0650e324a591e898140a123850fe57e3f58b2651fe44a8c910aa0ecb9f",
+        "size": 1139,
+        "entries": 22,
+        "format": "ASCII, newline-terminated, tab-separated records sorted as complete lines with LC_ALL=C. Directory records are d, mode without a leading zero, and relative path. File records are f, mode without a leading zero, size, SHA-256, and relative path. Relative paths have neither a leading slash nor a ./ prefix; directory paths also have no trailing slash. This candidate has no symlink or special-file records.",
+        "scope": "installed payload; package metadata entries excluded",
+        "archive_ownership": "root:root for every installed entry"
+      },
+      "binary": {
+        "path": "/usr/bin/qdrant",
+        "sha256": "70099d4d48aa749f8ced02a89f34ac1e308268a580e8125e5be0caac5611ad35",
+        "size": 72942392,
+        "mode": "0755",
+        "owner": "root:root",
+        "version_output": "qdrant 1.19.1",
+        "elf": "stripped x86-64 PIE",
+        "build_id": "dbf8fd67cbcaa375773b92af72e44b108b08685f",
+        "host_or_build_root_path_strings": 0
+      },
+      "sbom": {
+        "path": "/usr/share/qdrant/qdrant.spdx.json",
+        "sha256": "a206672364d44bbf05cfc2d293c5f98db05c1f9de3f3dce8526f0810750bcfc4",
+        "size": 862396,
+        "mode": "0644",
+        "owner": "root:root",
+        "spdx_version": "SPDX-2.3",
+        "data_license": "CC0-1.0",
+        "generator": "cargo-sbom-v0.10.0",
+        "document_namespace": "https://spdx.org/spdxdocs/qdrant-1.19.1-ca9f0cb5a6954d253b51f249161cb63e2c3fee2a3bf360056cf01f0e70b2b878",
+        "created": "2026-09-03T12:36:18Z",
+        "package_count": 733,
+        "relationship_count": 2414
+      },
+      "service_assets": {
+        "/etc/qdrant/config.yaml": {
+          "sha256": "800fd7130542e5d61bc869962e6d7d59de2bccad261811d54e9b6745ffc991f4",
+          "size": 818,
+          "mode": "0644",
+          "owner": "root:root",
+          "pacman_backup": true
+        },
+        "/usr/lib/qdrant/qdrant-secret-preflight": {
+          "sha256": "6a364ce0a745c6f02d38f3c39fc71e91fd31a2f33e63442cfa64b251fab545cd",
+          "size": 1188,
+          "mode": "0755",
+          "owner": "root:root",
+          "contract": "The secret file must be a regular non-symlink owned by UID 0, grouped to the service effective GID, mode 0640, and contain exactly one lowercase hexadecimal QDRANT__SERVICE__API_KEY of at least 64 characters."
+        },
+        "/usr/lib/systemd/system/qdrant.service": {
+          "sha256": "610312cbba4efffa1d5422ab75154605000d4a4d177f77437ca00e2926ef4114",
+          "size": 1260,
+          "mode": "0644",
+          "owner": "root:root"
+        },
+        "/usr/lib/sysusers.d/qdrant.conf": {
+          "sha256": "963c4954011a2b074d265f51e292289e004876be80228f60b0b9f2d98151d143",
+          "size": 57,
+          "mode": "0644",
+          "owner": "root:root"
+        },
+        "/usr/lib/tmpfiles.d/qdrant.conf": {
+          "sha256": "4758bc1b0cd16a83e08ca74d72b0d1079d7ae46085379fe0ea5b134e984c1698",
+          "size": 178,
+          "mode": "0644",
+          "owner": "root:root"
+        },
+        "/usr/share/licenses/qdrant/LICENSE": {
+          "sha256": "210b508429e913d9de5301f90508bc2cbf5b2281de5b45e607c04d58f0f3bd8f",
+          "size": 11351,
+          "mode": "0644",
+          "owner": "root:root"
+        }
+      },
+      "runtime_contract_from_packaged_assets": {
+        "http": "127.0.0.1:6333",
+        "grpc": "127.0.0.1:6334",
+        "cluster_enabled": false,
+        "cors_enabled": false,
+        "telemetry_disabled": true,
+        "url_snapshot_recovery_enabled": false,
+        "snapshot_storage": "local",
+        "jwt_rbac": true,
+        "hide_jwt_dashboard": true,
+        "external_inference_address_configured": false,
+        "web_ui_path": "/usr/share/qdrant/web-ui",
+        "web_ui_dependency": "qdrant-web-ui",
+        "service_egress": "IPAddressDeny=any with IPAddressAllow=localhost",
+        "service_limits": {
+          "LimitNOFILE": 65536,
+          "TasksMax": 2048,
+          "MemoryHigh": "80%",
+          "MemoryMax": "90%"
+        }
+      },
+      "browser_header_patch": {
+        "source_sha256": "0c857555633a209b054d0077e88ecbdced9e648a35a375bb93457af8ccee4770",
+        "content_security_policy": "default-src 'self'; base-uri 'none'; connect-src 'self'; font-src 'self' data:; form-action 'self'; frame-ancestors 'none'; img-src 'self' data: blob:; object-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:",
+        "other_headers": {
+          "Referrer-Policy": "no-referrer",
+          "X-Content-Type-Options": "nosniff",
+          "X-Frame-Options": "DENY"
+        }
+      }
+    },
+    "qdrant_migration": {
+      "package_metadata": {
+        "pkgname": "qdrant-migration",
+        "pkgver": "1.18.3-1",
+        "arch": "x86_64",
+        "license": "Apache-2.0",
+        "installed_size": 73046094,
+        "depends": [
+          "gcc-libs",
+          "glibc"
+        ]
+      },
+      "archive": {
+        "entry_count_including_package_metadata": 15,
+        "name": "qdrant-migration-1.18.3-1-x86_64.pkg.tar.zst",
+        "sha256": "591f16328fcff0fc0193353a65f4c783afc1d24258ae251d3a8927283276ce9e",
+        "size": 26721008,
+        "installed_debug_payload": false
+      },
+      "pkginfo": {
+        "sha256": "7d09b328dd1df34a532d0f02ddefddb77542678125e42e583fa75bf79aa3f5a8",
+        "size": 493
+      },
+      "buildinfo": {
+        "sha256": "d2e8c2e90b8ab67a7251bf3e499b10ee822b9d08ffecf9591e509424edaf44e8",
+        "size": 7811,
+        "pkgbuild_sha256sum": "b41466d124fb428f6e21e414b9a5496d729e7c451ca4276020dc4d3dd53babb7",
+        "builddate": 1786981596,
+        "builddir": "/build/build",
+        "startdir": "/build/package",
+        "buildtool": "makepkg",
+        "buildtoolver": "7.1.0",
+        "builder_global_options_include_debug_and_lto": true,
+        "recipe_effective_options": [
+          "!debug",
+          "!lto"
+        ]
+      },
+      "mtree": {
+        "sha256": "eba7248300bb4fd4680370b2ac8331b2013c4ba02d6e566663cb8d34f73f6fde",
+        "size": 474
+      },
+      "payload_manifest": {
+        "sha256": "6fda813b2799a3ff2bbc546f45e1a36e444396560df36d59cc90610e41c97591",
+        "size": 584,
+        "entries": 12,
+        "format": "ASCII, newline-terminated, tab-separated records sorted as complete lines with LC_ALL=C. Directory records are d, mode without a leading zero, and relative path. File records are f, mode without a leading zero, size, SHA-256, and relative path. Relative paths have neither a leading slash nor a ./ prefix; directory paths also have no trailing slash. This candidate has no symlink or special-file records.",
+        "scope": "installed payload; package metadata entries excluded",
+        "archive_ownership": "root:root for every installed entry"
+      },
+      "binary": {
+        "path": "/usr/lib/qdrant/migration/qdrant-1.18.3",
+        "sha256": "97c16f4582cc0b9f86c7b451d88f7ea8ca56a1e45582168241de7487d31546a7",
+        "size": 72145432,
+        "mode": "0755",
+        "owner": "root:root",
+        "version_output": "qdrant 1.18.3",
+        "elf": "stripped x86-64 PIE",
+        "build_id": "c3aee874767e7ddcf23dbddd1a1c72809dfffdf9",
+        "host_or_build_root_path_strings": 0
+      },
+      "sbom": {
+        "path": "/usr/share/qdrant/migration/qdrant-1.18.3.spdx.json",
+        "sha256": "bfa0f84bab76c4f9fb62834aff283c112d2228183ecc4ed363b95e99a874ae0a",
+        "size": 889305,
+        "mode": "0644",
+        "owner": "root:root",
+        "spdx_version": "SPDX-2.3",
+        "data_license": "CC0-1.0",
+        "generator": "cargo-sbom-v0.10.0",
+        "document_namespace": "https://spdx.org/spdxdocs/qdrant-1.18.3-c5f918b4f37279ec00b22b718ca54bca7b43c9d17628b28b8eba363beceb0c96",
+        "created": "2026-07-17T10:59:11Z",
+        "package_count": 758,
+        "relationship_count": 2498
+      },
+      "license_payload": {
+        "path": "/usr/share/licenses/qdrant-migration/LICENSE",
+        "sha256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+        "size": 11357,
+        "mode": "0644",
+        "owner": "root:root"
+      },
+      "candidate_origin": "Retained accepted final3 archive, not rebuilt: the qdrant-migration recipe is unchanged by this re-baseline. Its identity is bound by the final3 G0/G1 record and by the 2026-09-22 byte-identical rebuild record; this record re-inspects the exact bytes."
+    },
+    "qdrant_web_ui": {
+      "package_metadata": {
+        "pkgname": "qdrant-web-ui",
+        "pkgver": "0.2.18-1",
+        "arch": "any",
+        "license": "Apache-2.0",
+        "installed_size": 17666748,
+        "runtime_dependencies": []
+      },
+      "archive": {
+        "entry_count_including_package_metadata": 244,
+        "name": "qdrant-web-ui-0.2.18-1-any.pkg.tar.zst",
+        "sha256": "962d2b7659fb66bd2eb3b2f425ef90a91cbe7701a66c31b4fd622caeb0e0f283",
+        "size": 5728430,
+        "installed_debug_payload": false
+      },
+      "pkginfo": {
+        "sha256": "143c51873fce64b286cd6c63f3ac604694ffdf1213347ba4f3ee2385a50ea1ce",
+        "size": 357
+      },
+      "buildinfo": {
+        "sha256": "6dd68f1f5af467de2c523edc84b834bfbac5e746bd680066185306f5486da9cc",
+        "size": 7802,
+        "pkgbuild_sha256sum": "27d23809e2cf5a97edf2fb9f647c19c10912b9554d2eacd291fc5f05d7752831",
+        "builddate": 1786983811,
+        "builddir": "/build/build",
+        "startdir": "/build/package",
+        "buildtool": "makepkg",
+        "buildtoolver": "7.1.0",
+        "builder_global_options_include_debug_and_lto": true,
+        "option_scope_note": "This is a static arch-any package. Native recipe !debug and !lto requirements apply only to qdrant and qdrant-migration."
+      },
+      "mtree": {
+        "sha256": "d5516d0b76ccf315dcdaa22a3abc931f5d660f4aa8d34402ae6535d096d98660",
+        "size": 13202
+      },
+      "payload_manifest": {
+        "sha256": "991ee731861514e37e68bc1a4fab16f7fb8ff9b03939c1763f0750eb01905678",
+        "size": 32339,
+        "entries": 241,
+        "format": "ASCII, newline-terminated, tab-separated records sorted as complete lines with LC_ALL=C. Directory records are d, mode without a leading zero, and relative path. File records are f, mode without a leading zero, size, SHA-256, and relative path. Relative paths have neither a leading slash nor a ./ prefix; directory paths also have no trailing slash. This candidate has no symlink or special-file records.",
+        "scope": "installed payload; package metadata entries excluded",
+        "archive_ownership": "root:root for every installed entry"
+      },
+      "binary": {
+        "present": false,
+        "reason": "Static architecture-independent dashboard assets"
+      },
+      "sbom": {
+        "path": "/usr/share/qdrant/web-ui/qdrant-web-ui.spdx.json",
+        "sha256": "35a5b24fe84f2d2640eef3748c36a79320113125ab6c6b5fed9d855c1395ecb7",
+        "size": 863743,
+        "mode": "0644",
+        "owner": "root:root",
+        "spdx_version": "SPDX-2.3",
+        "data_license": "CC0-1.0",
+        "generator": "npm/cli-11.17.0",
+        "document_namespace": "http://spdx.org/spdxdocs/qdrant-web-ui-0.2.18-29afa3c8-4c44-4b96-bc7e-307417241294",
+        "created": "2026-09-03T11:09:28.036Z",
+        "package_count": 783,
+        "relationship_count": 1754
+      },
+      "license_payload": {
+        "path": "/usr/share/licenses/qdrant-web-ui/LICENSE",
+        "sha256": "210b508429e913d9de5301f90508bc2cbf5b2281de5b45e607c04d58f0f3bd8f",
+        "size": 11351,
+        "mode": "0644",
+        "owner": "root:root"
+      },
+      "layout": {
+        "root": "/usr/share/qdrant/web-ui",
+        "owner": "root:root",
+        "directory_mode": "0755",
+        "file_mode": "0644",
+        "install_hook": false,
+        "runtime_network_bootstrap": false
+      },
+      "packaged_runtime_rewrites": {
+        "cloud_data": {
+          "path": "/usr/share/qdrant/web-ui/cloud/data.json",
+          "value": null,
+          "source_sha256": "38e0b9de817f645c4bec37c0d4a3e58baecccb040f5718dc069a72c7385a0bed"
+        },
+        "web_ui_info": {
+          "path": "/usr/share/qdrant/web-ui/web-ui-info.json",
+          "value": {},
+          "source_sha256": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356"
+        },
+        "datasets": {
+          "path": "/usr/share/qdrant/web-ui/datasets.json",
+          "value": [],
+          "source_sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
+        },
+        "runtime_url_patcher_sha256": "f611bfdcc84c1c12a43a8f1a5a53ffeadde843a8b4714978c5d74c51205ca0f7"
+      },
+      "verification": {
+        "source_checksums": "passed",
+        "exact_artifact_verifier": "qdrant-web-ui package contract: ok",
+        "verifier_sha256": "1fd2e35a2285053d6bd2527344cd1d235dfd0a66e5394d064c2f890874dd7a9c",
+        "archive_entry_contract": "Every archive member must use one canonical relative POSIX spelling, be unique after directory suffix normalization, carry numeric UID/GID 0 ownership, and be a 0644 regular file or 0755 directory. Links, special entries, absolute paths, traversal paths, aliases, raw duplicates, file-directory logical-path collisions, misleading owner names, and any extracted-tree link are rejected before payload inspection.",
+        "payload_root_contract": "Only the three recognized package metadata files, the Web UI tree, its required ancestors, and the exact license path are allowed. Hidden files and empty directories outside those roots are rejected.",
+        "package_metadata_contract": "Regular .PKGINFO, .BUILDINFO, and .MTREE files are mandatory. .PKGINFO must contain one exact reviewed identity and only the closed static-package field set; duplicate identities and transaction-affecting fields are rejected.",
+        "exact_artifact_reverified_with_bound_verifier": true,
+        "crafted_symlink_regression_rejected": true,
+        "noncanonical_archive_alias_regressions_rejected": true,
+        "logical_path_collision_regression_rejected": true,
+        "numeric_root_ownership_regression_rejected": true,
+        "out_of_root_hidden_payload_regression_rejected": true,
+        "hostile_package_metadata_regressions_rejected": true,
+        "required_package_metadata_regressions_passed": true,
+        "end_to_end_archive_regressions_passed": true,
+        "independent_second_build_required_by_issue_28_g1": false,
+        "contract_reason": "Issue 28 G1 requires a clean build and inspection of payloads, ownership, modes, license, SBOM, package metadata, versions, and runtime bootstrap; it does not require byte-identical second-build reproduction.",
+        "regressions": "tests/test_qdrant_lane.py archive regressions passed against the bound verifier in this worktree"
+      }
+    }
+  },
+  "candidate_set": {
+    "declared_candidate_count": 3,
+    "only_network_isolated_final_outputs_are_candidates": true,
+    "candidates": [
+      {
+        "lane": "qdrant",
+        "name": "qdrant-1.19.1-1-x86_64.pkg.tar.zst",
+        "sha256": "56208d6725771df687563b9d12e3c963b39c63120b1412f2335411f32c21ed85",
+        "size": 28289048
+      },
+      {
+        "lane": "qdrant-migration",
+        "name": "qdrant-migration-1.18.3-1-x86_64.pkg.tar.zst",
+        "sha256": "591f16328fcff0fc0193353a65f4c783afc1d24258ae251d3a8927283276ce9e",
+        "size": 26721008
+      },
+      {
+        "lane": "qdrant-web-ui",
+        "name": "qdrant-web-ui-0.2.18-1-any.pkg.tar.zst",
+        "sha256": "962d2b7659fb66bd2eb3b2f425ef90a91cbe7701a66c31b4fd622caeb0e0f283",
+        "size": 5728430
+      }
+    ],
+    "output_set_validator": {
+      "expected": [
+        "f qdrant-1.19.1-1-x86_64.pkg.tar.zst",
+        "f qdrant-migration-1.18.3-1-x86_64.pkg.tar.zst",
+        "f qdrant-web-ui-0.2.18-1-any.pkg.tar.zst"
+      ],
+      "actual": [
+        "f qdrant-1.19.1-1-x86_64.pkg.tar.zst",
+        "f qdrant-migration-1.18.3-1-x86_64.pkg.tar.zst",
+        "f qdrant-web-ui-0.2.18-1-any.pkg.tar.zst"
+      ],
+      "accepted": true
+    }
+  },
+  "retained_g3_inputs": {
+    "qdrant_1_17_1": {
+      "status": "retained input only; G3 is not accepted by this record",
+      "package_metadata": {
+        "pkgname": "qdrant",
+        "pkgver": "1.17.1-1",
+        "arch": "x86_64",
+        "license": "Apache-2.0",
+        "installed_size": 75337549,
+        "backup": [
+          "etc/qdrant/config.yaml"
+        ],
+        "depends": [
+          "gcc-libs",
+          "glibc"
+        ]
+      },
+      "archive": {
+        "name": "qdrant-1.17.1-1-x86_64.pkg.tar.zst",
+        "sha256": "d237ac6b804c7b4ec3f73f8ef57340ebaba62abff7853636286f140c8affd5cb",
+        "size": 25531392
+      },
+      "pkginfo": {
+        "sha256": "5e2360c553d5607bc9d6684cf74320273a58e7b9b576121c3851722cf63d2293",
+        "size": 492
+      },
+      "mtree": {
+        "sha256": "c5a8cf9dfd71798cff3e5c8aedc6107c948944c306cde8c1c3d7b37b6780bacd",
+        "size": 559
+      },
+      "binary": {
+        "path": "/usr/bin/qdrant",
+        "sha256": "1d9e300802fe1588c6b6aef5167c32f8d215b5d79c07eaf6699ea1a80d92bf72",
+        "size": 75336176,
+        "mode": "0755",
+        "owner": "root:root",
+        "version_output": "qdrant 1.17.1"
+      },
+      "configuration": {
+        "path": "/etc/qdrant/config.yaml",
+        "sha256": "23f9b7628f8886edf1d6dbd45216a3755eb28bcf00c1e38d391087de58c81bde",
+        "size": 296,
+        "mode": "0644",
+        "owner": "root:root"
+      },
+      "g3_cross_binding": "Any G3 acceptance index must bind this exact archive, binary, and configuration tuple.",
+      "build_metadata_privacy": "Private retained-package BUILDINFO text is not reproduced. The exact archive digest binds the complete retained bytes."
+    }
+  },
+  "repository_source_tree": {
+    "base_commit": "41208bdcd3ecd4f73a4e1c27a3a7b4f7a65bc4ae",
+    "status": "uncommitted review candidate",
+    "inventory_discovery": {
+      "mode": "git-tracked-plus-untracked-nonignored",
+      "command": "git --literal-pathspecs --git-dir=<git dir> --work-tree=<repo root> -c core.excludesFile=/dev/null -c core.fsmonitor=false -c core.ignoreCase=false -c core.untrackedCache=false ls-files --cached --others --exclude-from=.gitignore -z -- <owned paths>",
+      "ignore_rules_file": ".gitignore",
+      "ignore_case": false,
+      "fsmonitor": false,
+      "untracked_cache": false,
+      "tracked_files_remain_included_when_ignored": true,
+      "ignored_build_cache_and_package_outputs_are_excluded": true,
+      "ambient_git_excludes_are_excluded": true,
+      "unbound_nested_ignore_files_are_excluded": true,
+      "repository_selector_environment_is_cleared": true,
+      "git_dir_and_work_tree_are_explicit": true,
+      "pathspecs_are_literal": true,
+      "git_template_is_controlled": true,
+      "discovered_entries_must_be_real_regular_files": true
+    },
+    "owned_paths": [
+      "containers/qdrant-builder",
+      "packages/qdrant",
+      "packages/qdrant-migration",
+      "packages/qdrant-web-ui"
+    ],
+    "owned_files": {
+      "containers/qdrant-builder/Containerfile": {
+        "sha256": "df1ce8916a482f886f21ff03039f0741c1a6b3290be2321f0fc690ced5fb300f",
+        "size": 342
+      },
+      "packages/qdrant-migration/.SRCINFO": {
+        "sha256": "77bd05a15e7047ba5ec44f8d34f301d018cf469c11fa5423e4ecf9e0e18331fe",
+        "size": 760
+      },
+      "packages/qdrant-migration/PKGBUILD": {
+        "sha256": "b41466d124fb428f6e21e414b9a5496d729e7c451ca4276020dc4d3dd53babb7",
+        "size": 4758
+      },
+      "packages/qdrant-migration/README.md": {
+        "sha256": "655c07c67210dc055755b9036906cad67b80dc1c4a2144be3d7624e49f38f47f",
+        "size": 3893
+      },
+      "packages/qdrant-web-ui/.SRCINFO": {
+        "sha256": "95bfc93775ab62ba7382e1723526f842504ccae7a2afc1f128560382706193bf",
+        "size": 1039
+      },
+      "packages/qdrant-web-ui/PKGBUILD": {
+        "sha256": "27d23809e2cf5a97edf2fb9f647c19c10912b9554d2eacd291fc5f05d7752831",
+        "size": 2035
+      },
+      "packages/qdrant-web-ui/README.md": {
+        "sha256": "82313b6af7bd96a18e2c7be9e15b103167e6ae76bba8cea9d2786f5676a15db7",
+        "size": 4455
+      },
+      "packages/qdrant-web-ui/cloud-data.json": {
+        "sha256": "38e0b9de817f645c4bec37c0d4a3e58baecccb040f5718dc069a72c7385a0bed",
+        "size": 5
+      },
+      "packages/qdrant-web-ui/datasets.json": {
+        "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570",
+        "size": 3
+      },
+      "packages/qdrant-web-ui/patch-runtime-urls.py": {
+        "sha256": "f611bfdcc84c1c12a43a8f1a5a53ffeadde843a8b4714978c5d74c51205ca0f7",
+        "size": 1621
+      },
+      "packages/qdrant-web-ui/verify-package.py": {
+        "sha256": "1fd2e35a2285053d6bd2527344cd1d235dfd0a66e5394d064c2f890874dd7a9c",
+        "size": 11720
+      },
+      "packages/qdrant-web-ui/web-ui-info.json": {
+        "sha256": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356",
+        "size": 3
+      },
+      "packages/qdrant/.SRCINFO": {
+        "sha256": "1b314f51df9968c4771d03c76bb377dd671c1b642f94b63070f1c3c7056c35d3",
+        "size": 1490
+      },
+      "packages/qdrant/PKGBUILD": {
+        "sha256": "f6c9b029a9c6a0b0a18d3822e01d719afb97aebc99b35c464bf4637aa9b8b637",
+        "size": 6276
+      },
+      "packages/qdrant/README.md": {
+        "sha256": "35118d5288c6e0b9ca0d18fd58813a3d5797490601590719725801e9491e226c",
+        "size": 13496
+      },
+      "packages/qdrant/qdrant-secret-preflight": {
+        "sha256": "6a364ce0a745c6f02d38f3c39fc71e91fd31a2f33e63442cfa64b251fab545cd",
+        "size": 1188
+      },
+      "packages/qdrant/qdrant-web-ui-headers.patch": {
+        "sha256": "0c857555633a209b054d0077e88ecbdced9e648a35a375bb93457af8ccee4770",
+        "size": 3265
+      },
+      "packages/qdrant/qdrant.config.yaml": {
+        "sha256": "800fd7130542e5d61bc869962e6d7d59de2bccad261811d54e9b6745ffc991f4",
+        "size": 818
+      },
+      "packages/qdrant/qdrant.service": {
+        "sha256": "610312cbba4efffa1d5422ab75154605000d4a4d177f77437ca00e2926ef4114",
+        "size": 1260
+      },
+      "packages/qdrant/qdrant.sysusers": {
+        "sha256": "963c4954011a2b074d265f51e292289e004876be80228f60b0b9f2d98151d143",
+        "size": 57
+      },
+      "packages/qdrant/qdrant.tmpfiles": {
+        "sha256": "4758bc1b0cd16a83e08ca74d72b0d1079d7ae46085379fe0ea5b134e984c1698",
+        "size": 178
+      }
+    },
+    "artifact_binding_note": "The package-input manifests bind every committed package-directory file at the recipe commit. Package README files and the Web UI verifier are review assets whose later edits cannot change package bytes; their current identities are bound here."
+  },
+  "validation": {
+    "source_verification": {
+      "qdrant": "passed for all eight sources",
+      "qdrant_web_ui": "passed for all six sources"
+    },
+    "srcinfo_regeneration": {
+      "qdrant": "matches makepkg --printsrcinfo",
+      "qdrant_migration": "unchanged recipe; matches makepkg --printsrcinfo",
+      "qdrant_web_ui": "matches makepkg --printsrcinfo"
+    },
+    "builder_identity": "Containerfile, base digest, repository digest, image ID, rootfs layers, and toolchain were re-read and match the accepted builder.",
+    "final_build_isolation": "Both rebuilt candidates used the exact image ID with pull disabled, network mode none, and CARGO_NET_OFFLINE=true.",
+    "negative_control": "Removing a required source archive (both lanes) and a locked crate archive (qdrant) made the exact final command fail before any archive was written.",
+    "candidate_output_roots": "Each final output root contained exactly one regular package archive and no debug or extra archive.",
+    "artifact_binding": "Every archive, PKGINFO, BUILDINFO, MTREE, payload manifest, binary, SBOM, version, mode, and ownership identity was recomputed from the exact bytes.",
+    "installed_payload_private_path_scan": "No host build root, home path, or host identity was found in the installed binaries.",
+    "validation_scope": "Package source and artifact evidence only. G2, G3, G4, publication, deployment, and host state are not accepted here."
+  },
+  "gate_disposition": {
+    "publication_eligible": false,
+    "catalog_lanes": {
+      "qdrant": "deferred",
+      "qdrant-migration": "deferred",
+      "qdrant-web-ui": "deferred"
+    },
+    "standalone_authority": "G0 and G1 acceptance records provenance and package evidence only. This record cannot authorize catalog publication; later gate evidence must be bound by a separate final acceptance index.",
+    "G0": {
+      "status": "accepted",
+      "basis": "Pinned tag objects, signature status, verified commits, source and release-asset hashes, locked source identities, exact-version AUR reference metadata, .SRCINFO regeneration, divergences, release deltas, and the reconstruction procedure's cache, input, and output manifests are bound."
+    },
+    "G1": {
+      "status": "accepted",
+      "basis": "The exact three candidate archives are bound to frozen recipes, metadata, payloads, binaries where applicable, SBOMs, modes, ownership, reported versions, and absence of runtime bootstrap."
+    },
+    "later_gates": "G2 runtime evidence, G3 migration and recovery, and G4 composed-service evidence are outside this record. The retained 1.17.1 tuple is a G3 input, not G3 acceptance."
+  },
+  "privacy": {
+    "public_copy_safe": true,
+    "path_neutrality": "Repo-relative source paths, public URLs, stable container paths, role placeholders, and installed package paths only; no concrete host path is included.",
+    "recursive_strict_scan": {
+      "status": "passed",
+      "scope": "Every recursively nested string value",
+      "rejects": "Concrete temporary, home, privileged-account, checkout, cache, host, private-network, and operator-identity values"
+    },
+    "package_build_metadata": "Exact BUILDINFO digests and stable in-container builddir and startdir values are bound; the installed-package list is not reproduced. No machine-local host path is reproduced.",
+    "retained_build_metadata": "The retained 1.17.1 BUILDINFO body is intentionally omitted; its archive digest remains authoritative."
+  }
+}

@@ -164,10 +164,11 @@ def require_safe_retrieval_mode(
 ) -> None:
     """Reject modes that would skip the household's required reranker.
 
-    This candidate deliberately disables full-context, non-hybrid, and
-    embedding/retrieval-bypass file modes while a reranker is required.  A
+    This candidate deliberately disables the global full-context, non-hybrid,
+    and embedding/retrieval-bypass modes while a reranker is required.  A
     qualified provider makes reranked retrieval available; it does not make
-    bypass paths safe.
+    these modes safe.  Callers pass only the global full-context setting, so
+    explicitly requested full-context items pass once the reranker qualifies.
     """
 
     _REQUIRED_RERANKER_GATE.require_mode(

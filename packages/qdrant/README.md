@@ -10,9 +10,11 @@ do not receive direct network access to the Qdrant API or dashboard.
 
 ## Maintenance Baseline
 
-- `authoritative_reference`: AUR
+- `authoritative_reference`: exact-version AUR
+  [`qdrant` commit `f8a80b0`](https://aur.archlinux.org/cgit/aur.git/tree/PKGBUILD?h=qdrant&id=f8a80b0650725c1ce14031c779d37f206a02cc83)
+  at `1.19.1-1`. It differs from the retained migration baseline,
   [`qdrant` commit `51762d7`](https://aur.archlinux.org/cgit/aur.git/tree/PKGBUILD?h=qdrant&id=51762d7ed828dfc25be633b4f0ca336d546ec81f)
-  at the retained `1.18.3-1` migration baseline.
+  at `1.18.3-1`, only in its version and source digest.
 - `advisory_references`: upstream Qdrant
   [releases](https://github.com/qdrant/qdrant/releases),
   [upgrade guidance](https://qdrant.tech/documentation/upgrades/),
@@ -29,7 +31,7 @@ do not receive direct network access to the Qdrant API or dashboard.
   consecutive-minor migration, corruption-rejection, recovery, rollback, and
   Haystack/Hayhooks composition gates before publication or deployment.
 
-Relative to the AUR `1.18.3-1` recipe, the active package adds runtime
+Relative to the AUR `1.19.1-1` recipe, the active package adds runtime
 dependencies on `bash`, `coreutils`, and `qdrant-web-ui`; it adds `jq` and
 pinned `cargo-sbom` source to the build. Both local recipes use locked Cargo
 fetches and builds, the AWS-LC jitter workaround, build-path remapping, and a
@@ -44,12 +46,12 @@ dashboard-header patch, and license.
 
 ## Pinned Identities
 
-The active package is Qdrant `1.19.0`:
+The active package is Qdrant `1.19.1`:
 
-- annotated tag object: `af875b4bfd98103f7c0ee34fe4f25c5099893ca9`
-- GitHub-verified commit: `74f3e85b9473c62560006c043e13737ce6b48412`
+- annotated tag object: `de333e3c04660fe475d6275e9efc9fb9f54138fe`
+- GitHub-verified commit: `6ab21cac18ebb6f4ae29102c7f8f5cc11affd5de`
 - source archive SHA-256:
-  `e0c9a030ae47d95f7c739598343bd2529c817fe262c4e7b2a4f1070ff82a024e`
+  `ca9f0cb5a6954d253b51f249161cb63e2c3fee2a3bf360056cf01f0e70b2b878`
 
 Both recipes generate SPDX 2.3 dependency manifests with pinned
 `cargo-sbom` `0.10.0` source (SHA-256
@@ -66,9 +68,10 @@ The separately maintained migration package is Qdrant `1.18.3`:
 - source archive SHA-256:
   `c5f918b4f37279ec00b22b718ca54bca7b43c9d17628b28b8eba363beceb0c96`
 
-The `1.19.0` annotated tag is not cryptographically signed. Its accepted
-provenance is the GitHub-verified release commit plus the independently
-reproduced archive hash recorded above. The `1.18.3` annotated tag carries a
+The `1.19.1` annotated tag carries a valid PGP signature verified by GitHub,
+and its release commit is also GitHub-verified; its pinned archive hash, which
+matches the AUR recipe and whose contents match the commit tree, remains the
+exact source-byte boundary. The `1.18.3` annotated tag carries a
 valid PGP signature verified by GitHub, and its release commit is also
 GitHub-verified; its pinned archive hash remains the exact source-byte boundary.
 
@@ -89,7 +92,7 @@ strict-mode `max_resident_memory_percent` setting is not preserved; use
 authenticated quota response and threshold/release tests. Qdrant 1.19
 snapshot-recovery changes are accepted only through the collection and
 full-storage, corruption-rejection, retry, and restart matrix; URL snapshot
-recovery remains disabled and snapshot storage remains local. Web UI 0.2.16
+recovery remains disabled and snapshot storage remains local. Web UI 0.2.18
 Usage Quotas is accepted as a read-only view of authenticated global quota
 state; it does not relax API authentication or grant users direct dashboard or
 API access.
@@ -111,7 +114,7 @@ It hard-depends on `qdrant-web-ui`, whose root-owned, read-only files live at
 its existing loopback listener. The active package no longer creates
 `/var/lib/qdrant/static`; upgrades do not delete a pre-existing directory.
 The pacman dependency is deliberately unversioned for independent update
-cadence. This refresh's accepted artifact manifest binds Web UI `0.2.16`; every
+cadence. This refresh's accepted artifact manifest binds Web UI `0.2.18`; every
 later UI revision must pass G0 through G2 independently before entering an
 accepted manifest.
 
@@ -147,7 +150,7 @@ This makes the absent external-inference address, local snapshot storage, and
 loopback binds defense in depth rather than the only egress controls.
 
 Upstream leaves one narrow unauthenticated loopback banner: `GET /` returns
-only `{"title":"qdrant - vector search engine","version":"1.19.0"}`.
+only `{"title":"qdrant - vector search engine","version":"1.19.1"}`.
 Management and data endpoints are not public; for example, unauthenticated
 `GET /collections` and `GET /quotas` are rejected.
 
@@ -207,9 +210,9 @@ Build the active package from this directory:
 ```bash
 makepkg --verifysource
 makepkg --nodeps -f
-bsdtar -xOf qdrant-1.19.0-1-x86_64.pkg.tar.zst \
+bsdtar -xOf qdrant-1.19.1-1-x86_64.pkg.tar.zst \
   usr/share/qdrant/qdrant.spdx.json | jq -e \
-  '.spdxVersion == "SPDX-2.3" and any(.packages[]; .name == "qdrant" and .versionInfo == "1.19.0")'
+  '.spdxVersion == "SPDX-2.3" and any(.packages[]; .name == "qdrant" and .versionInfo == "1.19.1")'
 ```
 
 `--nodeps` is appropriate only for the isolated compilation gate when the
@@ -249,22 +252,22 @@ artifacts and install them through pacman. See
 ## Migration And Rollback Boundary
 
 The only supported retained-data upgrade route from the observed deployment is
-`1.17.1 -> 1.18.3 -> 1.19.0`. The `qdrant-migration` binary exists solely to
+`1.17.1 -> 1.18.3 -> 1.19.1`. The `qdrant-migration` binary exists solely to
 make the intermediate step reproducible after the active recipe moves ahead.
 
 Never run two Qdrant binaries against the same storage concurrently. Never
-open storage migrated by `1.19.0` with `1.18.3` or `1.17.1`; a binary downgrade
+open storage migrated by `1.19.1` with `1.18.3` or `1.17.1`; a binary downgrade
 is not rollback. Pair every retained binary and configuration with an untouched
 matching state tree, cold copy, or version-compatible snapshot.
 
 Before a live cutover, perform the separately authorized metadata-only
-preflight. If the service is empty, start `1.19.0` on fresh empty storage and
+preflight. If the service is empty, start `1.19.1` on fresh empty storage and
 retain the untouched `1.17.1` tree. If data exists, freeze writers and exercise
 the full consecutive-minor route with verified cold copies and snapshot
 restores. The disposable acceptance fixture must prove both paths regardless
 of the live result.
 
-Retain the old `1.17.1` state and package plus the tested `1.18.3` and `1.19.0`
+Retain the old `1.17.1` state and package plus the tested `1.18.3` and `1.19.1`
 artifacts until a post-cutover `1.19` snapshot has restored successfully and
 the deployment has run cleanly for seven days. Removing those anchors requires
 separate explicit approval.
