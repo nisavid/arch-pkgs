@@ -50,9 +50,10 @@ remains in
   Open WebUI reads them from the environment at every start, so keep the
   profile in place for the life of the instance, including across upgrades
   and restores, and do not change the prefixes once documents are embedded.
-- Open WebUI stores no secret for its model connections. The package keeps the
-  embedding and reranking API-key settings out of persistent configuration and
-  out of the document settings form.
+- Open WebUI stores no secret for its model connections while the profile's
+  `OPENAI_API_KEYS` is empty; a key set there becomes a persistent setting in
+  its database. The package keeps the embedding and reranking API-key settings
+  out of persistent configuration and out of the document settings form.
 - Qualification runs at service start and when an administrator saves the
   document settings. After any runtime reranker fault, document RAG stays
   closed (the authenticated `/api/v1/retrieval/health` probe returns 503)

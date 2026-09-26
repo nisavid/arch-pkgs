@@ -725,17 +725,32 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
             REPO_ROOT / "docs" / "maintainers" / "lemonade-provider-port-status-2026-08-19.md",
         ):
             self.assertNotIn("uses no credential", read(path), path.name)
-        self.assertIn(
-            "Open WebUI stores no secret for its model connections.",
-            read(OPEN_WEBUI / "README.md"),
+        # The README scopes the generic phrase to an empty key, and the
+        # example's key comment says where a key set there is stored. Both are
+        # generic: neither names the model server or states its key needs.
+        readme = read(OPEN_WEBUI / "README.md")
+        secret_bullet = next(
+            bullet for bullet in readme.split("\n- ") if "stores no secret" in bullet
         )
-        # The example's key line is generic: it states no provider's key needs.
+        self.assertIn(
+            "Open WebUI stores no secret for its model connections while the"
+            " profile's `OPENAI_API_KEYS` is empty; a key set there becomes a"
+            " persistent setting in its database.",
+            " ".join(secret_bullet.split()),
+        )
         example = read(OPEN_WEBUI / "household.env.example")
-        self.assertIn(
-            "# OPENAI_API_KEYS: set to the provider's API key if it requires one;"
-            " otherwise\n# leave empty.\nOPENAI_API_KEYS=\n",
-            example,
+        key_comments = re.findall(r"(?m)((?:^#.*\n)+)OPENAI_API_KEYS=\n", example)
+        self.assertEqual(
+            key_comments,
+            [
+                "# OPENAI_API_KEYS: set to the provider's API key if it requires"
+                " one; otherwise\n# leave empty. A key set here is a persistent"
+                " setting: the first start stores\n# it in Open WebUI's database,"
+                " not in a systemd credential.\n"
+            ],
         )
+        for text in (secret_bullet, *key_comments):
+            self.assertIsNone(re.search(r"lemonade|lemond", text, re.IGNORECASE))
         self.assertNotIn("stores no secret", example)
 
     def test_embedding_prefixes_are_the_zembed_wrapper_heads(self):
