@@ -1072,6 +1072,14 @@ class OpenWebUIHouseholdRAGGateTests(unittest.TestCase):
         chat_files = mock.AsyncMock(
             return_value=[({"type": "file", "id": "file-1"}, stored_file)]
         )
+        config = SimpleNamespace(get_many=mock.AsyncMock(return_value={}))
+
+        def sources_from_items(*, reranking_function, **_kwargs):
+            # 0005's get_sources_from_items refuses while the gate is closed.
+            self.gate.require_required_reranker(reranking_function)
+            return [{"document": [knowledge_text], "metadata": [{}], "source": {}}]
+
+        sources = mock.AsyncMock(side_effect=sources_from_items)
         attributes = {
             "open_webui": {},
             "open_webui.models": {},
@@ -1083,7 +1091,10 @@ class OpenWebUIHouseholdRAGGateTests(unittest.TestCase):
             "open_webui.retrieval.external": {
                 "retrieve_external_knowledge": mock.AsyncMock()
             },
-            "open_webui.retrieval.utils": {"query_collection": mock.AsyncMock()},
+            "open_webui.retrieval.utils": {
+                "get_sources_from_items": sources,
+                "query_collection": mock.AsyncMock(),
+            },
         }
         modules = {}
         for name, values in attributes.items():
@@ -1099,6 +1110,7 @@ class OpenWebUIHouseholdRAGGateTests(unittest.TestCase):
             )
 
         namespace = {
+            "Config": config,
             "Groups": SimpleNamespace(
                 get_groups_by_member_id=mock.AsyncMock(return_value=[])
             ),
@@ -1114,10 +1126,15 @@ class OpenWebUIHouseholdRAGGateTests(unittest.TestCase):
             "_grep_file_models": grep,
             "_has_read_access_to_file": mock.AsyncMock(return_value=True),
             "asyncio": asyncio,
+            "filter_source_metadata": lambda _metadata: {},
             "log": mock.Mock(),
             "require_required_reranker": self.gate.require_required_reranker,
         }
         tools = {
+            "query_chat_files": {
+                "query": "seed cabinet",
+                "__files__": [{"type": "file", "id": "file-1"}],
+            },
             "grep_chat_files": {
                 "pattern": "brass",
                 "__files__": [{"type": "file", "id": "file-1"}],
@@ -1153,6 +1170,8 @@ class OpenWebUIHouseholdRAGGateTests(unittest.TestCase):
             notes.get_note_by_id,
             knowledges.get_knowledges_by_file_id,
             chat_files,
+            config.get_many,
+            sources,
         )
 
         def call(name):
