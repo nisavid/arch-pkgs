@@ -20,7 +20,7 @@ Use this package if you have:
 
 Do not treat this release as fully accepted for unattended monitoring yet. In
 the source repository, the remaining validation work is tracked in
-`docs/backlog.md`.
+[Resume the utilyze lane when NVIDIA validation is available](https://github.com/nisavid/arch-pkgs/issues/84).
 
 ## Current Status
 
@@ -44,7 +44,13 @@ Still pending:
 - Interactive validation of the live telemetry consent row.
 - Long-running validation of telemetry consent persistence across root and
   non-root sessions.
-- Repeatable TUI acceptance coverage.
+- Repeatable TUI acceptance coverage. It will be planned when NVIDIA
+  validation resumes; the earlier TUI test-harness plan is historical.
+
+The build, local acceptance, GPU validation and deployment of this package are
+tracked by
+[Resume the utilyze lane when NVIDIA validation is available](https://github.com/nisavid/arch-pkgs/issues/84)
+and the issues it links.
 
 ## First Run
 
