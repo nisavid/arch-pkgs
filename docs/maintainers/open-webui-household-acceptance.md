@@ -60,22 +60,34 @@ rehearsal may run earlier.
    its tree-id equality check or by rebuilding. The kit reads that manifest
    (`--manifest`); it never reads a directory listing. Because only one trial
    set is allowed, running it on non-record bytes would waste it.
-   The candidate of record for the Open WebUI pair, which the manifest must
-   carry, is:
+   The candidate of record, which the manifest must carry, is the 0.11.4
+   re-baseline set:
 
    | Archive | Size (bytes) | SHA-256 |
    | --- | --- | --- |
-   | `open-webui-0.11.0-7-x86_64.pkg.tar.zst` | **pending** | **pending** |
+   | `open-webui-0.11.4-1-x86_64.pkg.tar.zst` | **pending** | **pending** |
    | `python-rapidocr-3.9.2-1-any.pkg.tar.zst` | 27198440 | `0e70fb599a535f9bb1c0c0b3a2f88abe9993f7632eba8e2c618826c7f01bf99b` |
+   | `qdrant-1.19.1-1-x86_64.pkg.tar.zst` | 28289048 | `56208d6725771df687563b9d12e3c963b39c63120b1412f2335411f32c21ed85` |
+   | `qdrant-migration-1.18.3-1-x86_64.pkg.tar.zst` | 26721008 | `591f16328fcff0fc0193353a65f4c783afc1d24258ae251d3a8927283276ce9e` |
+   | `qdrant-web-ui-0.2.18-1-any.pkg.tar.zst` | 5728430 | `962d2b7659fb66bd2eb3b2f425ef90a91cbe7701a66c31b4fd622caeb0e0f283` |
+   | `python-faster-whisper-1.2.1-1-any.pkg.tar.zst` | 1087994 | `9b052be890fd7f21135ca2ebc090ff140432e0e8493dd484b44585386ae8d1cb` |
 
-   Open WebUI 0.11.0-7 is the trial candidate. It carries the 0.11.0-6
-   `open-webui-tailnet.service` sidecar for the tailnet-only production route
-   and adds patch 0008, which pages Open WebUI's Qdrant scroll reads at no
-   more than 1000 points per page. Qdrant's strict-mode `max_query_limit`
-   stays at 1000 (owner decision), and an Open WebUI build without 0008 fails
-   the first handbook upload against it. The 0.11.0-7 size and SHA-256 stay
-   **pending** until the candidate is built, merged, and tree-equal;
-   `python-rapidocr` is unchanged.
+   Open WebUI 0.11.4-1 is the trial candidate. It re-bases the package on
+   Open WebUI 0.11.4 with patches 0001 through 0008, including the hardened
+   fail-closed RAG gate in 0005 and patch 0008, which pages Open WebUI's
+   Qdrant scroll reads at no more than 1000 points per page. Qdrant's
+   strict-mode `max_query_limit` stays at 1000 (owner decision), and an Open
+   WebUI build without 0008 fails the first handbook upload against it. The
+   package still carries the `open-webui-tailnet.service` sidecar (packaged
+   since 0.11.0-6) for the tailnet-only production route. The 0.11.4-1 size
+   and SHA-256 stay **pending** until the candidate is built, merged, and
+   tree-equal. The Qdrant trio's values are the ones the Qdrant 1.19.1
+   re-baseline's G0-G3 evidence accepted
+   (`docs/maintainers/evidence/qdrant-1.19.1-1/`), and
+   `python-faster-whisper`'s are the speech G0-G2 evidence's
+   (`docs/maintainers/evidence/speech-providers-4.8.2-1.2.1/`);
+   `qdrant-migration`, `python-rapidocr`, and `python-faster-whisper` are
+   unchanged.
 
    The candidate store also keeps superseded archives, some under the same
    names (an earlier `open-webui-0.11.0-5` build differs in size and digest),
@@ -270,10 +282,10 @@ only.
 | --- | --- | --- |
 | `open-webui.acceptance.identity.archives` (A-ID1) | All deployed archives match the manifest by name, size, and SHA-256, before extraction and again at rollback. The generic `ctranslate2` and `python-ctranslate2` 4.8.2 archives are listed as "bound, not deployed"; the host `python-ctranslate2-gfx1151` provides and conflicts. | exact |
 | `open-webui.acceptance.identity.unit-properties` (A-ID2) | Every packaged unit property the user manager cannot apply, generated (see below). | record |
-| `open-webui.acceptance.ready.first-start` (A-R2) | First fresh start reaches Alembic head `f0bd01a18a3d` with no migration error; UDS `/ready` 200 before commissioning. | head exact; duration recorded |
+| `open-webui.acceptance.ready.first-start` (A-R2) | First fresh start reaches Alembic head `d4c1a8e37b62`, Open WebUI 0.11.4's single head, with no migration error; UDS `/ready` 200 before commissioning. | head exact; duration recorded |
 | `open-webui.acceptance.auth.one-admin` (A-S2) | The packaged `open-webui-commission-admin` succeeds; signup off and exactly one admin, rechecked after both drills. | exact |
 | `open-webui.acceptance.ready.restart` (A-R1) | Restart to UDS `/ready` 200 plus authenticated retrieval health 200. | ceiling 25 s |
-| `open-webui.acceptance.qdrant.g4` (A-S3, A-S4) | Fresh 1.19 state; five `open-webui-rag-v1` collections, 2,560-dim cosine, payload indexes `tenant_id`, `metadata.hash`, `metadata.file_id`; the runtime holds only the `prw` JWT; the negative probe (an `r` JWT upsert and a `prw` collection create or delete return 403). | exact |
+| `open-webui.acceptance.qdrant.g4` (A-S3, A-S4) | Fresh Qdrant 1.19.1 state, the version Qdrant reports; five `open-webui-rag-v1` collections, 2,560-dim cosine, payload indexes `tenant_id`, `metadata.hash`, `metadata.file_id`; the runtime holds only the `prw` JWT; the negative probe (an `r` JWT upsert and a `prw` collection create or delete return 403). | exact |
 | `open-webui.acceptance.connections.no-stored-secret` (A-S5) | Open WebUI's model connections carry no stored secret: the unit loads only Open WebUI's five secret credentials plus the session-epoch credential, and the API-key fields in the env, overlay, SQLite config, and admin exports are empty. | exact |
 | `open-webui.resmoke.zembed-canary` (A-R3) | 2,560 dims, `\|norm − 1\| ≤ 0.001`, margin ≥ 0.20, prefixes read from the running process's settings; one indexed chunk's stored vector has cosine ≥ 0.999 with the direct content-prefixed vector. | fixed; failure exits 3 and escalates |
 | `open-webui.resmoke.zerank-qualification` (A-R4) | Retrieval health 200 after start; a direct rerank gives finite scores with the relevant document first. | pass/fail |
@@ -326,7 +338,7 @@ Notes on specific checks:
   clocks.
 - **The rollback drill (A-D2)** stops the slice, removes `tree/` and all state,
   re-extracts from `inputs/` after a digest check against the anchor manifest,
-  reserves the epoch, and restores the tuple into fresh Qdrant 1.19.
+  reserves the epoch, and restores the tuple into fresh Qdrant 1.19.1.
 - **The A-D3 checks** run before Caddy restarts after each drill: SQLite
   `quick_check` at Alembic head, backup digests, Valkey RDB and a sentinel
   key, collection shape and point counts, the credential tuple's
@@ -338,7 +350,8 @@ Notes on specific checks:
 The packaged Qdrant strict mode caps every query and scroll at
 `max_query_limit` 1000, and that cap stays (owner decision). Open WebUI 0.11
 reads a whole tenant with one scroll whose limit is 999999999, which the cap
-rejects; patch 0008 in 0.11.0-7 reads it in pages of at most 1000 points.
+rejects; patch 0008, which 0.11.4-1 carries, reads it in pages of at most
+1000 points.
 Only a tenant with more than 1000 points proves the paging. At or below the
 cap, one page returns everything, so a read that stops after one page passes
 too. Neither failure is loud: hybrid search logs a failed collection read and
@@ -486,8 +499,8 @@ post-verification proves that the packaged unit is unmodified and that only the 
 drop-ins apply, so every packaged property that A-ID2 records as dropped or
 not enforced here is in force in production.
 
-The 0.11.0-6 `open-webui-tailnet.service` sidecar is not part of the
-acceptance environment: the acceptance route is loopback Caddy, and the
+The `open-webui-tailnet.service` sidecar (packaged since 0.11.0-6) is not
+part of the acceptance environment: the acceptance route is loopback Caddy, and the
 sidecar's loopback deny is proven on the host by the owner-run P5.2 check in
 the production handoff.
 
@@ -552,10 +565,11 @@ real model's verbatim answer, or provider timings. Only the trial does.
   private path with the reason, so the one trial's values survive. Teardown
   refuses until that file is moved out of the root.
 - It records `production_expectation`, the frozen production-settings entry
-  for the deployed `open-webui` archive, and the trial prints it. The
-  evidence commit adds that entry to `PRODUCTION_EXPECTATIONS` in
-  `tools/open_webui_household_scenarios.py`; a test ties every entry to
-  committed acceptance evidence.
+  for the deployed `open-webui` archive (for this trial, the `0.11.4-1`
+  entry), and the trial prints it. The evidence commit adds that entry to
+  `PRODUCTION_EXPECTATIONS` in `tools/open_webui_household_scenarios.py`; a
+  test ties every entry to committed acceptance evidence, so no entry lands
+  before the trial's evidence does.
 - Every `/proc/<pid>/environ` read is filtered in memory to a fixed key
   allowlist (the five telemetry keys, the embedding prefixes and model, and
   the reranking model). Raw environ is never written anywhere.

@@ -128,8 +128,14 @@ REFUSED_ROOT_PREFIXES = (Path("/home"), Path("/tmp"), Path("/var/tmp"))
 MAX_ROOT_USE_PERCENT = 80
 FOOTPRINT_BYTES = 6 * 1024**3
 
-ALEMBIC_HEAD = v1.CONTRACT["open_webui"]["alembic_head"]
-QDRANT_VERSION = v1.CONTRACT["qdrant"]["version"]
+# The trial candidate is open-webui 0.11.4-1 on qdrant 1.19.1-1, not the
+# 0.11.0 and 1.19.0 pair the v1 envelope contract measured.  Open WebUI 0.11.1
+# added revisions 1ce6ade7d93b, 6d09d1bf1f23, and d4c1a8e37b62 on top of
+# 0.11.0's head f0bd01a18a3d, so 0.11.4's single head is d4c1a8e37b62
+# (backend/open_webui/migrations/versions/ in the 0.11.4 sdist).
+ALEMBIC_HEAD = "d4c1a8e37b62"
+# The version Qdrant 1.19.1-1 reports at GET /.
+QDRANT_VERSION = "1.19.1"
 QDRANT_DIMENSIONS = v1.CONTRACT["qdrant"]["dimensions"]
 COLLECTIONS: tuple[str, ...] = tuple(v1.COLLECTIONS)
 LIMITS = MappingProxyType({"restart_s": 25.0, "restore_s": 40.0, "rollback_state_s": 40.0})
@@ -1385,7 +1391,7 @@ def a_id2_rows(kit: Kit) -> list[dict[str, Any]]:
         ("session-epoch ledger", "/var/lib/open-webui-session-epoch/current (root)",
          f"{kit.ledger} through unshare -r", "the root ledger is exercised only in the production install"),
         ("socket", "/run/open-webui/open-webui.sock", str(kit.socket_path), "user runtime directory"),
-        ("route", "open-webui-tailnet.service: Tailscale Serve to the socket (0.11.0-6; owner-run in production)",
+        ("route", "open-webui-tailnet.service: Tailscale Serve to the socket (packaged since 0.11.0-6; owner-run in production)",
          f"Caddy on loopback:{PORTS['caddy']}, tls internal",
          "acceptance route; no trust-store install; the tailnet sidecar is not deployed here"),
         ("credentials", "systemd-creds (system)", route,

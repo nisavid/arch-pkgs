@@ -268,27 +268,27 @@ class EnvironTests(unittest.TestCase):
 
     def test_the_trial_derives_the_production_entry_from_the_deployed_archive(self):
         env = packaged_env()
-        derived = scenarios.production_expectation("open-webui-0.11.0-5-x86_64.pkg.tar.zst", "a" * 64, env)
-        self.assertEqual(derived["version"], "0.11.0-5")
+        derived = scenarios.production_expectation("open-webui-0.11.4-1-x86_64.pkg.tar.zst", "a" * 64, env)
+        self.assertEqual(derived["version"], "0.11.4-1")
         self.assertEqual(derived["entry"]["archive_sha256"], "a" * 64)
         for key in scenarios.PRODUCTION_EXPECTATION_KEYS:
             self.assertEqual(derived["entry"][key], env[key])
         with self.assertRaises(ValueError):
-            scenarios.production_expectation("qdrant-1.19.0-1-x86_64.pkg.tar.zst", "a" * 64, env)
+            scenarios.production_expectation("qdrant-1.19.1-1-x86_64.pkg.tar.zst", "a" * 64, env)
 
     def test_production_settings_claim_the_digest_only_when_the_cached_archive_matched(self):
         env = packaged_env()
         with tempfile.TemporaryDirectory() as cache:
-            name = "open-webui-0.11.0-5-x86_64.pkg.tar.zst"
+            name = "open-webui-0.11.4-1-x86_64.pkg.tar.zst"
             (Path(cache) / name).write_bytes(b"exact")
             digest = scenarios.v1._sha256_bytes(b"exact")
             entry = scenarios.production_expectation(name, digest, env)["entry"]
-            with mock.patch.object(scenarios, "PRODUCTION_EXPECTATIONS", {"0.11.0-5": entry}):
-                verified = scenarios.settings_for_production("0.11.0-5", Path(cache))
-                unverified = scenarios.settings_for_production("0.11.0-5", Path(cache) / "absent")
+            with mock.patch.object(scenarios, "PRODUCTION_EXPECTATIONS", {"0.11.4-1": entry}):
+                verified = scenarios.settings_for_production("0.11.4-1", Path(cache))
+                unverified = scenarios.settings_for_production("0.11.4-1", Path(cache) / "absent")
                 (Path(cache) / name).write_bytes(b"other")
                 with self.assertRaises(scenarios.Blocked):
-                    scenarios.settings_for_production("0.11.0-5", Path(cache))
+                    scenarios.settings_for_production("0.11.4-1", Path(cache))
         self.assertTrue(verified.archive_verified)
         self.assertFalse(unverified.archive_verified)
         receipt = scenarios.build_receipt(
