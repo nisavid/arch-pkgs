@@ -385,6 +385,46 @@ turned off:
   headers from `127.0.0.1`, which any local process can forge. It is
   untested.
 
+## Qdrant Scroll Paging
+
+`0008-page-qdrant-scroll.patch` makes `query()` and `get()` in both Open WebUI
+Qdrant clients follow Qdrant's `next_page_offset`, asking for at most 1,000
+points per request.
+
+- **Stop conditions:** paging stops when Qdrant returns no next offset or a
+  positive caller `limit` is reached, and the last request asks only for the
+  remaining count. As guards, it also stops on an empty page or on the offset
+  it was just sent, logs a warning naming the collection, the reason and the
+  number of points read, and keeps the points already read. A caller `limit` of
+  0 or less makes `query()` return an empty result after the existing
+  collection check, without a scroll request (upstream sent the limit to
+  Qdrant, which rejects `limit=0`); a missing collection still returns `None`.
+- **Why:** upstream reads with a single scroll whose limit is
+  `NO_LIMIT = 999999999`, a "fetch everything" stand-in added in
+  [open-webui#6050](https://github.com/open-webui/open-webui/pull/6050) (2024).
+  Qdrant's strict mode is opt-in and off by default upstream; the packaged
+  Qdrant config enables it with `max_query_limit: 1000`, so Qdrant rejects
+  that request with HTTP 400. Uploads fail with that 400 during file
+  processing. From reading the code, the failing call is the hash-dedup check
+  once the shared collection exists. From reading the code (not reproduced):
+  hybrid search's full-collection prefetch hits the same 400, the error is
+  caught and logged, and retrieval returns no documents, with no error.
+- **Concurrent writes:** a paged read is not a point-in-time snapshot. Points
+  written during the read may or may not appear; every point present for the
+  whole read is returned exactly once. The prior single scroll was one atomic
+  read per shard.
+- **Page-size coupling:** `SCROLL_PAGE_SIZE` must stay at or below the
+  packaged Qdrant `max_query_limit` in
+  [`../qdrant/qdrant.config.yaml`](../qdrant/qdrant.config.yaml). Lowering
+  that limit requires lowering the page size in the same change.
+- **Out of scope:** `search()` top-k is unchanged. In the non-multitenancy
+  client, `search(limit=None)` still maps to `NO_LIMIT`; the household runs in
+  multitenancy mode and does not use that path.
+- **Drop condition:** drop 0008 only once an upstream Open WebUI release
+  pages Qdrant scroll reads with requests at or below the packaged Qdrant
+  `max_query_limit` (1000), and only after checking a strict-mode read of more
+  than 1,000 points against that release.
+
 ## Maintenance Baseline
 
 - `authoritative_reference`: exact-version AUR `open-webui` recipe at commit
@@ -409,6 +449,8 @@ turned off:
     tailnet route, with the host's `127.0.0.1` and `::1` denied to it and log
     uploads off unless the operator opts in; its login and serve
     configuration stay runtime state.
+  - Page Qdrant scroll reads under the packaged strict-mode query limit
+    ([Qdrant Scroll Paging](#qdrant-scroll-paging)).
 - `update_notes`:
   - Recompute the complete private closure from the immutable release lock and
     selected optional runtime backends; a digest without the full lock is not a
