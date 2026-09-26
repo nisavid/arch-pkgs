@@ -343,12 +343,32 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
         )
         self.assertIn("CREDENTIALS_DIRECTORY", wrapper)
         self.assertIn("exit 78", wrapper)
-        self.assertNotIn("qdrant-admin", service.casefold())
-        self.assertNotIn("lemonade-admin", service.casefold())
-        self.assertNotIn("qdrant-admin", wrapper.casefold())
-        self.assertNotIn("lemonade-admin", wrapper.casefold())
-        # Open WebUI's Lemonade connection uses no credential in this refresh.
-        self.assertNotIn("lemonade-inference-api-key", service)
+        # The service loads exactly these credentials: no administrative
+        # identity, and Open WebUI stores no secret for its model connections.
+        self.assertEqual(
+            re.findall(r"(?m)^LoadCredential(?:Encrypted)?=([^:]+):", service),
+            [
+                "webui-secret-key",
+                "oauth-client-info-encryption-key",
+                "oauth-session-token-encryption-key",
+                "valkey-url",
+                "qdrant-runtime-api-key",
+                "session-epoch",
+            ],
+        )
+        self.assertEqual(
+            re.findall(r"(?m)^\s*load_credential (\S+) ", wrapper),
+            [
+                "webui-secret-key",
+                "oauth-client-info-encryption-key",
+                "oauth-session-token-encryption-key",
+                "valkey-url",
+                "qdrant-runtime-api-key",
+                "admin-email",
+                "admin-name",
+                "admin-bootstrap-password",
+            ],
+        )
         self.assertNotIn("RAG_OPENAI_API_KEY", wrapper)
         self.assertNotIn("RAG_EXTERNAL_RERANKER_API_KEY", wrapper)
         self.assertIn("IPAddressDeny=any", service)

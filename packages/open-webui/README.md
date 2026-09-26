@@ -45,10 +45,9 @@ remains in
   win over `open-webui.env`, so a later edit to the file or a package update
   does not change an existing instance. Change them in the admin UI, or start
   from a fresh data directory.
-- Open WebUI's Lemonade connection uses no credential in this refresh (owner
-  decision). The package still keeps the embedding and reranking API-key
-  settings out of persistent configuration and out of the document settings
-  form.
+- Open WebUI stores no secret for its model connections. The package keeps the
+  embedding and reranking API-key settings out of persistent configuration and
+  out of the document settings form.
 - Qualification runs at service start and when an administrator saves the
   document settings. After any runtime reranker fault, document RAG stays
   closed (the authenticated `/api/v1/retrieval/health` probe returns 503)
@@ -314,8 +313,8 @@ sudo systemctl stop open-webui-tailnet.service
 In userspace-networking mode, `tailscaled` forwards tailnet TCP and UDP
 traffic on any port it does not serve to that port on the host's `127.0.0.1`,
 whether the peer used the node's IPv4 or IPv6 tailnet address. That would open
-every service that listens on the host's `127.0.0.1`, such as Valkey, Qdrant,
-and Lemonade, to the tailnet. Tailscale 1.102.2 has no setting that turns the
+every service that listens on the host's `127.0.0.1`, such as Valkey and
+Qdrant, to the tailnet. Tailscale 1.102.2 has no setting that turns the
 forward off, and `--shields-up` would also block the serve route. The unit
 therefore sets `IPAddressDeny=127.0.0.1 ::1`. The forward never dials `::1`,
 so that entry only guards against a future change. Keep the deny unchanged:
