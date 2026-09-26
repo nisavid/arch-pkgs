@@ -119,7 +119,10 @@ def _messages(request: dict[str, Any]) -> list[dict[str, Any]]:
     messages = request.get("messages")
     if not isinstance(messages, list) or not messages:
         raise StubError("messages must be a nonempty array")
-    return [item for item in messages if isinstance(item, dict)]
+    objects = [item for item in messages if isinstance(item, dict)]
+    if not objects:
+        raise StubError("messages must include a message object")
+    return objects
 
 
 def _best_sentence(candidates: str, question: str) -> str:
