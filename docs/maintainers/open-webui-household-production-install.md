@@ -22,8 +22,11 @@ at the evidence commit, the commit that adds the trial evidence and its
 records; `<root>` is the kept
 acceptance root; `<name>` is the sidecar's tailnet node name and
 `<tailnet>` the tailnet's DNS label, so `<household-origin>` is
-`https://<name>.<tailnet>.ts.net`. None of these values is committed; the
-concrete ones stay in the owner's session-local handoff variables.
+`https://<name>.<tailnet>.ts.net`; `<lemond>` is the origin of the
+household's OpenAI-compatible model server (scheme, host, and port, with no
+trailing slash), which P3.4 writes into the household profile. None of these
+values is committed; the concrete ones stay in the owner's session-local
+handoff variables.
 
 Fixed values: the chat model is the owner-pinned
 `user.Qwen3.6-35B-A3B-MTP-GGUF-UD-Q4_K_XL` (Lemonade may list its bare form,
@@ -60,7 +63,8 @@ The agent checks these read-only before the window opens:
   identities are qdrant 1.19.1-1, qdrant-web-ui 0.2.18-1, and
   qdrant-migration 1.18.3-1.
 - The Lemonade M4 receipts are cited, and Lemonade serves and has loaded the
-  packaged zembed and zerank ids and the owner-pinned chat model.
+  zembed and zerank ids that the packaged household profile example names
+  and the owner-pinned chat model.
 - The [P5.0](#p50-tailnet-prerequisites) prerequisites hold, and the owner
   has chosen `<name>`, because P3.4 writes `<household-origin>` before the
   first start.
@@ -275,7 +279,7 @@ sudo pacman -Rns hayhooks
 - HAND-BACK: `HAND-BACK: hayhooks removed`
 - Agent: `pacman -Q hayhooks` fails.
 
-## P3: credentials, Valkey, connection seed, epoch, and model
+## P3: credentials, Valkey, household profile, epoch, and model
 
 ### P3.1 Stable keys
 
@@ -367,32 +371,92 @@ and rerun all of P3.2, which writes a new password and ACL and restarts
 Valkey. For `qdrant-runtime-api-key`, do not remove it: only the Qdrant
 route mints it, so stop and ask the lead.
 
-### P3.4 Connection seed and speech settings
+### P3.4 Household profile and speech settings
 
-The packaged `open-webui.env` carries the chat connection seed from 0.11.0-5
-on: exactly `ENABLE_OLLAMA_API=false`,
-`OPENAI_API_BASE_URLS=http://127.0.0.1:13305/api/v1`, and an empty
-`OPENAI_API_KEYS`. No seed file is installed. In Open WebUI 0.11 these are
-persistent-config seeds: they apply on first start, and later edits need an
-admin re-save.
+The packaged `/etc/open-webui/open-webui.env` in 0.11.4-1 carries only
+generic, security, and RAG-gate defaults. The model connection, the models,
+the zembed prefixes, and the household feature choices live in a host-owned
+profile, `/etc/open-webui/household.env`, which `open-webui.service` reads
+after the packaged file, so its values win. The package never ships or
+overwrites the profile; it installs only the example,
+`/usr/share/open-webui/household.env.example`, where `<lemond>` stands for
+the model server's origin.
 
-Two drop-ins complete the environment. They are not part of the seed:
+The order matters. Most profile keys are persistent config: the first start
+(P4 step 3) copies them into the database, and the stored values win after
+that, so a later edit to the profile changes nothing. So create the profile
+and pass every check below first, then install the drop-ins, and only then
+start Open WebUI in P4. If the first start stored the vanilla values anyway,
+[P4's recovery](#if-the-first-start-stored-the-vanilla-values) resets them.
+
+Create the profile only if none exists, owned by root and readable by the
+`open-webui` group, then fill it in. If a profile already exists, the first
+command does nothing; check that profile the same way.
+
+```bash
+sudo test ! -e /etc/open-webui/household.env && sudo install -m 0640 -g open-webui /usr/share/open-webui/household.env.example /etc/open-webui/household.env
+sudoedit /etc/open-webui/household.env
+```
+
+In the editor, replace each `<lemond>` placeholder with the model server's
+origin, the concrete value of `<lemond>` from the owner's handoff variables.
+Change nothing else: the production re-smoke's frozen model ids and prefixes
+come from the example. Leave `WEBUI_URL` and `CORS_ALLOW_ORIGIN` commented,
+because `30-origin.conf` below sets them and a profile value would override
+the drop-in.
+
+Then check the profile:
+
+```bash
+sudo grep -nE '^[^#]*<[a-z]+>' /etc/open-webui/household.env
+sudo grep -E '^(WHISPER_MODEL|HF_HUB_OFFLINE|WEBUI_URL|CORS_ALLOW_ORIGIN)=' /etc/open-webui/household.env
+sudo stat -c '%a %U:%G %F' /etc/open-webui/household.env
+sudo -u open-webui test -r /etc/open-webui/household.env && echo readable
+sudo systemd-run --quiet --wait --pipe \
+  -p EnvironmentFile=/etc/open-webui/open-webui.env \
+  -p EnvironmentFile=/etc/open-webui/household.env \
+  /usr/bin/env | grep -E '^(ENABLE_OPENAI_API|OPENAI_API_BASE_URLS|RAG_EMBEDDING_MODEL|RAG_RERANKING_MODEL)='
+```
+
+- Both `grep` lines print nothing: no placeholder is left on an uncommented
+  line, and the profile sets none of the drop-ins' keys.
+- `stat` prints `640 root:open-webui regular file`, and the `test` line
+  prints `readable`.
+- `systemd-run` reads both files the way the unit does, but without the
+  unit's `-`, so a missing profile fails here. It prints four lines:
+  `ENABLE_OPENAI_API=true`, `OPENAI_API_BASE_URLS=` with the filled-in origin
+  followed by `/api/v1`, `RAG_EMBEDDING_MODEL=zembed-1-Q4_K_M-GGUF-Q4_K_M`,
+  and `RAG_RERANKING_MODEL=zerank-2-GGUF`.
+
+**Hazard: the profile can go missing silently.** The unit reads it as
+`EnvironmentFile=-/etc/open-webui/household.env`. The `-` makes a missing
+profile valid: Open WebUI then starts vanilla, with no model connection and
+document RAG closed. The unit's first `ExecStartPre=` step runs as the
+`open-webui` user and fails the start, with a journal message, only when the
+profile exists but is not a regular file that user can read; a missing
+profile passes it. systemd also skips a profile line it cannot parse without
+failing the start. So a missing profile, or a value lost to a parse error,
+passes the start unnoticed, and that first start stores the vanilla values in
+the database for good. The checks above, and P4 step 3's first-start checks,
+are what catch it.
+
+Two drop-ins complete the environment:
 
 - `20-speech.conf` sets only the two local Whisper settings the acceptance
   unit carried: `WHISPER_MODEL=base` and `HF_HUB_OFFLINE=1`, so a Whisper load
   failure can never fall back to the network.
 - `30-origin.conf` sets both `WEBUI_URL` and `CORS_ALLOW_ORIGIN` to the
-  tailnet origin `https://<name>.<tailnet>.ts.net`. `WEBUI_URL` is a
-  persistent-config seed: the first start copies it into the database, and
-  the stored value wins after that, so it must be in place before the first
-  start. The lasting way to change it later is Admin Panel > Settings >
-  General > WebUI URL. `ENABLE_PERSISTENT_CONFIG=false` lets the environment
-  win only while it stays set, and for every persistent setting.
-  `CORS_ALLOW_ORIGIN` is read at every start. Changing the origin later signs
-  every user out. The package README's
-  [Tailnet Route](../../packages/open-webui/README.md#tailnet-route) step 3
-  writes the same two lines to `open-webui.env`; this runbook uses the
-  drop-in instead, never both.
+  tailnet origin `https://<name>.<tailnet>.ts.net`. `WEBUI_URL` is persistent
+  config: the first start copies it into the database, and the stored value
+  wins after that, so it must be in place before the first start. The lasting
+  way to change it later is Admin Panel > Settings > General > WebUI URL.
+  `ENABLE_PERSISTENT_CONFIG=false` lets the environment win only while it
+  stays set, and for every persistent setting. `CORS_ALLOW_ORIGIN` is read at
+  every start. Changing the origin later signs every user out. The package
+  README's [Tailnet Route](../../packages/open-webui/README.md#tailnet-route)
+  step 3 sets the origin either in the household profile or in a drop-in,
+  never both; this runbook uses the drop-in, so the profile's two origin
+  lines stay commented.
 
 Install both before the first start. First confirm the installed env is the
 packaged file, byte for byte; this must print `identical`:
@@ -402,9 +466,10 @@ bsdtar -xOf /var/cache/pacman/pkg/open-webui-0.11.4-1-x86_64.pkg.tar.zst etc/ope
   | sudo cmp - /etc/open-webui/open-webui.env && echo identical
 ```
 
-Then confirm its keys: it must print the three seed lines above and nothing
-for the other four keys. An environment file overrides `Environment=`, so if
-it sets any of them, or a seed value differs, stop and ask the lead:
+Then confirm its keys. It must print only `ENABLE_OLLAMA_API=false`: the
+packaged env sets no connection URL or key, no speech setting, and no origin,
+and an environment file overrides `Environment=`. If it prints anything
+else, stop and ask the lead:
 
 ```bash
 sudo grep -E '^(ENABLE_OLLAMA_API|OPENAI_API_BASE_URLS|OPENAI_API_KEYS|WHISPER_MODEL|HF_HUB_OFFLINE|WEBUI_URL|CORS_ALLOW_ORIGIN)=' /etc/open-webui/open-webui.env
@@ -425,7 +490,7 @@ sudo systemctl daemon-reload
 ```
 
 - Rollback (before P4 only):
-  `sudo rm /etc/systemd/system/open-webui.service.d/{20-speech,30-origin}.conf && sudo systemctl daemon-reload`
+  `sudo rm /etc/open-webui/household.env /etc/systemd/system/open-webui.service.d/{20-speech,30-origin}.conf && sudo systemctl daemon-reload`
 
 ### P3.5 Session epoch
 
@@ -469,13 +534,17 @@ evidence also records.
 - Rollback (before P4 only):
   `sudo rm -r /var/lib/open-webui/cache/whisper/models/models--Systran--faster-whisper-base`
 
-- HAND-BACK: `HAND-BACK: open-webui P3 credentials, valkey, epoch ready`
+- HAND-BACK: `HAND-BACK: open-webui P3 credentials, valkey, profile, epoch ready`
 - Agent: `systemctl show open-webui.service -p DropInPaths` lists
   `20-speech.conf` and `30-origin.conf`;
   `systemctl show open-webui.service -p Environment` carries
   `WEBUI_URL=https://` and `CORS_ALLOW_ORIGIN=https://` with the chosen
-  origin, not a literal `<name>` or `<tailnet>`; and the P3.2 Valkey checks
-  pass.
+  origin, not a literal `<name>` or `<tailnet>`;
+  `systemctl show open-webui.service -p EnvironmentFiles` lists
+  `/etc/open-webui/open-webui.env` and then
+  `/etc/open-webui/household.env`, the second with `ignore_errors=yes`;
+  `stat -c '%a %U:%G %F' /etc/open-webui/household.env` prints
+  `640 root:open-webui regular file`; and the P3.2 Valkey checks pass.
 
 ## P4: closed-route commissioning
 
@@ -513,18 +582,56 @@ reach the socket.
    EOF
    ```
 
-3. First start, then the root commissioning command. The unit is
-   `Type=simple` and the first start runs the database migrations, so wait
-   for `/ready`: up to 15 minutes, stopping early if the unit fails or
+3. First start, only after every P3.4 check passed: the household profile
+   exists, keeps no placeholder, and parses to the expected values. The unit
+   is `Type=simple` and the first start runs the database migrations, so
+   wait for `/ready`: up to 15 minutes, stopping early if the unit fails or
    starts restarting. It must print `ready`:
 
    ```bash
    sudo systemctl daemon-reload
+   t=$(date '+%F %T')
    sudo systemctl start open-webui.service
    sudo timeout 900 sh -c 'until curl -sf --unix-socket /run/open-webui/open-webui.sock http://localhost/ready >/dev/null; do systemctl -q is-failed open-webui.service && exit 1; [ "$(systemctl show -P SubState open-webui.service)" = auto-restart ] && exit 1; sleep 2; done' && echo ready
    ```
 
-   Only after `ready`, commission the admin:
+   Then confirm the start passed the profile guard, and that the first start
+   stored the profile's values, not the vanilla ones:
+
+   ```bash
+   systemctl show open-webui.service -p ActiveState -p Result
+   sudo journalctl -u open-webui.service --since "$t" -o cat | grep -cF 'exists but is not a file this service can read'
+   sudo journalctl -u open-webui.service --since "$t" -o cat | grep -F 'Started open-webui.service'
+   sudo python3 -c 'import sqlite3, sys; k = sys.argv[2:]; q = "SELECT key, value FROM config WHERE key IN (%s) ORDER BY key" % ",".join("?" * len(k)); [print(*r) for r in sqlite3.connect("file:%s?mode=ro" % sys.argv[1], uri=True).execute(q, k)]' \
+     /var/lib/open-webui/data/webui.db openai.enable openai.api_base_urls rag.openai.api_base_url rag.embedding_model rag.reranking_model rag.external_reranker_url
+   ```
+
+   - `systemctl show` prints `ActiveState=active` and `Result=success`.
+   - The guard count prints `0`, and the next line prints the unit's start
+     line, `Started open-webui.service - Open WebUI self-hosted AI interface.`
+     If the guard failed instead, `systemctl start` reported a failed job,
+     the wait stopped early, and the count is `1`: nothing was stored, so
+     fix the profile's owner, mode, or type with the P3.4 checks and start
+     again.
+   - The database check prints these six lines, with the profile's origin in
+     place of `<lemond>`:
+
+     ```text
+     openai.api_base_urls ["<lemond>/api/v1"]
+     openai.enable true
+     rag.embedding_model "zembed-1-Q4_K_M-GGUF-Q4_K_M"
+     rag.external_reranker_url "<lemond>/api/v1/rerank"
+     rag.openai.api_base_url "<lemond>/api/v1"
+     rag.reranking_model "zerank-2-GGUF"
+     ```
+
+     `openai.enable false`, an `api.openai.com` URL, a
+     `sentence-transformers` embedding model, or an empty reranking model
+     means the first start ran without the profile. Stop and follow
+     [the recovery](#if-the-first-start-stored-the-vanilla-values) before
+     commissioning.
+
+   Only after these, commission the admin:
 
    ```bash
    sudo systemd-run --pipe --wait --collect \
@@ -543,11 +650,12 @@ reach the socket.
      -p LoadCredentialEncrypted=admin-email:/etc/credstore.encrypted/open-webui.admin-email \
      -p LoadCredentialEncrypted=admin-final-password:/etc/credstore.encrypted/open-webui.admin-final-password \
      /usr/bin/python3 -B <kit-checkout>/tools/open_webui_household_scenarios.py configure \
-       --socket /run/open-webui/open-webui.sock
+       --socket /run/open-webui/open-webui.sock --lemond-url <lemond>
    ```
 
-   `--chat-model` defaults to the owner-pinned id; the helper sets whichever
-   form Open WebUI lists as the default model.
+   `--lemond-url` is the origin the profile names: the helper rewrites the
+   chat connection to it. `--chat-model` defaults to the owner-pinned id; the
+   helper sets whichever form Open WebUI lists as the default model.
 
 5. Remove the bootstrap inputs and restart normally:
 
@@ -568,6 +676,44 @@ reach the socket.
 - Agent: `systemctl show open-webui.service -p ActiveState,NRestarts,Result`
   is active with no restarts; `DropInPaths` no longer lists
   `10-bootstrap.conf`.
+
+### If the first start stored the vanilla values
+
+A profile edit no longer reaches values the database already holds. First
+fix the profile until every P3.4 check passes, then reset the stored values
+one of two ways.
+
+**Fresh data directory.** Use it while the install holds no household data,
+before P5. It discards the admin account and everything else in the
+database:
+
+```bash
+sudo systemctl stop open-webui.service
+sudo mv -T /var/lib/open-webui/data "/var/lib/open-webui/data.vanilla-$(date -u +%Y%m%dT%H%M%SZ)"
+sudo systemd-tmpfiles --create /usr/lib/tmpfiles.d/open-webui.conf
+```
+
+The moved directory holds only the vanilla first start; remove it once P4
+passes. Then repeat P4 from step 3, with its checks, or from step 1 if step 5
+already removed the bootstrap inputs.
+
+**Admin API.** Use it once an admin exists, when the database must be kept.
+As the admin, over the socket, read each endpoint below, change only the
+listed fields to the profile's values, and post the whole body back. The
+Admin Panel's settings pages save through these same endpoints. A `;`-list in
+the profile is a JSON array, `true` and `false` are JSON booleans, and sizes
+are numbers.
+
+| Profile keys | Read | Write |
+| --- | --- | --- |
+| `ENABLE_OPENAI_API`, `OPENAI_API_BASE_URLS`, `OPENAI_API_KEYS` | `GET /openai/config` | `POST /openai/config/update`; step 4's `configure` helper writes exactly these, from `--lemond-url` |
+| `RAG_EMBEDDING_ENGINE`, `RAG_EMBEDDING_MODEL`, `RAG_EMBEDDING_BATCH_SIZE`, `RAG_EMBEDDING_CONCURRENT_REQUESTS`, and `RAG_OPENAI_API_BASE_URL` as `openai_config.url` | `GET /api/v1/retrieval/embedding` | `POST /api/v1/retrieval/embedding/update` |
+| `RAG_RERANKING_MODEL`, `RAG_EXTERNAL_RERANKER_URL`, `RAG_RERANKING_BATCH_SIZE` | `GET /api/v1/retrieval/config` | `POST /api/v1/retrieval/config/update` |
+| `ENABLE_CALENDAR` | `GET /api/v1/auths/admin/config` | `POST /api/v1/auths/admin/config` |
+| `ENABLE_EVALUATION_ARENA_MODELS` | `GET /api/v1/evaluations/config` | `POST /api/v1/evaluations/config` |
+| `ENABLE_RETRIEVAL_QUERY_GENERATION` | `GET /api/v1/tasks/config` | `POST /api/v1/tasks/config/update` |
+
+Then rerun step 3's database check; it must print the six lines shown there.
 
 ## P5: open the tailnet route
 
@@ -604,8 +750,9 @@ which would strip the host's user identity.
   `open-webui-tailnet.service` clears the stall (see the README's
   [Denying `127.0.0.1` and `::1`](../../packages/open-webui/README.md#denying-127001-and-1)).
 - MagicDNS and HTTPS certificates are enabled for the tailnet.
-- The owner has chosen the node name `<name>` before P3, because P3.4 seeds
-  `WEBUI_URL` from it. Record the choice on
+- The owner has chosen the node name `<name>` before P3, because P3.4's
+  origin drop-in sets `WEBUI_URL` from it before the first start. Record the
+  choice on
   [Deploy the accepted Open WebUI household stack](https://github.com/nisavid/arch-pkgs/issues/59)
   generically; the concrete name is never committed.
 
@@ -831,8 +978,9 @@ Then, signed in as the admin:
 2. Reranker down: in Admin Settings, Documents, set the external reranker URL
    to an unused loopback URL and save. Ordinary chat returns 200; a
    file-attached chat and retrieval return 503 with no citation.
-3. Restore the packaged reranker URL and save. Retrieval health returns 200,
-   and a cited answer carries a finite score.
+3. Restore the household profile's reranker URL, `<lemond>/api/v1/rerank`,
+   and save. Retrieval health returns 200, and a cited answer carries a
+   finite score.
 
 - HAND-BACK: `HAND-BACK: open-webui verify PASSED on 0.11.4-1`
 
@@ -847,7 +995,11 @@ Unprivileged, after P7:
   shows the packaged user and address policy, no restarts, and no drop-ins
   beyond the package's own, `20-speech.conf`, and `30-origin.conf`. With the
   packaged unit unmodified, every property that the acceptance A-ID2 table
-  records as dropped or not enforced is in force here;
+  records as dropped or not enforced is in force here, the household-profile
+  read guard included;
+- `systemctl show open-webui.service -p EnvironmentFiles` lists
+  `/etc/open-webui/open-webui.env` and then `/etc/open-webui/household.env`,
+  the second with `ignore_errors=yes`;
 - `ss -ltnH 'sport = :8080'` prints nothing, and no Open WebUI TCP listener;
 - HTTPS 200 and WebSocket 101 at `<household-origin>`;
 - the re-smoke set against production as the P5.4 smoke account, per the
