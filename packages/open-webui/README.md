@@ -54,6 +54,12 @@ remains in
   closed (the authenticated `/api/v1/retrieval/health` probe returns 503)
   until one of those requalifies it; once the provider is healthy again,
   restart `open-webui.service`.
+- While the gate is closed, a chat with any attachment returns that 503, and
+  the builtin `query_*_files`, `grep_*_files`, `view_file`, and
+  `view_knowledge_file` tools return its message as a tool error. Once it is
+  qualified, explicitly requested whole documents pass without reranking: text,
+  note, chat, and URL attachments, full-context files beside searched ones, and
+  those tools. A chat whose attachments are all full-context stays refused.
 - When hybrid search fails for every collection with any other error, such as
   a failed embedding or Qdrant search, the request fails with the same 503
   instead of falling back to a vector search that skips the reranker. The gate

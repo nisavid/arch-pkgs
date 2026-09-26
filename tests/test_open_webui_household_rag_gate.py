@@ -441,11 +441,17 @@ class OpenWebUIHouseholdRAGGateTests(unittest.TestCase):
             self.assertEqual(applied.returncode, 0, applied.stderr)
 
             parsed = ast.parse(builtin_path.read_text(encoding="utf-8"))
-            function_nodes = [
+            function_nodes: list[ast.stmt] = [
                 node
                 for node in parsed.body
-                if isinstance(node, ast.AsyncFunctionDef)
-                and node.name in {"query_chat_files", "query_knowledge_files"}
+                if isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef))
+                and node.name
+                in {
+                    "query_chat_files",
+                    "query_knowledge_files",
+                    "_rag_unavailable_tool_error",
+                    "_rag_closed_tool_error",
+                }
             ]
             namespace = {
                 # 0.11.4 serializes through JSONCodec, which is stdlib json
@@ -456,8 +462,9 @@ class OpenWebUIHouseholdRAGGateTests(unittest.TestCase):
                 "RAG_UNAVAILABLE_DETAIL": self.gate.RAG_UNAVAILABLE_DETAIL,
                 "RAGUnavailableError": self.gate.RAGUnavailableError,
                 "Request": object,
+                "require_required_reranker": self.gate.require_required_reranker,
             }
-            exec(  # noqa: S102 - executes two extracted functions from the exact bound source
+            exec(  # noqa: S102 - executes extracted functions from the exact bound source
                 compile(
                     ast.fix_missing_locations(
                         ast.Module(body=function_nodes, type_ignores=[])
@@ -468,7 +475,12 @@ class OpenWebUIHouseholdRAGGateTests(unittest.TestCase):
                 namespace,
             )
 
-            request = SimpleNamespace()
+            # A qualified gate lets both tools reach retrieval, which then fails.
+            self.gate.configure_required_reranker(True)
+            self.gate.qualify_required_reranker([0.91, 0.08])
+            request = SimpleNamespace(
+                app=SimpleNamespace(state=SimpleNamespace(RERANKING_FUNCTION=object()))
+            )
             user = {"id": "fixture-user", "role": "user"}
             expected = {
                 "error": self.gate.RAG_UNAVAILABLE_DETAIL,
@@ -1023,6 +1035,144 @@ class OpenWebUIHouseholdRAGGateTests(unittest.TestCase):
             query_collection.await_args_list[0].kwargs["collection_names"],
             {"file-searched-file"},
         )
+
+    def test_builtin_knowledge_tools_refuse_while_closed_and_read_when_qualified(
+        self,
+    ):
+        # Native function calling stays on. While the gate is closed, every
+        # builtin tool that returns file, knowledge, or attached-note content
+        # answers with the gate's tool error before reading anything. A
+        # qualified gate allows these explicit whole-document reads.
+        knowledge_text = "The brass key opens the seed cabinet."
+        note_text = "Attached note: the seed cabinet is in the shed."
+        stored_file = SimpleNamespace(
+            id="file-1",
+            filename="handbook.md",
+            user_id="fixture-user",
+            data={"content": knowledge_text},
+            created_at=1,
+            updated_at=1,
+        )
+        stored_note = SimpleNamespace(
+            id="note-1",
+            title="Shed",
+            user_id="fixture-user",
+            data={"content": {"md": note_text}},
+        )
+        json_codec = __import__("json")
+        files = SimpleNamespace(get_file_by_id=mock.AsyncMock(return_value=stored_file))
+        notes = SimpleNamespace(get_note_by_id=mock.AsyncMock(return_value=stored_note))
+        knowledges = SimpleNamespace(
+            get_knowledges_by_file_id=mock.AsyncMock(return_value=[])
+        )
+        chat_files = mock.AsyncMock(
+            return_value=[({"type": "file", "id": "file-1"}, stored_file)]
+        )
+        attributes = {
+            "open_webui": {},
+            "open_webui.models": {},
+            "open_webui.models.access_grants": {"AccessGrants": object()},
+            "open_webui.models.files": {"Files": files},
+            "open_webui.models.knowledge": {"Knowledges": knowledges},
+            "open_webui.models.notes": {"Notes": notes},
+            "open_webui.retrieval": {},
+            "open_webui.retrieval.external": {
+                "retrieve_external_knowledge": mock.AsyncMock()
+            },
+            "open_webui.retrieval.utils": {"query_collection": mock.AsyncMock()},
+        }
+        modules = {}
+        for name, values in attributes.items():
+            modules[name] = types.ModuleType(name)
+            vars(modules[name]).update(values)
+
+        def grep(files_to_search, _pattern, _case_insensitive, _count_only):
+            return json_codec.dumps(
+                [
+                    {"file_id": file.id, "line": file.data["content"]}
+                    for file in files_to_search
+                ]
+            )
+
+        namespace = {
+            "Groups": SimpleNamespace(
+                get_groups_by_member_id=mock.AsyncMock(return_value=[])
+            ),
+            "JSONCodec": json_codec,
+            "Optional": __import__("typing").Optional,
+            "RAG_UNAVAILABLE_DETAIL": self.gate.RAG_UNAVAILABLE_DETAIL,
+            "RAGUnavailableError": self.gate.RAGUnavailableError,
+            "Request": object,
+            "UserModel": lambda **fields: SimpleNamespace(**fields),
+            "VIEW_FILE_DEFAULT_MAX_CHARS": 10_000,
+            "VIEW_FILE_MAX_CHARS": 100_000,
+            "_get_accessible_chat_files": chat_files,
+            "_grep_file_models": grep,
+            "_has_read_access_to_file": mock.AsyncMock(return_value=True),
+            "asyncio": asyncio,
+            "log": mock.Mock(),
+            "require_required_reranker": self.gate.require_required_reranker,
+        }
+        tools = {
+            "grep_chat_files": {
+                "pattern": "brass",
+                "__files__": [{"type": "file", "id": "file-1"}],
+            },
+            "grep_knowledge_files": {"pattern": "brass", "file_id": "file-1"},
+            "view_file": {"file_id": "file-1"},
+            "view_knowledge_file": {"file_id": "file-1"},
+            "query_knowledge_files": {
+                "query": "seed cabinet",
+                "__model_knowledge__": [{"type": "note", "id": "note-1"}],
+            },
+        }
+        defined = self.exec_patched_definitions(
+            "backend/open_webui/tools/builtin.py",
+            set(tools) | {"_rag_unavailable_tool_error", "_rag_closed_tool_error"},
+            namespace,
+        )
+        self.assertLessEqual(set(tools), defined)
+        request = SimpleNamespace(
+            app=SimpleNamespace(
+                state=SimpleNamespace(
+                    RERANKING_FUNCTION=object(), EMBEDDING_FUNCTION=object()
+                )
+            )
+        )
+        user = {"id": "fixture-user", "role": "user"}
+        refusal = {
+            "error": self.gate.RAG_UNAVAILABLE_DETAIL,
+            "status": HTTPStatus.SERVICE_UNAVAILABLE,
+        }
+        readers = (
+            files.get_file_by_id,
+            notes.get_note_by_id,
+            knowledges.get_knowledges_by_file_id,
+            chat_files,
+        )
+
+        def call(name):
+            with mock.patch.dict(sys.modules, modules):
+                return asyncio.run(
+                    namespace[name](__request__=request, __user__=user, **tools[name])
+                )
+
+        self.gate.configure_required_reranker(True)
+        for name in tools:
+            with self.subTest(gate="closed", tool=name):
+                result = call(name)
+                self.assertEqual(json_codec.loads(result), refusal)
+                self.assertNotIn("seed cabinet", result)
+        for reader in readers:
+            reader.assert_not_awaited()
+
+        self.gate.qualify_required_reranker([0.91, 0.08])
+        for name in tools:
+            with self.subTest(gate="qualified", tool=name):
+                expected = (
+                    note_text if name == "query_knowledge_files" else knowledge_text
+                )
+                self.assertIn(expected, call(name))
 
     def test_patch_applies_to_retained_exact_open_webui_source_and_compiles(self):
         with tempfile.TemporaryDirectory() as temp_dir:
