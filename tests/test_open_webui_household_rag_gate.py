@@ -29,7 +29,6 @@ BUILTIN_GATE_HELPERS = frozenset(
     {
         "_knowledge_note_ids",
         "_rag_closed",
-        "_rag_closed_tool_error",
         "_rag_unavailable_tool_error",
     }
 )
