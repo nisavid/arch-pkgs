@@ -75,8 +75,10 @@ remains in
   and `search_notes` omits those notes. Once it is qualified, explicitly
   requested content is allowed whole, including full-context items and `text`,
   `note`, `chat`, and `url` attachments, and search results are reranked. The
-  global full-context and embedding-and-retrieval bypass modes stay refused
-  even when qualified.
+  global full-context and embedding-and-retrieval bypass modes, and hybrid
+  search turned off, stay refused even when qualified: a chat with any
+  attachment is refused with the same 503 detail under any of them, whether
+  the model's file context capability is on or off.
 - When hybrid search fails for every collection with any other error, such as
   a failed embedding or Qdrant search, the request fails with the same 503
   detail instead of falling back to a vector search that skips the reranker.

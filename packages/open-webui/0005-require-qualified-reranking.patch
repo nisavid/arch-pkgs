@@ -6,7 +6,7 @@
 # Gate scope: knowledge-base content, anything attached to a model or folder as knowledge, and chat attachments of any kind. For notes, the gate covers notes attached as knowledge to the chat's model or the chat's folder.
 # Personal data outside the gate means only the notes, chats, and memories tools and features: a note attached as knowledge only to a different model or folder, reached from another chat, goes through those personal-notes features and stays outside the gate.
 # Gate closed: a chat with any attachment returns the 503 detail, even on a model whose file context capability is off. The builtin query_*_files, grep_*_files, view_file, and view_knowledge_file tools, and view_note for a note attached as knowledge to the chat's model or folder, return it as a tool error before reading anything; search_notes omits those notes.
-# Gate qualified: explicitly requested content is allowed whole, including full-context items and text, note, chat, and url attachments; search results are reranked. The global full-context and embedding-and-retrieval bypass modes stay refused even when qualified.
+# Gate qualified: explicitly requested content is allowed whole, including full-context items and text, note, chat, and url attachments; search results are reranked. The global full-context and embedding-and-retrieval bypass modes, and hybrid search turned off, stay refused even when qualified: a chat with any attachment returns the 503 detail under any of them, whether the model's file context capability is on or off.
 # Hybrid-search errors: when hybrid search raises anything but RAGUnavailableError, the request fails with the gate's 503 instead of upstream's unreranked vector-search fallback. The gate stays qualified, so the health probe stays 200 and the next request retries.
 # Failed collection prefetch: when hybrid search's prefetch get() raises, the request fails with the same 503 instead of skipping that collection as empty. A collection that get() reports missing is still skipped, and the gate stays qualified (#98).
 # Empty candidates: RerankCompressor keeps 0.11.4's early return of [] without calling the reranker, and the gate stays qualified. Nothing unreranked reaches chat, and closing the gate on an empty knowledge base would only cause an outage.
@@ -299,7 +299,7 @@ index 055f750..dff18c1 100644
 +            final_results.append(doc)
 +        return final_results
 diff --git a/backend/open_webui/utils/middleware.py b/backend/open_webui/utils/middleware.py
-index 8234604..81188d4 100644
+index 8234604..886068c 100644
 --- a/backend/open_webui/utils/middleware.py
 +++ b/backend/open_webui/utils/middleware.py
 @@ -54,6 +54,10 @@ from open_webui.models.notes import Notes
@@ -381,7 +381,7 @@ index 8234604..81188d4 100644
          except Exception as e:
              log.exception(e)
  
-@@ -3210,8 +3226,17 @@ async def process_chat_payload(request, form_data, user, metadata, model):
+@@ -3210,8 +3226,28 @@ async def process_chat_payload(request, form_data, user, metadata, model):
          try:
              form_data, flags = await chat_completion_files_handler(request, form_data, extra_params, user)
              sources.extend(flags.get('sources', []))
@@ -391,11 +391,22 @@ index 8234604..81188d4 100644
              log.exception(e)
 +    else:
 +        # With file context off, attachments reach the model only through
-+        # tools, so refuse the whole chat here while the gate is closed.
-+        require_file_rag_ready(
-+            [item for item in (metadata.get('files') or []) if item.get('type') != 'filesystem'],
-+            request.app.state.RERANKING_FUNCTION,
-+        )
++        # tools, so refuse the whole chat here while the gate is closed or a
++        # global no-rerank mode is set, as the files handler does.
++        attached_files = [item for item in (metadata.get('files') or []) if item.get('type') != 'filesystem']
++        if attached_files:
++            rag_config = await Config.get_many(
++                'rag.enable_hybrid_search',
++                'rag.full_context',
++                'rag.bypass_embedding_and_retrieval',
++            )
++            require_file_rag_ready(
++                attached_files,
++                request.app.state.RERANKING_FUNCTION,
++                full_context=rag_config.get('rag.full_context') is True,
++                hybrid_search=rag_config.get('rag.enable_hybrid_search') is True,
++                bypass_embedding_and_retrieval=(rag_config.get('rag.bypass_embedding_and_retrieval') is True),
++            )
  
      # Save the pre-RAG message state so the native tool call loop can
      # restore to the true original (before file-source injection) rather

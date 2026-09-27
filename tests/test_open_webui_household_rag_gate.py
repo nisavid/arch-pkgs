@@ -1510,9 +1510,11 @@ class OpenWebUIHouseholdRAGGateTests(unittest.TestCase):
         # A model whose file_context capability is off skips the files
         # handler, and its chat attachments reach the model only through
         # tools. process_chat_payload still refuses such a chat while the gate
-        # is closed. A qualified gate, a chat without attachments, and a chat
-        # with only filesystem items pass; file context on still goes through
-        # the files handler.
+        # is closed, and, as the files handler does, while a global
+        # full-context, non-hybrid, or bypass mode is set even when the gate
+        # is qualified. Otherwise a qualified gate passes; a chat without
+        # attachments or with only filesystem items always passes; file
+        # context on still goes through the files handler.
         relative = "backend/open_webui/utils/middleware.py"
         with tempfile.TemporaryDirectory() as temp_dir:
             source_root = Path(temp_dir)
@@ -1550,8 +1552,22 @@ class OpenWebUIHouseholdRAGGateTests(unittest.TestCase):
             "    return form_data\n"
         ).body[0]
         runner.body.insert(0, statement)
+
+        class FixtureConfig:
+            # The packaged retrieval modes.
+            values: ClassVar[dict] = {
+                "rag.enable_hybrid_search": True,
+                "rag.full_context": False,
+                "rag.bypass_embedding_and_retrieval": False,
+            }
+
+            @classmethod
+            async def get_many(cls, *keys):
+                return {key: cls.values.get(key) for key in keys}
+
         files_handler = mock.AsyncMock(return_value=({}, {"sources": []}))
         namespace = {
+            "Config": FixtureConfig,
             "RAGUnavailableError": self.gate.RAGUnavailableError,
             "chat_completion_files_handler": files_handler,
             "log": mock.Mock(),
@@ -1608,6 +1624,23 @@ class OpenWebUIHouseholdRAGGateTests(unittest.TestCase):
         for files in attached + unattached:
             with self.subTest(gate="qualified", files=files):
                 chat(files)
+
+        # Qualification does not make a global no-rerank mode safe.
+        for mode, value in (
+            ("rag.full_context", True),
+            ("rag.enable_hybrid_search", False),
+            ("rag.bypass_embedding_and_retrieval", True),
+        ):
+            with mock.patch.dict(FixtureConfig.values, {mode: value}):
+                for files in attached:
+                    with (
+                        self.subTest(gate="qualified", mode=mode, files=files),
+                        self.assertRaises(self.gate.RAGUnavailableError),
+                    ):
+                        chat(files)
+                for files in unattached:
+                    with self.subTest(gate="qualified", mode=mode, files=files):
+                        chat(files)
         files_handler.assert_not_awaited()
 
         # File context on hands the chat to the files handler, whose gate
