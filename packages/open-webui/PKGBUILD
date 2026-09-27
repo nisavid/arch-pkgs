@@ -2,7 +2,7 @@
 
 pkgname=open-webui
 pkgver=0.11.4
-pkgrel=1
+pkgrel=2
 pkgdesc="Self-hosted AI web interface for Ollama and OpenAI-compatible APIs"
 arch=('x86_64')
 url="https://github.com/open-webui/open-webui"

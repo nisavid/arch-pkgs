@@ -259,7 +259,7 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
             text=True,
         ).stdout
 
-        self.assertIn("pkgrel=1", recipe)
+        self.assertIn("pkgrel=2", recipe)
         for asset, digest in (
             (
                 "open-webui-npm-offline-closure-0.11.4.tar.zst",
