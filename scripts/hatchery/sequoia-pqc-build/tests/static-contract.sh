@@ -1,0 +1,38 @@
+#!/usr/bin/bash
+set -Eeuo pipefail
+
+tests_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+root=${tests_dir%/*}
+invoke="$root/procedure/invoke-attempt.sh"
+body="$root/procedure/attempt-body.sh"
+cleanup="$root/procedure/final-cleanup.sh"
+post_build="$root/procedure/post-build-verify.sh"
+assemble="$root/procedure/assemble-evidence.sh"
+freeze="$root/procedure/freeze-boundary.sh"
+frozen_verify="$root/procedure/verify-frozen-boundary.sh"
+runtime_closure="$root/procedure/runtime-closure.sh"
+
+! grep -Fq -- '--bind "$host_root" /work' "$invoke"
+grep -Fq -- '--ro-bind "$host_root/procedure" /work/procedure' "$invoke"
+grep -Fq -- '--ro-bind "$host_root/recipes/$package" /work/recipe' "$invoke"
+grep -Fq -- '--ro-bind "$host_root/inputs/rustup" /work/inputs/rustup' "$invoke"
+! grep -Eq 'receipts|ACCEPTED|output' "$body"
+! grep -Fq 'inputs/rustup" \' "$cleanup"
+grep -Fq 'CARGO_NET_OFFLINE=true' "$body"
+grep -Fq 'capture-source-view.sh' "$invoke"
+grep -Fq 'verify-source-tag.sh' "$post_build"
+! grep -Fq 'git -C "$work/srcdest/$repo" verify-tag' "$post_build"
+grep -Fq 'final-public-cache-cleanup.sha256' "$assemble"
+grep -Fq 'deployment_gate=open' "$assemble"
+grep -Fq 'procedure recipes tests inputs' "$freeze"
+grep -Fq 'verify-frozen-boundary.sh' "$invoke"
+grep -Fq 'canonical_path' "$frozen_verify"
+grep -Fq '/controller/runtime-closure.sh' "$post_build"
+if grep -Fq 'sha256sum "$object"' "$post_build"; then exit 1; fi
+grep -Fq '3>&-' "$runtime_closure"
+grep -Fq 'pkgrel=4' "$root/recipes/sequoia-sq-pqc/PKGBUILD"
+grep -Fq 'pkgrel=4' "$root/recipes/sequoia-sqv-pqc/PKGBUILD"
+grep -Fq 'local asset_home="$srcdir/asset-home"' "$root/recipes/sequoia-sq-pqc/PKGBUILD"
+grep -Fq 'historical 1.4.0-3' "$root/recipes/sequoia-sq-pqc/README.md"
+grep -Fq 'historical 1.5.0-3' "$root/recipes/sequoia-sqv-pqc/README.md"
+printf 'static procedure contract: PASS\n'
