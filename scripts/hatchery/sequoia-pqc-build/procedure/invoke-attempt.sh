@@ -34,14 +34,14 @@ esac
 [[ $attempt_id =~ ^[0-9]{3}$ ]] || { printf 'attempt id must be three digits\n' >&2; exit 2; }
 if [[ $package != synthetic-procedure-test ]] && {
    [[ $test_mode != 0 ]] ||
-   [[ -n ${HATCHERY_TEST_PHASE_RUNNER-}${HATCHERY_TEST_FAIL_PHASE-}${HATCHERY_TEST_FAIL_EXIT-}${HATCHERY_TEST_USE_REAL_BOUNDARY-} ]];
+   [[ -n ${HATCHERY_TEST_PHASE_RUNNER-}${HATCHERY_TEST_FAIL_PHASE-}${HATCHERY_TEST_FAIL_EXIT-}${HATCHERY_TEST_USE_REAL_BOUNDARY-}${HATCHERY_TEST_INITIALIZE_FAIL_STEP-}${HATCHERY_TEST_INITIALIZE_SIGNAL_STEP-}${HATCHERY_TEST_INITIALIZE_INTERRUPT_STEP-} ]];
 }; then
   printf 'test hooks are forbidden for real package attempts\n' >&2
   exit 2
 fi
 
 require_prior_lifecycle_bindings() {
-  local prior_attempt launcher canonical prior_sha
+  local prior_attempt canonical
   local -a prior_attempts=()
   shopt -s nullglob
   prior_attempts=("$host_root"/attempts/*-attempt-*)
@@ -50,14 +50,8 @@ require_prior_lifecycle_bindings() {
     [[ -d $prior_attempt && ! -L $prior_attempt ]]
     canonical=$(realpath -e -- "$prior_attempt")
     [[ $canonical == "$prior_attempt" && $canonical == "$host_root/attempts/"* ]]
-    launcher="$prior_attempt/receipts/outer-launcher.txt"
-    [[ -f $launcher && ! -L $launcher ]]
-    [[ $(realpath -e -- "$launcher") == "$launcher" ]]
-    prior_sha=$(awk -F= '
-      $1 == "lifecycle_admission_sha256" { count++; value=$2 }
-      END { if (count != 1) exit 1; print value }
-    ' "$launcher")
-    [[ $prior_sha == "$lifecycle_admission_sha256" ]] || {
+    /usr/bin/bash "$host_root/procedure/initialize-attempt.sh" verify \
+      "$prior_attempt" "$lifecycle_admission_sha256" || {
       printf 'lifecycle admission changed after an earlier attempt: %s\n' "$prior_attempt" >&2
       return 1
     }
@@ -100,24 +94,12 @@ output_archive="$output_dir/$archive_name"
 output_temp="$output_dir/.${archive_name}.${attempt_id}.partial"
 output_created=false
 finished=false
+initializing=true
 
-[[ ! -e $attempt ]] || { printf 'attempt path already exists: %s\n' "$attempt" >&2; exit 2; }
 [[ ! -e $output_archive && ! -e $output_temp ]] || {
   printf 'accepted or partial output already exists for this package release\n' >&2
   exit 2
 }
-mkdir -p "$receipts" "$logs" "$attempt/extracted" "$attempt/procedure-snapshot" "$output_dir"
-for name in home cargo srcdest builddir pkgdest logdest tmp runtime-home gnupg-runtime xdg-cache xdg-config xdg-data; do
-  mkdir -p "$work/$name"
-done
-chmod 700 "$work/home" "$work/tmp" "$work/runtime-home"
-
-printf 'schema=arch-pq-outer-launcher-v2\npackage=%s\nattempt=%s\nstarted_utc=%s\naccepted=false\n' \
-  "$package" "$attempt_id" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$launcher_receipt"
-if [[ -n $lifecycle_admission_sha256 ]]; then
-  printf 'lifecycle_admission_sha256=%s\n' "$lifecycle_admission_sha256" >>"$launcher_receipt"
-fi
-
 cleanup_secrets() {
   local name status=0
   for name in home tmp runtime-home gnupg-runtime builddir xdg-cache xdg-config xdg-data; do
@@ -132,7 +114,9 @@ cleanup_secrets() {
 finish() {
   local status=$?
   trap - EXIT
-  if [[ $finished != true ]]; then
+  if [[ $initializing == true ]]; then
+    exit "$status"
+  elif [[ $finished != true ]]; then
     cleanup_secrets || status=90
     rm -f -- "$output_temp" "$receipts/ACCEPTED"
     if [[ $output_created == true ]]; then rm -f -- "$output_archive"; fi
@@ -142,6 +126,10 @@ finish() {
   exit "$status"
 }
 trap finish EXIT
+
+/usr/bin/bash "$host_root/procedure/initialize-attempt.sh" create \
+  "$package" "$attempt_id" "$lifecycle_admission_sha256"
+initializing=false
 
 verify_frozen_inputs() {
   [[ $test_mode == 1 ]] && return 0

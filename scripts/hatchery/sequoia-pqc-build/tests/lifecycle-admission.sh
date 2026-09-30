@@ -51,8 +51,8 @@ make_run() {
     printf 'accepted archive for %s\n' "$package" >"$archive"
     printf 'executable for %s\n' "$package" >"$attempt/extracted/usr/bin/$executable"
     touch "$attempt/receipts/ACCEPTED"
-    printf 'schema=arch-pq-outer-launcher-v2\naccepted=false\nouter_exit=0\naccepted=true\nlifecycle_admission_sha256=%s\n' \
-      "$lifecycle_sha" >"$attempt/receipts/outer-launcher.txt"
+    printf 'schema=arch-pq-outer-launcher-v3\npackage=%s\nattempt=001\nstarted_utc=2026-09-30T00:00:00Z\ninitialization_claim_sha256=%064d\naccepted=false\nouter_exit=0\naccepted=true\nlifecycle_admission_sha256=%s\n' \
+      "$package" 0 "$lifecycle_sha" >"$attempt/receipts/outer-launcher.txt"
     sha256sum "$archive" >"$attempt/receipts/output-archive.sha256"
   done
   /usr/bin/bash "$run/procedure/final-cleanup.sh" \

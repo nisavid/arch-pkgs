@@ -44,6 +44,24 @@ unique success fields, frozen-boundary receipt, exact digests, and complete
 closed-world chain before it creates attempt state, then records the lifecycle
 admission SHA-256 in its launcher receipt.
 
+Attempt initialization is a separate controller seam. Before it creates a
+staging tree, the controller installs failure handling. It claims the package,
+three-digit attempt ID, and lifecycle digest in
+`attempts/.initializing-<package>-attempt-<ID>/`, builds the complete attempt
+tree there, atomically publishes and validates the regular version-3 launcher
+receipt, then atomically renames the tree to its canonical
+`attempts/<package>-attempt-<ID>/` path. Canonical prior attempts must have one
+matching schema, package, attempt ID, initialization-claim digest, and lifecycle
+digest. A missing, malformed, duplicated, identity-mismatched, or
+lifecycle-mismatched field rejects the next invocation.
+
+A failed initialization remains in its hidden staging path and prevents reuse
+of that ID without entering the canonical prior-attempt set. A later unused ID
+may proceed with the same lifecycle digest. This recovery contract covers one
+controller and ordinary filesystem failures, catchable signals, and abrupt
+interruption. It excludes concurrent same-account writers, catastrophic
+storage loss, and guaranteed retained evidence when no write can succeed.
+
 Outside `inputs/rustup/`, frozen inputs admit only regular files and actual
 directories. Freeze and every replay reject FIFOs, sockets, symlinks, and any
 other object type in those input trees. The `inputs/rustup/` root itself must
@@ -76,11 +94,13 @@ extracted tree read-only and only disposable runtime state writable. The
 namespace resolves, hashes, and queries ownership for reported runtime objects;
 candidate-derived text never selects a controller-host file operation.
 
-Every attempt directory is append-only by convention and is never reused.
-Failures preserve the attempt's public source cache, package archive, logs, and
-controller evidence. Secret-capable home, temporary, runtime, build, and XDG
-directories are cleaned without inspecting their contents. No failed archive
-is copied to `output/archives/`.
+Every canonical or staged attempt directory is append-only by convention and
+is never reused. Initialization failures preserve the staged claim and any
+bytes written before failure. Later failures preserve the canonical attempt's
+public source cache, package archive, logs, and controller evidence.
+Secret-capable home, temporary, runtime, build, and XDG directories are cleaned
+without inspecting their contents. No failed archive is copied to
+`output/archives/`.
 
 Final cleanup receives exactly one accepted attempt for each package. Before
 deletion, it validates both acceptance markers, launcher results, output-archive

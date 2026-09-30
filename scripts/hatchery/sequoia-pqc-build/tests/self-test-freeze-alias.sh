@@ -12,6 +12,7 @@ make_run() {
   mkdir -p "$run/procedure" "$run/recipes/inert" "$run/tests/fixtures" "$run/inputs/rustup"
   cp "$source_root/procedure/freeze-boundary.sh" \
     "$source_root/procedure/failure-boundary-self-test.sh" \
+    "$source_root/procedure/initialize-attempt.sh" \
     "$source_root/procedure/invoke-attempt.sh" \
     "$source_root/procedure/lifecycle-admission.sh" \
     "$source_root/procedure/verify-frozen-boundary.sh" \
