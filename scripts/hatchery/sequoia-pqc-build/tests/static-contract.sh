@@ -12,16 +12,44 @@ freeze="$root/procedure/freeze-boundary.sh"
 frozen_verify="$root/procedure/verify-frozen-boundary.sh"
 runtime_closure="$root/procedure/runtime-closure.sh"
 
-! grep -Fq -- '--bind "$host_root" /work' "$invoke"
+assert_absent_fixed() {
+  local pattern=$1 path=$2 grep_exit
+  if grep -Fq -- "$pattern" "$path"; then
+    printf 'forbidden source pattern found in %s: %s\n' "$path" "$pattern" >&2
+    return 1
+  else
+    grep_exit=$?
+    if (( grep_exit != 1 )); then
+      printf 'grep failed while checking %s for: %s\n' "$path" "$pattern" >&2
+      return "$grep_exit"
+    fi
+  fi
+}
+
+assert_absent_extended() {
+  local pattern=$1 path=$2 grep_exit
+  if grep -Eq -- "$pattern" "$path"; then
+    printf 'forbidden source pattern found in %s: %s\n' "$path" "$pattern" >&2
+    return 1
+  else
+    grep_exit=$?
+    if (( grep_exit != 1 )); then
+      printf 'grep failed while checking %s for: %s\n' "$path" "$pattern" >&2
+      return "$grep_exit"
+    fi
+  fi
+}
+
+assert_absent_fixed '--bind "$host_root" /work' "$invoke"
 grep -Fq -- '--ro-bind "$host_root/procedure" /work/procedure' "$invoke"
 grep -Fq -- '--ro-bind "$host_root/recipes/$package" /work/recipe' "$invoke"
 grep -Fq -- '--ro-bind "$host_root/inputs/rustup" /work/inputs/rustup' "$invoke"
-! grep -Eq 'receipts|ACCEPTED|output' "$body"
-! grep -Fq 'inputs/rustup" \' "$cleanup"
+assert_absent_extended 'receipts/|ACCEPTED|output/' "$body"
+assert_absent_fixed 'inputs/rustup" \' "$cleanup"
 grep -Fq 'CARGO_NET_OFFLINE=true' "$body"
 grep -Fq 'capture-source-view.sh' "$invoke"
 grep -Fq 'verify-source-tag.sh' "$post_build"
-! grep -Fq 'git -C "$work/srcdest/$repo" verify-tag' "$post_build"
+assert_absent_fixed 'git -C "$work/srcdest/$repo" verify-tag' "$post_build"
 grep -Fq 'final-public-cache-cleanup.sha256' "$assemble"
 grep -Fq 'deployment_gate=open' "$assemble"
 grep -Fq 'procedure recipes tests inputs' "$freeze"

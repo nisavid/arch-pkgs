@@ -48,6 +48,7 @@ chmod -R a-w "$inputs/rustup"
 
 (
   cd "$root"
+  /usr/bin/bash procedure/verify-toolchain-links.sh
   find inputs/rustup -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum \
     >inputs/rust-toolchain.sha256
   {

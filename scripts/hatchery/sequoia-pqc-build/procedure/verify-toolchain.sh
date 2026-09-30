@@ -3,6 +3,7 @@ set -Eeuo pipefail
 
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 cd "$root"
+/usr/bin/bash procedure/verify-toolchain-links.sh
 sha256sum -c inputs/rust-toolchain.sha256
 inventory() {
   printf 'type\tmode\tbytes\tsha256_or_target\tpath\n'

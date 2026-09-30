@@ -27,8 +27,10 @@ Rust toolchain after every phase. Procedure, recipe, and test inputs must remain
 regular files below their frozen canonical paths. The replay compares file
 type, mode, size, content, and canonical location. The self-test checks that
 boundary before and after execution and records both its test inputs and the
-copied wrapper bytes that actually ran. The controller alone writes receipts
-and admission markers.
+copied wrapper bytes that actually ran. Its inert wrapper cases prove early and
+late failure non-admission and the complete successful archive-admission path,
+including immediate and copied-output digests. The controller alone writes
+receipts and admission markers.
 
 Outside `inputs/rustup/`, frozen inputs admit only regular files and actual
 directories. Freeze and every replay reject FIFOs, sockets, symlinks, and any
@@ -36,9 +38,11 @@ other object type in those input trees. The `inputs/rustup/` root itself must
 be an actual directory; its descendants use the separate Rust toolchain
 inventory below.
 
-The retained Rust toolchain supports regular files, directories, and symlinks.
-Setup and every later inventory replay reject all other filesystem object
-types.
+The retained Rust toolchain supports regular files, directories, and confined
+relative symlinks. Every symlink hop and its final regular-file or directory
+target must remain beneath the canonical `inputs/rustup/` root. Setup and every
+later inventory replay reject absolute, escaping, broken, or cyclic symlink
+chains and all other filesystem object types.
 
 After prefetch and before checked build, the controller copies only the Git
 object and reference data for the expected tag into an unmounted, read-only

@@ -53,11 +53,60 @@ run_case() {
     "$(sha256sum "$run_root/procedure/invoke-attempt.sh" | cut -d' ' -f1)"
 }
 
+run_success_case() {
+  local attempt_id=003 run_root="$scratch/success/run" wrapper_exit
+  mkdir -p "$run_root"
+  cp -a "$source_root/procedure" "$run_root/procedure"
+
+  set +e
+  env -i \
+    PATH=/usr/bin:/bin \
+    LC_ALL=C.UTF-8 \
+    LANG=C.UTF-8 \
+    HATCHERY_PROCEDURE_TEST_MODE=1 \
+    HATCHERY_TEST_PHASE_RUNNER="$tests_dir/fixtures/inert-phase-runner.sh" \
+    /usr/bin/bash "$run_root/procedure/invoke-attempt.sh" synthetic-procedure-test "$attempt_id" \
+    >"$scratch/success.wrapper.stdout" \
+    2>"$scratch/success.wrapper.stderr"
+  wrapper_exit=$?
+  set -e
+  if (( wrapper_exit != 0 )); then
+    printf 'success: expected real wrapper exit 0, got %s\n' "$wrapper_exit" >&2
+    sed -n '1,20p' "$scratch/success.wrapper.stderr" >&2
+    exit 1
+  fi
+
+  local attempt="$run_root/attempts/synthetic-procedure-test-attempt-$attempt_id"
+  local archive=synthetic-procedure-test-0-4-x86_64.pkg.tar.zst
+  local source_archive="$attempt/work/pkgdest/$archive"
+  local output_archive="$run_root/output/archives/$archive"
+  local immediate_sha output_sha source_sha
+  [[ -f $source_archive && -f $output_archive ]]
+  cmp -s "$source_archive" "$output_archive"
+  immediate_sha=$(cut -d' ' -f1 "$attempt/receipts/archive-immediate.sha256")
+  output_sha=$(cut -d' ' -f1 "$attempt/receipts/output-archive.sha256")
+  source_sha=$(sha256sum "$source_archive" | cut -d' ' -f1)
+  [[ $immediate_sha == "$source_sha" && $output_sha == "$source_sha" ]]
+  [[ -f $attempt/receipts/ACCEPTED ]]
+  grep -Fxq 'outer_exit=0' "$attempt/receipts/outer-launcher.txt"
+  grep -Fxq 'accepted=true' "$attempt/receipts/outer-launcher.txt"
+  grep -Fxq "output_archive=$output_archive" "$attempt/receipts/outer-launcher.txt"
+  while IFS= read -r secret_root; do
+    [[ -z $(find "$attempt/work/$secret_root" -mindepth 1 -print -quit) ]]
+  done < <(printf '%s\n' home tmp runtime-home gnupg-runtime builddir xdg-cache xdg-config xdg-data)
+  diff -u <(printf '%s' \
+    $'boundary\nverifysource\nprefetch\ncapture-source-view\nchecked-build\npost-build-verify\n') \
+    "$attempt/inert-phase-runner.calls"
+  printf 'success_executed_invoke_attempt_sha256=%s\n' \
+    "$(sha256sum "$run_root/procedure/invoke-attempt.sh" | cut -d' ' -f1)"
+}
+
 run_case early 001 verifysource 23 $'boundary\nverifysource\n'
 run_case late 002 post-build-verify 29 \
   $'boundary\nverifysource\nprefetch\ncapture-source-view\nchecked-build\npost-build-verify\n'
+run_success_case
 
-[[ -f "$scratch/late/run/attempts/synthetic-procedure-test-attempt-002/work/pkgdest/synthetic-procedure-test-0-0-any.pkg.tar.zst" ]]
+[[ -f "$scratch/late/run/attempts/synthetic-procedure-test-attempt-002/work/pkgdest/synthetic-procedure-test-0-4-x86_64.pkg.tar.zst" ]]
 
 set +e
 env -i PATH=/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 \
@@ -71,4 +120,4 @@ set -e
 grep -Fq 'test hooks are forbidden for real package attempts' "$scratch/real-hook.stderr"
 [[ ! -e $scratch/late/run/attempts/sequoia-sq-pqc-attempt-003 ]]
 
-printf 'real-wrapper failure propagation: PASS\n'
+printf 'real-wrapper failure propagation and success admission: PASS\n'

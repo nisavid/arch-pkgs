@@ -16,8 +16,10 @@ for test_script in \
   "$tests_dir/self-test-freeze-alias.sh" \
   "$tests_dir/runtime-closure-isolation.sh" \
   "$tests_dir/run-inventory-binds-status.sh" \
+  "$tests_dir/toolchain-symlink-confinement.sh" \
   "$tests_dir/toolchain-object-types.sh" \
-  "$tests_dir/static-contract.sh"
+  "$tests_dir/static-contract.sh" \
+  "$tests_dir/negative-source-assertions.sh"
 do
   /usr/bin/bash "$test_script"
 done

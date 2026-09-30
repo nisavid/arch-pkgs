@@ -11,6 +11,7 @@ mkdir -p "$scratch/procedure" "$scratch/recipes" "$scratch/tests" "$scratch/inpu
   "$scratch/attempts/pkg-attempt-001/receipts" "$scratch/attempts/pkg-attempt-002/work/cargo"
 cp "$source_root/procedure/final-cleanup.sh" "$scratch/procedure/"
 cp "$source_root/procedure/verify-toolchain.sh" "$scratch/procedure/"
+cp "$source_root/procedure/verify-toolchain-links.sh" "$scratch/procedure/"
 cp "$source_root/procedure/freeze-boundary.sh" "$scratch/procedure/"
 cp "$source_root/procedure/verify-frozen-boundary.sh" "$scratch/procedure/"
 printf 'replayable toolchain bytes\n' >"$scratch/inputs/rustup/tool"

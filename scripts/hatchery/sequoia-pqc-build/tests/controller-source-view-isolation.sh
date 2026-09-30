@@ -17,7 +17,16 @@ trap cleanup EXIT
 [[ -x $capture && -x $verify ]]
 grep -Fq 'capture-source-view.sh' "$invoke"
 grep -Fq 'verify-source-tag.sh' "$post_build"
-! grep -Fq 'git -C "$work/srcdest/$repo" verify-tag' "$post_build"
+if grep -Fq 'git -C "$work/srcdest/$repo" verify-tag' "$post_build"; then
+  printf 'post-build verification reads the writable build source\n' >&2
+  exit 1
+else
+  grep_exit=$?
+  if (( grep_exit != 1 )); then
+    printf 'grep failed while checking post-build source verification\n' >&2
+    exit "$grep_exit"
+  fi
+fi
 
 source_repo="$scratch/source"
 mkdir "$source_repo"

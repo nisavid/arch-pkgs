@@ -32,6 +32,7 @@ make_run() {
     'invoke_sha=$(sha256sum "${BASH_SOURCE[0]%/*}/../procedure/invoke-attempt.sh" | cut -d" " -f1)' \
     'printf "early_executed_invoke_attempt_sha256=%s\\n" "$invoke_sha"' \
     'printf "late_executed_invoke_attempt_sha256=%s\\n" "$invoke_sha"' \
+    'printf "success_executed_invoke_attempt_sha256=%s\\n" "$invoke_sha"' \
     >>"$run/tests/real-wrapper-failure.sh"
   chmod 755 "$run/tests/real-wrapper-failure.sh" "$run/tests/fixtures/inert-phase-runner.sh"
   /usr/bin/bash "$run/procedure/freeze-boundary.sh" >/dev/null
@@ -68,6 +69,7 @@ grep -Fxq "real_wrapper_test_sha256=$(sha256sum "$run/tests/real-wrapper-failure
 grep -Fxq "inert_phase_fixture_sha256=$(sha256sum "$run/tests/fixtures/inert-phase-runner.sh" | cut -d' ' -f1)" "$receipt"
 grep -Fxq "early_executed_invoke_attempt_sha256=$(sha256sum "$run/procedure/invoke-attempt.sh" | cut -d' ' -f1)" "$receipt"
 grep -Fxq "late_executed_invoke_attempt_sha256=$(sha256sum "$run/procedure/invoke-attempt.sh" | cut -d' ' -f1)" "$receipt"
+grep -Fxq "success_executed_invoke_attempt_sha256=$(sha256sum "$run/procedure/invoke-attempt.sh" | cut -d' ' -f1)" "$receipt"
 grep -Fq 'tests/real-wrapper-failure.sh' "$run/control/frozen-boundary.sha256"
 grep -Fq 'tests/fixtures/inert-phase-runner.sh' "$run/control/frozen-boundary.sha256"
 grep -Fq $'type\tmode\tbytes\tsha256\tcanonical_path\tpath' \

@@ -15,9 +15,13 @@ case "$phase" in
   boundary|verifysource|prefetch|capture-source-view)
     ;;
   checked-build)
-    printf 'inert candidate archive\n' >"$attempt/work/pkgdest/synthetic-procedure-test-0-0-any.pkg.tar.zst"
+    printf 'inert candidate archive\n' \
+      >"$attempt/work/pkgdest/synthetic-procedure-test-0-4-x86_64.pkg.tar.zst"
     ;;
   post-build-verify)
+    archive="$attempt/work/pkgdest/synthetic-procedure-test-0-4-x86_64.pkg.tar.zst"
+    [[ -f $archive ]]
+    sha256sum "$archive" >"$attempt/receipts/archive-immediate.sha256"
     ;;
   *)
     printf 'unexpected synthetic phase: %s\n' "$phase" >&2

@@ -17,7 +17,8 @@ make_run() {
   cp "$source_root/procedure/final-cleanup.sh" \
     "$source_root/procedure/freeze-boundary.sh" \
     "$source_root/procedure/verify-frozen-boundary.sh" \
-    "$source_root/procedure/verify-toolchain.sh" "$run/procedure/"
+    "$source_root/procedure/verify-toolchain.sh" \
+    "$source_root/procedure/verify-toolchain-links.sh" "$run/procedure/"
   printf 'toolchain\n' >"$run/inputs/rustup/tool"
   (
     cd "$run"
