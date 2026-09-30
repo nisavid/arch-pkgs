@@ -6,6 +6,7 @@ package=${1-}
 attempt_id=${2-}
 test_mode=${HATCHERY_PROCEDURE_TEST_MODE-0}
 test_runner=${HATCHERY_TEST_PHASE_RUNNER-}
+test_require_lifecycle=${HATCHERY_TEST_REQUIRE_LIFECYCLE-0}
 
 case "$package" in
   sequoia-sq-pqc)
@@ -38,13 +39,53 @@ if [[ $package != synthetic-procedure-test ]] && {
   printf 'test hooks are forbidden for real package attempts\n' >&2
   exit 2
 fi
+
+require_prior_lifecycle_bindings() {
+  local prior_attempt launcher canonical prior_sha
+  local -a prior_attempts=()
+  shopt -s nullglob
+  prior_attempts=("$host_root"/attempts/*-attempt-*)
+  shopt -u nullglob
+  for prior_attempt in "${prior_attempts[@]}"; do
+    [[ -d $prior_attempt && ! -L $prior_attempt ]]
+    canonical=$(realpath -e -- "$prior_attempt")
+    [[ $canonical == "$prior_attempt" && $canonical == "$host_root/attempts/"* ]]
+    launcher="$prior_attempt/receipts/outer-launcher.txt"
+    [[ -f $launcher && ! -L $launcher ]]
+    [[ $(realpath -e -- "$launcher") == "$launcher" ]]
+    prior_sha=$(awk -F= '
+      $1 == "lifecycle_admission_sha256" { count++; value=$2 }
+      END { if (count != 1) exit 1; print value }
+    ' "$launcher")
+    [[ $prior_sha == "$lifecycle_admission_sha256" ]] || {
+      printf 'lifecycle admission changed after an earlier attempt: %s\n' "$prior_attempt" >&2
+      return 1
+    }
+  done
+}
+
+lifecycle_admission_sha256=
 if [[ $package != synthetic-procedure-test ]]; then
   /usr/bin/bash "$host_root/procedure/verify-reviewed-source.sh"
+  lifecycle_admission_sha256=$(
+    /usr/bin/bash "$host_root/procedure/lifecycle-admission.sh" verify
+  )
   [[ ! -e $host_root/output/receipts/final-public-cache-cleanup.txt && \
      ! -L $host_root/output/receipts/final-public-cache-cleanup.txt ]] || {
     printf 'finalization has started; no later real attempt is allowed\n' >&2
     exit 2
   }
+elif [[ $test_require_lifecycle == 1 ]]; then
+  [[ $test_mode == 1 ]] || {
+    printf 'test lifecycle admission is available only to the procedure test harness\n' >&2
+    exit 2
+  }
+  lifecycle_admission_sha256=$(
+    /usr/bin/bash "$host_root/procedure/lifecycle-admission.sh" verify
+  )
+fi
+if [[ -n $lifecycle_admission_sha256 ]]; then
+  require_prior_lifecycle_bindings
 fi
 
 attempt="$host_root/attempts/${package}-attempt-${attempt_id}"
@@ -73,6 +114,9 @@ chmod 700 "$work/home" "$work/tmp" "$work/runtime-home"
 
 printf 'schema=arch-pq-outer-launcher-v2\npackage=%s\nattempt=%s\nstarted_utc=%s\naccepted=false\n' \
   "$package" "$attempt_id" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$launcher_receipt"
+if [[ -n $lifecycle_admission_sha256 ]]; then
+  printf 'lifecycle_admission_sha256=%s\n' "$lifecycle_admission_sha256" >>"$launcher_receipt"
+fi
 
 cleanup_secrets() {
   local name status=0
@@ -84,6 +128,7 @@ cleanup_secrets() {
   return "$status"
 }
 
+# shellcheck disable=SC2329 # The EXIT trap invokes this function indirectly.
 finish() {
   local status=$?
   trap - EXIT

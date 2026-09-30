@@ -14,6 +14,7 @@ make_run() {
   cp "$source_root/procedure/assemble-evidence.sh" \
     "$source_root/procedure/final-cleanup.sh" \
     "$source_root/procedure/freeze-boundary.sh" \
+    "$source_root/procedure/lifecycle-admission.sh" \
     "$source_root/procedure/verify-toolchain.sh" \
     "$source_root/procedure/verify-toolchain-links.sh" \
     "$source_root/procedure/verify-frozen-boundary.sh" \
@@ -30,6 +31,13 @@ make_run() {
   )
   /usr/bin/bash "$source_root/tests/fixtures/create-reviewed-source-admission.sh" "$run"
   /usr/bin/bash "$run/procedure/freeze-boundary.sh" >/dev/null
+  if [[ $name != missing-lifecycle ]]; then
+    /usr/bin/bash "$source_root/tests/fixtures/create-lifecycle-admission.sh" "$run"
+  fi
+  lifecycle_sha=
+  if [[ -f $run/control/lifecycle-admission.txt ]]; then
+    lifecycle_sha=$(sha256sum "$run/control/lifecycle-admission.txt" | cut -d' ' -f1)
+  fi
 
   for package in sequoia-sq-pqc sequoia-sqv-pqc; do
     if [[ $package == sequoia-sq-pqc ]]; then version=1.4.0 executable=sq; else version=1.5.0 executable=sqv; fi
@@ -42,6 +50,10 @@ make_run() {
     touch "$attempt/receipts/ACCEPTED"
     printf 'schema=arch-pq-outer-launcher-v2\naccepted=false\nouter_exit=0\naccepted=true\n' \
       >"$attempt/receipts/outer-launcher.txt"
+    if [[ -n $lifecycle_sha ]]; then
+      printf 'lifecycle_admission_sha256=%s\n' "$lifecycle_sha" \
+        >>"$attempt/receipts/outer-launcher.txt"
+    fi
     sha256sum "$archive" >"$attempt/receipts/output-archive.sha256"
   done
 
@@ -75,6 +87,15 @@ for state in missing partial failed; do
   [[ ! -e $run/review/final-source-and-evidence.inventory.tsv ]]
 done
 
+run=$(make_run missing-lifecycle valid)
+set +e
+(cd "$run" && /usr/bin/bash procedure/assemble-evidence.sh \
+  sequoia-sq-pqc=001 sequoia-sqv-pqc=001) >/dev/null 2>&1
+status=$?
+set -e
+(( status != 0 ))
+[[ ! -e $run/review/final-source-and-evidence.inventory.tsv ]]
+
 run=$(make_run valid valid)
 (cd "$run" && /usr/bin/bash procedure/assemble-evidence.sh \
   sequoia-sq-pqc=001 sequoia-sqv-pqc=001) >/dev/null
@@ -87,7 +108,7 @@ grep -Fq 'review-admission/source-revision.txt' \
 grep -Fq 'output/provenance/reviewed-source-admission.sha256' \
   "$run/review/final-source-and-evidence.inventory.tsv"
 cat >"$scratch/expected-status" <<'EOF'
-status=successor-candidates-built-but-not-independently-accepted
+status=procedure-complete-successor-candidates-built-but-not-independently-accepted
 downstream_operation_gate=open
 macos_interoperability_gate=open
 installation_gate=open

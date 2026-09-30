@@ -37,14 +37,18 @@ expect_injection_rejected() {
 
 run_positive_control static-contract.sh
 run_positive_control controller-source-view-isolation.sh
+# shellcheck disable=SC2016 # The injected source fragment must stay literal.
 expect_injection_rejected broad-work-bind static-contract.sh \
   procedure/invoke-attempt.sh '# --bind "$host_root" /work'
 expect_injection_rejected build-phase-admission-write static-contract.sh \
   procedure/attempt-body.sh '# receipts/'
+# shellcheck disable=SC1003 # The trailing backslash is the literal source pattern.
 expect_injection_rejected cleanup-removes-toolchain static-contract.sh \
   procedure/final-cleanup.sh 'inputs/rustup" \'
+# shellcheck disable=SC2016 # The injected source fragment must stay literal.
 expect_injection_rejected post-build-source-verification static-contract.sh \
   procedure/post-build-verify.sh '# git -C "$work/srcdest/$repo" verify-tag'
+# shellcheck disable=SC2016 # The injected source fragment must stay literal.
 expect_injection_rejected controller-post-build-source-verification \
   controller-source-view-isolation.sh procedure/post-build-verify.sh \
   '# git -C "$work/srcdest/$repo" verify-tag'

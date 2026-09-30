@@ -35,7 +35,14 @@ boundary before and after execution and records both its test inputs and the
 copied wrapper bytes that actually ran. Its inert wrapper cases prove early and
 late failure non-admission and the complete successful archive-admission path,
 including immediate and copied-output digests. The controller alone writes
-receipts and admission markers.
+receipts and admission markers. A successful self-test creates the fixed
+`control/lifecycle-admission.txt` record. It lists the canonical prebuild,
+common-setup, frozen-boundary, and self-test receipts in that order, binds each
+receipt's exact bytes and SHA-256 to the preceding chain digest, and terminates
+with one success field. Each real attempt revalidates the prerequisite schemas,
+unique success fields, frozen-boundary receipt, exact digests, and complete
+closed-world chain before it creates attempt state, then records the lifecycle
+admission SHA-256 in its launcher receipt.
 
 Outside `inputs/rustup/`, frozen inputs admit only regular files and actual
 directories. Freeze and every replay reject FIFOs, sockets, symlinks, and any
@@ -145,6 +152,12 @@ env -i PATH=/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 \
   sequoia-sq-pqc=001 sequoia-sqv-pqc=001
 ```
 
+`failure-boundary-self-test.sh` creates the lifecycle admission record only
+after its own frozen-input replay and wrapper proof succeed. Do not create,
+replace, reorder, or repair that record by hand. A changed prerequisite requires
+a fresh run directory; every selected attempt must bind the one admission
+digest created in that run.
+
 If an invocation fails, retain its directory unchanged, diagnose from the
 controller logs, and use the next unused three-digit attempt ID. Substitute the
 same accepted IDs in `final-cleanup.sh` and `assemble-evidence.sh`. Never rename
@@ -154,10 +167,13 @@ attempt, or invoke a later real attempt after finalization starts.
 Final assembly requires exactly one cleanup receipt with schema
 `arch-pq-final-public-cache-cleanup-v3`, exactly two canonical selection rows,
 `toolchain_preserved=true`, and `cleanup_exit=0`. It matches those rows against
-the selected attempts and archive digests, rechecks both cache pairs, and binds
-the receipt, reviewed revision, external manifest, and their digests into
-provenance before inventory. It records operation, macOS interoperability,
-installation, rollback authenticity, acceptance, and deployment as open gates.
+the selected attempts and archive digests, rechecks both cache pairs, revalidates
+the same lifecycle record and all four prerequisite receipts, and requires both
+selected launcher receipts to bind its current digest. It retains exact copies
+of the lifecycle admission and prerequisite records plus source and retained
+digests before inventory. Only then does it record the candidates as built by a
+procedure-complete run. Operation, macOS interoperability, installation,
+rollback authenticity, acceptance, and deployment remain open gates.
 
 ## Gate separation
 

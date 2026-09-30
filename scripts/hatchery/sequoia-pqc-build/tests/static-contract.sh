@@ -13,6 +13,7 @@ freeze="$root/procedure/freeze-boundary.sh"
 frozen_verify="$root/procedure/verify-frozen-boundary.sh"
 reviewed_source_verify="$root/procedure/verify-reviewed-source.sh"
 runtime_closure="$root/procedure/runtime-closure.sh"
+lifecycle="$root/procedure/lifecycle-admission.sh"
 
 assert_absent_fixed() {
   local pattern=$1 path=$2 grep_exit
@@ -42,18 +43,32 @@ assert_absent_extended() {
   fi
 }
 
+# shellcheck disable=SC2016 # Static assertions match literal source fragments.
 assert_absent_fixed '--bind "$host_root" /work' "$invoke"
+# shellcheck disable=SC2016 # Static assertions match literal source fragments.
 grep -Fq -- '--ro-bind "$host_root/procedure" /work/procedure' "$invoke"
+# shellcheck disable=SC2016 # Static assertions match literal source fragments.
 grep -Fq -- '--ro-bind "$host_root/recipes/$package" /work/recipe' "$invoke"
+# shellcheck disable=SC2016 # Static assertions match literal source fragments.
 grep -Fq -- '--ro-bind "$host_root/inputs/rustup" /work/inputs/rustup' "$invoke"
 assert_absent_extended 'receipts/|ACCEPTED|output/' "$body"
+# shellcheck disable=SC1003 # The trailing backslash is the literal source pattern.
 assert_absent_fixed 'inputs/rustup" \' "$cleanup"
 grep -Fq 'CARGO_NET_OFFLINE=true' "$body"
 grep -Fq 'capture-source-view.sh' "$invoke"
 grep -Fq 'verify-source-tag.sh' "$post_build"
+# shellcheck disable=SC2016 # Static assertions match literal source fragments.
 assert_absent_fixed 'git -C "$work/srcdest/$repo" verify-tag' "$post_build"
 grep -Fq 'final-public-cache-cleanup.sha256' "$assemble"
 grep -Fq 'arch-pq-final-public-cache-cleanup-v3' "$assemble"
+grep -Fq 'lifecycle-admission.sh" verify' "$invoke"
+grep -Fq 'lifecycle-admission.sh" verify' "$assemble"
+grep -Fq 'arch-pq-lifecycle-admission-v1' "$lifecycle"
+grep -Fq 'lifecycle_admission_sha256' "$invoke"
+grep -Fq 'lifecycle_admission_sha256' "$assemble"
+# shellcheck disable=SC2016 # Static assertions match literal source fragments.
+grep -Fq 'mkdir -p "$prov/lifecycle"' "$assemble"
+grep -Fq 'procedure-complete-successor-candidates-built' "$assemble"
 grep -Fq 'reviewed-source-admission.sha256' "$assemble"
 grep -Fq 'deployment_gate=open' "$assemble"
 grep -Fq 'procedure recipes tests inputs review-admission' "$freeze"
@@ -63,10 +78,12 @@ grep -Fq 'maintained-source.inventory.tsv' "$reviewed_source_verify"
 grep -Fq 'verify-frozen-boundary.sh' "$invoke"
 grep -Fq 'canonical_path' "$frozen_verify"
 grep -Fq '/controller/runtime-closure.sh' "$post_build"
+# shellcheck disable=SC2016 # Static assertions match literal source fragments.
 if grep -Fq 'sha256sum "$object"' "$post_build"; then exit 1; fi
 grep -Fq '3>&-' "$runtime_closure"
 grep -Fq 'pkgrel=4' "$root/recipes/sequoia-sq-pqc/PKGBUILD"
 grep -Fq 'pkgrel=4' "$root/recipes/sequoia-sqv-pqc/PKGBUILD"
+# shellcheck disable=SC2016 # Static assertions match literal source fragments.
 grep -Fq 'local asset_home="$srcdir/asset-home"' "$root/recipes/sequoia-sq-pqc/PKGBUILD"
 grep -Fq 'historical 1.4.0-3' "$root/recipes/sequoia-sq-pqc/README.md"
 grep -Fq 'historical 1.5.0-3' "$root/recipes/sequoia-sqv-pqc/README.md"

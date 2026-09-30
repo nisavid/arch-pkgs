@@ -7,7 +7,7 @@ scratch=$(mktemp -d)
 trap 'find "$scratch" -depth -delete' EXIT
 
 make_run() {
-  local run="$scratch/$1" package version executable attempt archive
+  local run="$scratch/$1" package version executable attempt archive lifecycle_sha
   mkdir -p "$run"
   cp -a "$source_root/procedure" "$run/procedure"
   cp -a "$source_root/recipes" "$run/recipes"
@@ -25,6 +25,8 @@ make_run() {
       >>inputs/rust-toolchain.inventory.tsv
   )
   /usr/bin/bash "$run/procedure/freeze-boundary.sh" >/dev/null
+  /usr/bin/bash "$run/tests/fixtures/create-lifecycle-admission.sh" "$run"
+  lifecycle_sha=$(sha256sum "$run/control/lifecycle-admission.txt" | cut -d' ' -f1)
   for package in sequoia-sq-pqc sequoia-sqv-pqc; do
     if [[ $package == sequoia-sq-pqc ]]; then version=1.4.0 executable=sq; else version=1.5.0 executable=sqv; fi
     attempt="$run/attempts/${package}-attempt-001"
@@ -36,8 +38,8 @@ make_run() {
     printf 'cache\n' >"$attempt/work/cargo/cache"
     printf 'source\n' >"$attempt/work/srcdest/source"
     touch "$attempt/receipts/ACCEPTED"
-    printf 'schema=arch-pq-outer-launcher-v2\naccepted=false\nouter_exit=0\naccepted=true\n' \
-      >"$attempt/receipts/outer-launcher.txt"
+    printf 'schema=arch-pq-outer-launcher-v2\naccepted=false\nouter_exit=0\naccepted=true\nlifecycle_admission_sha256=%s\n' \
+      "$lifecycle_sha" >"$attempt/receipts/outer-launcher.txt"
     sha256sum "$archive" >"$attempt/receipts/output-archive.sha256"
   done
   printf '%s\n' "$run"

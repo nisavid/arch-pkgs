@@ -35,13 +35,18 @@ expect_failure() {
 write_portable_manpages() {
   local man="$payload/usr/share/man/man1"
   mkdir -p "$man"
+  # shellcheck disable=SC2016 # Fixtures contain literal documented defaults.
   printf 'default: $HOME/.config/sequoia/sq/config.toml\n' | gzip -n >"$man/sq-config.1.gz"
+  # shellcheck disable=SC2016 # Fixtures contain literal documented defaults.
   printf 'default: $HOME/.local/share/sequoia/revocation-certificates\n' | gzip -n >"$man/sq-key-generate.1.gz"
+  # shellcheck disable=SC2016 # Fixtures contain literal documented defaults.
   printf 'default: $HOME/.local/share/sequoia/revocation-certificates\n' | gzip -n >"$man/sq-key-rotate.1.gz"
+  # shellcheck disable=SC2016 # Fixtures contain literal documented defaults.
   printf 'defaults: $HOME/.config/sequoia/sq/config.toml $HOME/.local/share/pgp.cert.d $HOME/.local/share/sequoia/keystore\n' | gzip -n >"$man/sq.1.gz"
 }
 
 reset_payload
+# shellcheck disable=SC2016 # The payload must contain a literal variable reference.
 printf 'ordinary payload with literal $HOME/.config/tool/config.toml\n' >"$payload/ordinary.txt"
 expect_success 'ordinary payload and portable literal'
 
@@ -117,6 +122,7 @@ reset_payload
 write_portable_manpages
 expect_success 'required manpages and portable defaults' sequoia-sq-pqc
 
+# shellcheck disable=SC2016 # The fixture must contain literal documented defaults.
 printf 'wrong default: /opt/sequoia/config.toml; unrelated: $HOME/.local/share/pgp.cert.d $HOME/.local/share/sequoia/keystore\n' |
   gzip -n >"$payload/usr/share/man/man1/sq.1.gz"
 expect_failure 'wrong required default' sequoia-sq-pqc

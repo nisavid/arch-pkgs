@@ -17,6 +17,7 @@ trap cleanup EXIT
 [[ -x $capture && -x $verify ]]
 grep -Fq 'capture-source-view.sh' "$invoke"
 grep -Fq 'verify-source-tag.sh' "$post_build"
+# shellcheck disable=SC2016 # This is a literal forbidden source pattern.
 if grep -Fq 'git -C "$work/srcdest/$repo" verify-tag' "$post_build"; then
   printf 'post-build verification reads the writable build source\n' >&2
   exit 1

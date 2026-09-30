@@ -12,6 +12,7 @@ make_run() {
   mkdir -p "$run/procedure" "$run/recipes/inert" "$run/tests/fixtures" "$run/inputs/rustup"
   cp "$source_root/procedure/freeze-boundary.sh" \
     "$source_root/procedure/failure-boundary-self-test.sh" \
+    "$source_root/procedure/lifecycle-admission.sh" \
     "$source_root/procedure/verify-frozen-boundary.sh" \
     "$source_root/procedure/verify-reviewed-source.sh" "$run/procedure/"
   printf '%s\n' '#!/usr/bin/bash' 'exit 0' >"$run/procedure/invoke-attempt.sh"
@@ -36,6 +37,11 @@ make_run() {
     'printf "success_executed_invoke_attempt_sha256=%s\\n" "$invoke_sha"' \
     >>"$run/tests/real-wrapper-failure.sh"
   chmod 755 "$run/tests/real-wrapper-failure.sh" "$run/tests/fixtures/inert-phase-runner.sh"
+  mkdir -p "$run/output/receipts" "$run/setup-evidence"
+  printf 'schema=arch-pq-prebuild-environment-v1\nfixture=invalid-public-test-data\nprebuild_capture_exit=0\n' \
+    >"$run/output/receipts/prebuild-environment.txt"
+  printf 'schema=arch-pq-common-setup-v2\nfixture=invalid-public-test-data\nsetup_exit=0\n' \
+    >"$run/setup-evidence/common-setup.txt"
   /usr/bin/bash "$source_root/tests/fixtures/create-reviewed-source-admission.sh" "$run"
   /usr/bin/bash "$run/procedure/freeze-boundary.sh" >/dev/null
   printf '%s\n' "$run"
@@ -76,4 +82,5 @@ grep -Fq 'tests/real-wrapper-failure.sh' "$run/control/frozen-boundary.sha256"
 grep -Fq 'tests/fixtures/inert-phase-runner.sh' "$run/control/frozen-boundary.sha256"
 grep -Fq $'type\tmode\tbytes\tsha256\tcanonical_path\tpath' \
   "$run/control/frozen-boundary.inventory.tsv"
+[[ -f $run/control/lifecycle-admission.txt ]]
 printf 'self-test input freeze, replay, and identity binding: PASS\n'

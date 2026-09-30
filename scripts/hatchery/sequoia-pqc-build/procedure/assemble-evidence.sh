@@ -6,6 +6,9 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 out="$root/output"
 prov="$out/provenance"
 review="$root/review"
+lifecycle_admission_sha256=$(
+  /usr/bin/bash "$root/procedure/lifecycle-admission.sh" verify
+)
 cleanup_receipt="$out/receipts/final-public-cache-cleanup.txt"
 [[ -f $cleanup_receipt && ! -L $cleanup_receipt ]]
 [[ $(realpath -e -- "$cleanup_receipt") == "$cleanup_receipt" ]]
@@ -50,6 +53,8 @@ for selection in "$@"; do
     "$attempt/receipts/outer-launcher.txt") == true ]]
   [[ $(awk -F= '$1 == "outer_exit" { count++; value=$2 } END { if (count != 1) exit 1; print value }' \
     "$attempt/receipts/outer-launcher.txt") == 0 ]]
+  [[ $(awk -F= '$1 == "lifecycle_admission_sha256" { count++; value=$2 } END { if (count != 1) exit 1; print value }' \
+    "$attempt/receipts/outer-launcher.txt") == "$lifecycle_admission_sha256" ]]
   digest=$(sha256sum "$archive" | cut -d' ' -f1)
   IFS= read -r recorded_archive_line <"$attempt/receipts/output-archive.sha256"
   [[ $recorded_archive_line == "$digest  $archive" ]]
@@ -74,6 +79,32 @@ done
 /usr/bin/bash "$root/procedure/verify-toolchain.sh" >/dev/null
 mkdir -p "$prov" "$review"
 sha256sum "$cleanup_receipt" >"$prov/final-public-cache-cleanup.sha256"
+mkdir -p "$prov/lifecycle"
+for lifecycle_path in \
+  output/receipts/prebuild-environment.txt \
+  setup-evidence/common-setup.txt \
+  control/frozen-boundary.txt \
+  review/failure-boundary-self-test.txt \
+  control/lifecycle-admission.txt
+do
+  lifecycle_name=${lifecycle_path##*/}
+  cp -- "$root/$lifecycle_path" "$prov/lifecycle/$lifecycle_name"
+  cmp -s "$root/$lifecycle_path" "$prov/lifecycle/$lifecycle_name"
+done
+(
+  cd "$root"
+  sha256sum \
+    output/receipts/prebuild-environment.txt \
+    setup-evidence/common-setup.txt \
+    control/frozen-boundary.txt \
+    review/failure-boundary-self-test.txt \
+    control/lifecycle-admission.txt \
+    output/provenance/lifecycle/prebuild-environment.txt \
+    output/provenance/lifecycle/common-setup.txt \
+    output/provenance/lifecycle/frozen-boundary.txt \
+    output/provenance/lifecycle/failure-boundary-self-test.txt \
+    output/provenance/lifecycle/lifecycle-admission.txt
+) >"$prov/lifecycle-admission.sha256"
 /usr/bin/bash "$root/procedure/verify-frozen-boundary.sh" \
   >"$prov/final-frozen-input-verification.txt" 2>&1
 /usr/bin/bash "$root/procedure/verify-toolchain.sh" \
@@ -97,7 +128,8 @@ for package in sequoia-sq-pqc sequoia-sqv-pqc; do
     "${executable_digests[$package]}" >>"$prov/candidate-identities.tsv"
 done
 
-printf 'status=successor-candidates-built-but-not-independently-accepted\n' >"$review/validation-status.txt"
+printf 'status=procedure-complete-successor-candidates-built-but-not-independently-accepted\n' \
+  >"$review/validation-status.txt"
 printf 'downstream_operation_gate=open\nmacos_interoperability_gate=open\ninstallation_gate=open\nrollback_authenticity_gate=open\nacceptance_gate=open\ndeployment_gate=open\n' \
   >>"$review/validation-status.txt"
 inventory="$review/final-source-and-evidence.inventory.tsv"

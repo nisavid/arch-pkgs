@@ -7,7 +7,8 @@ result="$root/review/failure-boundary-self-test.txt"
 mkdir -p "$root/review"
 start=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 invoke_sha=$(sha256sum "$root/procedure/invoke-attempt.sh" | cut -d' ' -f1)
-/usr/bin/bash "$root/procedure/verify-frozen-boundary.sh" >"$result" 2>&1
+printf 'schema=arch-pq-failure-boundary-self-test-v1\n' >"$result"
+/usr/bin/bash "$root/procedure/verify-frozen-boundary.sh" >>"$result" 2>&1
 /usr/bin/bash "$root/tests/real-wrapper-failure.sh" >>"$result" 2>&1
 grep -Fxq "early_executed_invoke_attempt_sha256=$invoke_sha" "$result"
 grep -Fxq "late_executed_invoke_attempt_sha256=$invoke_sha" "$result"
@@ -18,3 +19,4 @@ printf 'started_utc=%s\nreal_wrapper_sha256=%s\nreal_wrapper_test_sha256=%s\nine
   "$(sha256sum "$root/tests/real-wrapper-failure.sh" | cut -d' ' -f1)" \
   "$(sha256sum "$root/tests/fixtures/inert-phase-runner.sh" | cut -d' ' -f1)" \
   "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$result"
+/usr/bin/bash "$root/procedure/lifecycle-admission.sh" create >/dev/null

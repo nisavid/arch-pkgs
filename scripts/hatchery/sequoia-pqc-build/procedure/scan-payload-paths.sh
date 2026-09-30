@@ -41,11 +41,17 @@ if [[ $package == sequoia-sq-pqc ]]; then
       status=1
     fi
   }
+  # shellcheck disable=SC2016 # These are literal defaults in the packaged manpages.
   assert_default sq-config.1.gz '$HOME/.config/sequoia/sq/config.toml'
+  # shellcheck disable=SC2016 # These are literal defaults in the packaged manpages.
   assert_default sq-key-generate.1.gz '$HOME/.local/share/sequoia/revocation-certificates'
+  # shellcheck disable=SC2016 # These are literal defaults in the packaged manpages.
   assert_default sq-key-rotate.1.gz '$HOME/.local/share/sequoia/revocation-certificates'
+  # shellcheck disable=SC2016 # These are literal defaults in the packaged manpages.
   assert_default sq.1.gz '$HOME/.config/sequoia/sq/config.toml'
+  # shellcheck disable=SC2016 # These are literal defaults in the packaged manpages.
   assert_default sq.1.gz '$HOME/.local/share/pgp.cert.d'
+  # shellcheck disable=SC2016 # These are literal defaults in the packaged manpages.
   assert_default sq.1.gz '$HOME/.local/share/sequoia/keystore'
 fi
 exit "$status"

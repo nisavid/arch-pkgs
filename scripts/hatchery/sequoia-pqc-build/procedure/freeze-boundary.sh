@@ -4,8 +4,12 @@ set -Eeuo pipefail
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)
 manifest="$root/control/frozen-boundary.sha256"
 inventory="$root/control/frozen-boundary.inventory.tsv"
+record="$root/control/frozen-boundary.txt"
 [[ -d $root/inputs/rustup && ! -L $root/inputs/rustup && -f $root/inputs/rust-toolchain.sha256 ]]
-[[ ! -e $manifest && ! -e $inventory ]] || { printf 'frozen boundary already exists\n' >&2; exit 2; }
+[[ ! -e $manifest && ! -e $inventory && ! -e $record ]] || {
+  printf 'frozen boundary already exists\n' >&2
+  exit 2
+}
 /usr/bin/bash "$root/procedure/verify-reviewed-source.sh"
 mkdir -p "$root/control"
 (
@@ -32,4 +36,12 @@ mkdir -p "$root/control"
   } >control/frozen-boundary.inventory.tsv
   /usr/bin/bash procedure/verify-frozen-boundary.sh
 )
-chmod 444 "$manifest" "$inventory"
+{
+  printf 'schema=arch-pq-frozen-boundary-v1\n'
+  printf 'manifest_path=control/frozen-boundary.sha256\nmanifest_sha256=%s\n' \
+    "$(sha256sum "$manifest" | cut -d' ' -f1)"
+  printf 'inventory_path=control/frozen-boundary.inventory.tsv\ninventory_sha256=%s\n' \
+    "$(sha256sum "$inventory" | cut -d' ' -f1)"
+  printf 'frozen_boundary_exit=0\n'
+} >"$record"
+chmod 444 "$manifest" "$inventory" "$record"

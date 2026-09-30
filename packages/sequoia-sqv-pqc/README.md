@@ -23,8 +23,11 @@ Stage a clean reviewed revision using the
 [maintainer guide](../../docs/maintainers/sequoia-pqc-variants.md), then follow
 the complete maintained
 [successor invocation](../../scripts/hatchery/sequoia-pqc-build/procedure/PROCEDURE.md#successor-invocation).
-The maintained sequence performs prebuild capture, separately authorized setup, boundary freeze, and the
-failure-boundary self-test before invoking either package attempt. Staging alone neither prepares nor authorizes an attempt.
+The maintained sequence performs prebuild capture, separately authorized setup,
+boundary freeze, and the failure-boundary self-test before invoking either
+package attempt. The self-test creates the closed-world lifecycle admission
+record that each attempt and final assembly must revalidate and bind. Staging
+alone neither prepares nor authorizes an attempt.
 
 The historical 1.5.0-3 reviewed archive had SHA-256
 `c58a0c5c1748c0efca26a831a0294bb0830a664209a8f419451c4ee9950c2265`,
