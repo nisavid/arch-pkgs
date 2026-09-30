@@ -12,7 +12,8 @@ make_run() {
   mkdir -p "$run/procedure" "$run/recipes/inert" "$run/tests/fixtures" "$run/inputs/rustup"
   cp "$source_root/procedure/freeze-boundary.sh" \
     "$source_root/procedure/failure-boundary-self-test.sh" \
-    "$source_root/procedure/verify-frozen-boundary.sh" "$run/procedure/"
+    "$source_root/procedure/verify-frozen-boundary.sh" \
+    "$source_root/procedure/verify-reviewed-source.sh" "$run/procedure/"
   printf '%s\n' '#!/usr/bin/bash' 'exit 0' >"$run/procedure/invoke-attempt.sh"
   chmod 755 "$run/procedure/invoke-attempt.sh"
   printf 'recipe\n' >"$run/recipes/inert/README"
@@ -35,6 +36,7 @@ make_run() {
     'printf "success_executed_invoke_attempt_sha256=%s\\n" "$invoke_sha"' \
     >>"$run/tests/real-wrapper-failure.sh"
   chmod 755 "$run/tests/real-wrapper-failure.sh" "$run/tests/fixtures/inert-phase-runner.sh"
+  /usr/bin/bash "$source_root/tests/fixtures/create-reviewed-source-admission.sh" "$run"
   /usr/bin/bash "$run/procedure/freeze-boundary.sh" >/dev/null
   printf '%s\n' "$run"
 }

@@ -10,13 +10,29 @@ cleanup() {
 }
 trap cleanup EXIT
 
+add_attempt() {
+  local run=$1 package=$2 version attempt archive
+  if [[ $package == sequoia-sq-pqc ]]; then version=1.4.0; else version=1.5.0; fi
+  attempt="$run/attempts/${package}-attempt-001"
+  archive="$run/output/archives/${package}-${version}-4-x86_64.pkg.tar.zst"
+  mkdir -p "$attempt/receipts" "$attempt/work/cargo" "$attempt/work/srcdest" \
+    "$run/output/archives"
+  printf 'archive\n' >"$archive"
+  printf 'cargo\n' >"$attempt/work/cargo/cache"
+  printf 'source\n' >"$attempt/work/srcdest/source"
+  touch "$attempt/receipts/ACCEPTED"
+  printf 'accepted=false\nouter_exit=0\naccepted=true\n' >"$attempt/receipts/outer-launcher.txt"
+  sha256sum "$archive" >"$attempt/receipts/output-archive.sha256"
+}
+
 make_run() {
   local run="$scratch/$1"
   mkdir -p "$run/procedure" "$run/recipes" "$run/tests" "$run/inputs/rustup" \
-    "$run/setup-scratch/home" "$run/setup-scratch/cargo" "$run/attempts"
+    "$run/setup-scratch/home" "$run/setup-scratch/cargo"
   cp "$source_root/procedure/final-cleanup.sh" \
     "$source_root/procedure/freeze-boundary.sh" \
     "$source_root/procedure/verify-frozen-boundary.sh" \
+    "$source_root/procedure/verify-reviewed-source.sh" \
     "$source_root/procedure/verify-toolchain.sh" \
     "$source_root/procedure/verify-toolchain-links.sh" "$run/procedure/"
   printf 'toolchain\n' >"$run/inputs/rustup/tool"
@@ -29,91 +45,68 @@ make_run() {
       "$(sha256sum inputs/rustup/tool | cut -d' ' -f1)" \
       >>inputs/rust-toolchain.inventory.tsv
   )
+  /usr/bin/bash "$source_root/tests/fixtures/create-reviewed-source-admission.sh" "$run"
   /usr/bin/bash "$run/procedure/freeze-boundary.sh" >/dev/null
+  add_attempt "$run" sequoia-sq-pqc
+  add_attempt "$run" sequoia-sqv-pqc
   printf '%s\n' "$run"
 }
 
 expect_cleanup_rejection() {
   local run=$1 log=$2 sentinel
   shift 2
-  if /usr/bin/bash "$run/procedure/final-cleanup.sh" >"$log" 2>&1; then
-    for sentinel in "$@"; do
-      [[ ! -e $sentinel ]] || {
-        printf 'unsafe cleanup passed without deleting expected sentinel: %s\n' \
-          "$sentinel" >&2
-        exit 1
-      }
-    done
-    printf 'unsafe cleanup deleted protected sentinels: %s\n' "$run" >&2
+  if /usr/bin/bash "$run/procedure/final-cleanup.sh" \
+    sequoia-sq-pqc=001 sequoia-sqv-pqc=001 >"$log" 2>&1; then
+    printf 'unsafe cleanup unexpectedly succeeded: %s\n' "$run" >&2
     exit 1
   fi
-  for sentinel in "$@"; do
-    [[ -e $sentinel ]]
-  done
+  for sentinel in "$@"; do [[ -e $sentinel ]]; done
 }
 
 valid=$(make_run valid)
-mkdir -p "$valid/attempts/accepted/work/cargo" "$valid/attempts/accepted/work/srcdest" \
-  "$valid/attempts/accepted/receipts" "$valid/attempts/failed/work/cargo"
-touch "$valid/attempts/accepted/receipts/ACCEPTED"
 printf 'delete setup home\n' >"$valid/setup-scratch/home/state"
 printf 'delete setup cargo\n' >"$valid/setup-scratch/cargo/cache"
-printf 'delete accepted cargo\n' >"$valid/attempts/accepted/work/cargo/cache"
-printf 'delete accepted source\n' >"$valid/attempts/accepted/work/srcdest/source"
+mkdir -p "$valid/attempts/failed/work/cargo"
 printf 'preserve failed cache\n' >"$valid/attempts/failed/work/cargo/cache"
-/usr/bin/bash "$valid/procedure/final-cleanup.sh" >/dev/null
+/usr/bin/bash "$valid/procedure/final-cleanup.sh" \
+  sequoia-sq-pqc=001 sequoia-sqv-pqc=001 >/dev/null
 for cache_root in setup-scratch/home setup-scratch/cargo \
-  attempts/accepted/work/cargo attempts/accepted/work/srcdest; do
+  attempts/sequoia-sq-pqc-attempt-001/work/cargo \
+  attempts/sequoia-sq-pqc-attempt-001/work/srcdest \
+  attempts/sequoia-sqv-pqc-attempt-001/work/cargo \
+  attempts/sequoia-sqv-pqc-attempt-001/work/srcdest; do
   [[ -z $(find "$valid/$cache_root" -mindepth 1 -print -quit) ]]
 done
 [[ -f $valid/attempts/failed/work/cargo/cache ]]
 
 attempt_alias=$(make_run attempt-alias)
 outside_attempt="$scratch/outside-attempt"
-mkdir -p "$outside_attempt/receipts" "$outside_attempt/work/cargo" \
-  "$outside_attempt/work/srcdest"
-touch "$outside_attempt/receipts/ACCEPTED"
-printf 'external cargo sentinel\n' >"$outside_attempt/work/cargo/sentinel"
-printf 'external source sentinel\n' >"$outside_attempt/work/srcdest/sentinel"
-ln -s "$outside_attempt" "$attempt_alias/attempts/forged"
+mv "$attempt_alias/attempts/sequoia-sq-pqc-attempt-001" "$outside_attempt"
+ln -s "$outside_attempt" "$attempt_alias/attempts/sequoia-sq-pqc-attempt-001"
 expect_cleanup_rejection "$attempt_alias" "$scratch/attempt-alias.log" \
-  "$outside_attempt/work/cargo/sentinel" "$outside_attempt/work/srcdest/sentinel"
-[[ -f $outside_attempt/work/cargo/sentinel ]]
-[[ -f $outside_attempt/work/srcdest/sentinel ]]
+  "$outside_attempt/work/cargo/cache" "$outside_attempt/work/srcdest/source"
 
 work_alias=$(make_run work-alias)
 outside_work="$scratch/outside-work"
-mkdir -p "$work_alias/attempts/accepted/receipts" "$outside_work/cargo" "$outside_work/srcdest"
-touch "$work_alias/attempts/accepted/receipts/ACCEPTED"
-printf 'external cargo sentinel\n' >"$outside_work/cargo/sentinel"
-printf 'external source sentinel\n' >"$outside_work/srcdest/sentinel"
-ln -s "$outside_work" "$work_alias/attempts/accepted/work"
+mv "$work_alias/attempts/sequoia-sq-pqc-attempt-001/work" "$outside_work"
+ln -s "$outside_work" "$work_alias/attempts/sequoia-sq-pqc-attempt-001/work"
 expect_cleanup_rejection "$work_alias" "$scratch/work-alias.log" \
-  "$outside_work/cargo/sentinel" "$outside_work/srcdest/sentinel"
-[[ -f $outside_work/cargo/sentinel ]]
-[[ -f $outside_work/srcdest/sentinel ]]
+  "$outside_work/cargo/cache" "$outside_work/srcdest/source"
 
 marker_alias=$(make_run marker-alias)
 outside_marker="$scratch/outside-accepted-marker"
-mkdir -p "$marker_alias/attempts/forged/receipts" \
-  "$marker_alias/attempts/forged/work/cargo" "$marker_alias/attempts/forged/work/srcdest"
 touch "$outside_marker"
-ln -s "$outside_marker" "$marker_alias/attempts/forged/receipts/ACCEPTED"
-printf 'preserve forged cargo\n' >"$marker_alias/attempts/forged/work/cargo/cache"
+rm "$marker_alias/attempts/sequoia-sq-pqc-attempt-001/receipts/ACCEPTED"
+ln -s "$outside_marker" \
+  "$marker_alias/attempts/sequoia-sq-pqc-attempt-001/receipts/ACCEPTED"
 expect_cleanup_rejection "$marker_alias" "$scratch/marker-alias.log" \
-  "$marker_alias/attempts/forged/work/cargo/cache"
-[[ -f $marker_alias/attempts/forged/work/cargo/cache ]]
+  "$marker_alias/attempts/sequoia-sq-pqc-attempt-001/work/cargo/cache"
 
 setup_alias=$(make_run setup-alias)
 outside_setup="$scratch/outside-setup"
-rm -r "$setup_alias/setup-scratch"
-mkdir -p "$outside_setup/home" "$outside_setup/cargo"
-printf 'external home sentinel\n' >"$outside_setup/home/sentinel"
-printf 'external cargo sentinel\n' >"$outside_setup/cargo/sentinel"
+mv "$setup_alias/setup-scratch" "$outside_setup"
 ln -s "$outside_setup" "$setup_alias/setup-scratch"
 expect_cleanup_rejection "$setup_alias" "$scratch/setup-alias.log" \
-  "$outside_setup/home/sentinel" "$outside_setup/cargo/sentinel"
-[[ -f $outside_setup/home/sentinel ]]
-[[ -f $outside_setup/cargo/sentinel ]]
+  "$outside_setup/home" "$outside_setup/cargo"
 
 printf 'final cleanup canonical containment and legitimate controls: PASS\n'

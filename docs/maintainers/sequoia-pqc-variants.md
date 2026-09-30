@@ -13,25 +13,32 @@ The maintained [procedure](../../scripts/hatchery/sequoia-pqc-build/procedure/PR
 
 The controller and tests expect sibling `procedure/`, `recipes/`, and `tests/` trees in a fresh directory. Their maintained repository paths separate package recipes from the procedure, so stage copies before invoking either. Use actual files and directories, preserving modes; symlink aliases do not satisfy the procedure's input contract. Keep test staging separate from an actual build run.
 
-From a clean checkout of the reviewed revision:
+Obtain the byte-identical reviewed source and its external admission bundle from
+the source-review/coordinator boundary. That bundle must bind the reviewed
+revision plus every maintained repository-to-staging mapping by type, mode,
+byte count, and SHA-256. Do not create or replace it from the staged run. Stage
+the accepted inputs as follows:
 
 ```bash
-source_revision=$(git rev-parse HEAD)
-source_root=$PWD
+source_root=REVIEWED_SOURCE_DIRECTORY
+review_admission=EXTERNALLY_ACCEPTED_REVIEW_ADMISSION_DIRECTORY
 run_root=$(mktemp -d)
 mkdir "$run_root/recipes"
 cp -a "$source_root/scripts/hatchery/sequoia-pqc-build/procedure" "$run_root/procedure"
 cp -a "$source_root/scripts/hatchery/sequoia-pqc-build/tests" "$run_root/tests"
 cp -a "$source_root/packages/sequoia-sq-pqc" "$run_root/recipes/sequoia-sq-pqc"
 cp -a "$source_root/packages/sequoia-sqv-pqc" "$run_root/recipes/sequoia-sqv-pqc"
-printf '%s\n' "$source_revision" > "$run_root/source-revision.txt"
-diff -qr "$source_root/scripts/hatchery/sequoia-pqc-build/procedure" "$run_root/procedure"
-diff -qr "$source_root/scripts/hatchery/sequoia-pqc-build/tests" "$run_root/tests"
-diff -qr "$source_root/packages/sequoia-sq-pqc" "$run_root/recipes/sequoia-sq-pqc"
-diff -qr "$source_root/packages/sequoia-sqv-pqc" "$run_root/recipes/sequoia-sqv-pqc"
+cp -a "$review_admission" "$run_root/review-admission"
+env -i PATH=/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 \
+  /usr/bin/bash "$run_root/procedure/verify-reviewed-source.sh"
 ```
 
-Record the reviewed revision and compare staged bytes and modes against its source inventory. The `diff` commands above compare contents; they do not prove modes or authenticate a review. The procedure's freeze and replay steps bind their own complete inputs before accepting an attempt.
+The verifier consumes, but never produces, the admission bundle. Setup and real
+attempt entry points run it before creating their work; freeze and replay retain
+the reviewed revision and manifest with the complete input boundary. Final
+assembly copies both into provenance and records their digests. This proves
+equality with the externally accepted manifest at those checkpoints; it does
+not authenticate repository history or provide portable review attestation.
 
 ## Check the maintained source
 
@@ -50,7 +57,13 @@ After the separate test staging above, run the maintained synthetic suite:
 /usr/bin/bash "$run_root/tests/run.sh"
 ```
 
-The suite runs inert failure, namespace, input-binding, path, and cleanup controls, including a synthetic compiled fixture. It is separate from source retrieval and a real package build. Retain the source revision, exact commands, results, and environment limitations with the review evidence. Run Bash syntax and ShellCheck on changed procedure and test scripts as well.
+The suite runs inert failure, namespace, input-binding, path, source-admission,
+and cleanup controls, including a synthetic compiled fixture. Its test-only
+helper creates fake admission data inside disposable scratch directories; it is
+not an admission producer for a real run. The suite is separate from source
+retrieval and a real package build. Retain the source revision, exact commands,
+results, and environment limitations with the review evidence. Run Bash syntax
+and ShellCheck on changed procedure and test scripts as well.
 
 ## Continue build qualification
 

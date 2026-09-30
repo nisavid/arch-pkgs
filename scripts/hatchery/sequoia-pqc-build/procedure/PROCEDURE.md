@@ -22,10 +22,15 @@ mount those paths. They receive only these paths:
 
 `prefetch` runs `makepkg --nobuild`; `checked-build` reuses that prepared tree
 with `--noextract --holdver` and Cargo offline mode. The trusted controller
-replays the frozen procedure, recipes, tests, public key material, and complete
-Rust toolchain after every phase. Procedure, recipe, and test inputs must remain
-regular files below their frozen canonical paths. The replay compares file
-type, mode, size, content, and canonical location. The self-test checks that
+first admits the staged procedure, recipes, and tests against an externally
+provided `review-admission/` bundle, then replays the frozen admission bundle,
+maintained source, public key material, and complete Rust toolchain after every
+phase. The bundle contains one reviewed revision and a sorted mapping from each
+repository path to its staged path, object type, mode, byte count, and SHA-256.
+The run consumes this bundle without regenerating it from staged bytes.
+Procedure, recipe, and test inputs must remain regular files below their frozen
+canonical paths. Admission and replay compare file type, mode, size, content,
+mapping, and canonical location. The self-test checks that
 boundary before and after execution and records both its test inputs and the
 copied wrapper bytes that actually ran. Its inert wrapper cases prove early and
 late failure non-admission and the complete successful archive-admission path,
@@ -70,12 +75,16 @@ controller evidence. Secret-capable home, temporary, runtime, build, and XDG
 directories are cleaned without inspecting their contents. No failed archive
 is copied to `output/archives/`.
 
-Final cleanup first admits every fixed `setup-scratch/` cache and every cache
-for an accepted attempt. Each container and cache must be an actual directory
-whose canonical path is its fixed path beneath the current run; symlinked
-attempts and acceptance markers are rejected. Deletion begins only after the
-complete selected set passes those checks. These checks prove containment at
-their checkpoints, not atomic immutability against a concurrent same-account
+Final cleanup receives exactly one accepted attempt for each package. Before
+deletion, it validates both acceptance markers, launcher results, output-archive
+receipts, archive digests, fixed `setup-scratch/` caches, and the selected
+attempt caches. Each container and cache must be an actual directory whose
+canonical path is its fixed path beneath the current run; symlinked attempts
+and acceptance markers are rejected. Its canonical receipt rows bind package,
+attempt, archive digest, and empty Cargo/source-cache results. Assembly requires
+that exact set and rechecks the selected caches. Once the cleanup receipt exists,
+no later real attempt is admitted. These checks prove containment and emptiness
+at their checkpoints, not atomic immutability against a concurrent same-account
 writer that can replace controller-owned paths between validation and use.
 
 ## Prerequisites
@@ -96,10 +105,26 @@ granted by the correction task.
 ## Successor invocation
 
 Start from a fresh run directory containing these maintained `procedure/`,
-`recipes/`, and `tests/` trees. Run each command with no inherited credentials:
+`recipes/`, and `tests/` trees plus the external `review-admission/` bundle
+accepted for those exact bytes. The bundle must contain only
+`source-revision.txt` (one lowercase 40-hex revision) and
+`maintained-source.inventory.tsv` with this header:
+
+```text
+type	mode	bytes	sha256	repository_path	staged_path
+```
+
+Rows are sorted by staged path and cover every regular file in the three
+maintained trees. Repository paths map `procedure/` and `tests/` below
+`scripts/hatchery/sequoia-pqc-build/`; `recipes/` maps below `packages/`.
+The source-review/coordinator boundary produces the bundle. The build operator
+must not derive or replace it from the staged run. Run each command with no
+inherited credentials:
 
 ```bash
 cd NEW_RUN_DIRECTORY
+env -i PATH=/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 \
+  /usr/bin/bash procedure/verify-reviewed-source.sh
 env -i PATH=/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 \
   /usr/bin/bash procedure/capture-prebuild.sh
 env -i PATH=/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 \
@@ -113,22 +138,26 @@ env -i PATH=/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 \
 env -i PATH=/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 \
   /usr/bin/bash procedure/invoke-attempt.sh sequoia-sqv-pqc 001
 env -i PATH=/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 \
-  /usr/bin/bash procedure/final-cleanup.sh
+  /usr/bin/bash procedure/final-cleanup.sh \
+  sequoia-sq-pqc=001 sequoia-sqv-pqc=001
 env -i PATH=/usr/bin:/bin LC_ALL=C.UTF-8 LANG=C.UTF-8 \
   /usr/bin/bash procedure/assemble-evidence.sh \
   sequoia-sq-pqc=001 sequoia-sqv-pqc=001
 ```
 
 If an invocation fails, retain its directory unchanged, diagnose from the
-controller logs, and use the next unused three-digit attempt ID. Substitute
-only the accepted IDs in `assemble-evidence.sh`. Never rename a failed attempt,
-copy its archive into `output/`, or reuse its caches in another attempt.
+controller logs, and use the next unused three-digit attempt ID. Substitute the
+same accepted IDs in `final-cleanup.sh` and `assemble-evidence.sh`. Never rename
+a failed attempt, copy its archive into `output/`, reuse its caches in another
+attempt, or invoke a later real attempt after finalization starts.
 
 Final assembly requires exactly one cleanup receipt with schema
-`arch-pq-final-public-cache-cleanup-v2`, `toolchain_preserved=true`, and
-`cleanup_exit=0`. It binds that receipt into provenance before inventory and
-records operation, macOS interoperability, installation, rollback
-authenticity, acceptance, and deployment as open gates.
+`arch-pq-final-public-cache-cleanup-v3`, exactly two canonical selection rows,
+`toolchain_preserved=true`, and `cleanup_exit=0`. It matches those rows against
+the selected attempts and archive digests, rechecks both cache pairs, and binds
+the receipt, reviewed revision, external manifest, and their digests into
+provenance before inventory. It records operation, macOS interoperability,
+installation, rollback authenticity, acceptance, and deployment as open gates.
 
 ## Gate separation
 

@@ -161,8 +161,8 @@ prepare_fake_bin() {
   local command_name
   fake_bin="$scratch/fake-bin"
   mkdir "$fake_bin"
-  for command_name in bash chmod cut date dirname env find grep ln mkdir mkfifo \
-    python3 readlink realpath sha256sum sort stat xargs; do
+  for command_name in awk bash chmod cut date dirname env find grep ln mkdir mkfifo \
+    python3 readlink realpath sha256sum sort stat tail wc xargs; do
     ln -s "/host/usr/bin/$command_name" "$fake_bin/$command_name"
   done
   cp "$source_root/tests/fixtures/setup-rustup.sh" "$fake_bin/rustup"
@@ -176,13 +176,16 @@ prepare_fake_bin() {
 
 run_setup_case() {
   local object_type=$1 expected=$2 run="$scratch/setup-$1" log status
-  mkdir -p "$run/procedure"
+  mkdir -p "$run/procedure" "$run/recipes" "$run/tests"
   cp "$source_root/procedure/setup-common.sh" "$run/procedure/"
+  cp "$source_root/procedure/verify-reviewed-source.sh" "$run/procedure/"
   if [[ -f $source_root/procedure/verify-toolchain-links.sh ]]; then
     cp "$source_root/procedure/verify-toolchain-links.sh" "$run/procedure/"
   fi
   printf '#!/usr/bin/bash\nexit 0\n' >"$run/procedure/verify-toolchain.sh"
+  chmod 755 "$run/procedure/verify-toolchain.sh"
   printf '%s\n' "$object_type" >"$run/object-kind"
+  /usr/bin/bash "$source_root/tests/fixtures/create-reviewed-source-admission.sh" "$run"
   log="$scratch/setup-$object_type.log"
   set +e
   /usr/bin/bwrap --unshare-all --die-with-parent --clearenv --dev /dev --proc /proc \

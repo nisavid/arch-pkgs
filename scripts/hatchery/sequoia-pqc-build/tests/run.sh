@@ -3,6 +3,7 @@ set -Eeuo pipefail
 
 tests_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
 for test_script in \
+  "$tests_dir/reviewed-source-admission.sh" \
   "$tests_dir/real-wrapper-failure.sh" \
   "$tests_dir/controller-source-view-isolation.sh" \
   "$tests_dir/actual-boundary-isolation.sh" \
@@ -12,6 +13,7 @@ for test_script in \
   "$tests_dir/final-cleanup-preserves-toolchain.sh" \
   "$tests_dir/final-cleanup-containment.sh" \
   "$tests_dir/assembly-cleanup-admission.sh" \
+  "$tests_dir/finalization-selection-binding.sh" \
   "$tests_dir/self-test-input-binding.sh" \
   "$tests_dir/self-test-freeze-alias.sh" \
   "$tests_dir/runtime-closure-isolation.sh" \

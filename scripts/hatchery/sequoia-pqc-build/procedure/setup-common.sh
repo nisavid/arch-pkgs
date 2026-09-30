@@ -7,6 +7,7 @@ scratch="$root/setup-scratch"
 receipt="$root/setup-evidence/common-setup.txt"
 log="$root/setup-evidence/common-setup.log"
 fingerprint=8F17777118A33DDA9BA48E62AACB3243630052D9
+/usr/bin/bash "$root/procedure/verify-reviewed-source.sh"
 [[ ! -e $inputs && ! -e $scratch && ! -e $receipt && ! -e $log ]] || {
   printf 'setup inputs or outputs already exist\n' >&2
   exit 2

@@ -13,12 +13,14 @@ make_run() {
   cp "$source_root/procedure/freeze-boundary.sh" \
     "$source_root/procedure/failure-boundary-self-test.sh" \
     "$source_root/procedure/invoke-attempt.sh" \
-    "$source_root/procedure/verify-frozen-boundary.sh" "$run/procedure/"
+    "$source_root/procedure/verify-frozen-boundary.sh" \
+    "$source_root/procedure/verify-reviewed-source.sh" "$run/procedure/"
   cp "$source_root/tests/real-wrapper-failure.sh" "$run/tests/"
   cp "$source_root/tests/fixtures/inert-phase-runner.sh" "$run/tests/fixtures/"
   printf 'recipe\n' >"$run/recipes/inert/README"
   printf 'toolchain\n' >"$run/inputs/rustup/tool"
   (cd "$run" && sha256sum inputs/rustup/tool >inputs/rust-toolchain.sha256)
+  /usr/bin/bash "$source_root/tests/fixtures/create-reviewed-source-admission.sh" "$run"
   /usr/bin/bash "$run/procedure/freeze-boundary.sh" >/dev/null
   printf '%s\n' "$run"
 }

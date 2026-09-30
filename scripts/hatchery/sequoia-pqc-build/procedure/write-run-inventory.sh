@@ -5,7 +5,7 @@ root=${1-}
 inventory=${2-}
 [[ -d $root && $inventory == "$root"/* ]]
 inventory_roots=()
-for candidate_root in procedure recipes tests inputs control setup-evidence attempts output review; do
+for candidate_root in procedure recipes tests inputs review-admission control setup-evidence attempts output review; do
   [[ -e $root/$candidate_root ]] && inventory_roots+=("$root/$candidate_root")
 done
 printf 'mode\tbytes\tsha256\tpath\n' >"$inventory"

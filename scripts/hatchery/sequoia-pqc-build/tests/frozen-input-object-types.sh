@@ -15,7 +15,8 @@ make_run() {
     "$run/inputs/rustup/empty-dir" "$run/inputs/gnupg-public/private-keys-v1.d" \
     "$run/inputs/public-keys"
   cp "$source_root/procedure/freeze-boundary.sh" \
-    "$source_root/procedure/verify-frozen-boundary.sh" "$run/procedure/"
+    "$source_root/procedure/verify-frozen-boundary.sh" \
+    "$source_root/procedure/verify-reviewed-source.sh" "$run/procedure/"
   printf 'recipe\n' >"$run/recipes/inert/README"
   printf 'test\n' >"$run/tests/marker"
   printf 'toolchain\n' >"$run/inputs/rustup/tool"
@@ -23,6 +24,7 @@ make_run() {
   printf 'keyring\n' >"$run/inputs/gnupg-public/pubring.kbx"
   printf 'public key\n' >"$run/inputs/public-keys/key.asc"
   (cd "$run" && sha256sum inputs/rustup/tool >inputs/rust-toolchain.sha256)
+  /usr/bin/bash "$source_root/tests/fixtures/create-reviewed-source-admission.sh" "$run"
   printf '%s\n' "$run"
 }
 

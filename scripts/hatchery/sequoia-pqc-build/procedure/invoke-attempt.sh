@@ -38,6 +38,14 @@ if [[ $package != synthetic-procedure-test ]] && {
   printf 'test hooks are forbidden for real package attempts\n' >&2
   exit 2
 fi
+if [[ $package != synthetic-procedure-test ]]; then
+  /usr/bin/bash "$host_root/procedure/verify-reviewed-source.sh"
+  [[ ! -e $host_root/output/receipts/final-public-cache-cleanup.txt && \
+     ! -L $host_root/output/receipts/final-public-cache-cleanup.txt ]] || {
+    printf 'finalization has started; no later real attempt is allowed\n' >&2
+    exit 2
+  }
+fi
 
 attempt="$host_root/attempts/${package}-attempt-${attempt_id}"
 work="$attempt/work"
@@ -92,6 +100,7 @@ trap finish EXIT
 
 verify_frozen_inputs() {
   [[ $test_mode == 1 ]] && return 0
+  /usr/bin/bash "$host_root/procedure/verify-reviewed-source.sh"
   /usr/bin/bash "$host_root/procedure/verify-frozen-boundary.sh"
   /usr/bin/bash "$host_root/procedure/verify-toolchain.sh"
 }

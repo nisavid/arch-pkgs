@@ -6,7 +6,8 @@ manifest="$root/control/frozen-boundary.sha256"
 inventory="$root/control/frozen-boundary.inventory.tsv"
 
 [[ -f $manifest && ! -L $manifest && -f $inventory && ! -L $inventory ]]
-for maintained_root in procedure recipes tests; do
+/usr/bin/bash "$root/procedure/verify-reviewed-source.sh"
+for maintained_root in procedure recipes tests review-admission; do
   [[ -d $root/$maintained_root && ! -L $root/$maintained_root ]]
   [[ -z $(find "$root/$maintained_root" -mindepth 1 ! -type f ! -type d -print -quit) ]]
 done
@@ -28,7 +29,7 @@ current_inventory() {
       "$(sha256sum "$root/$relative" | cut -d' ' -f1)" "$canonical" "$relative"
   done < <(
     cd "$root"
-    find procedure recipes tests inputs -type f -print0 | LC_ALL=C sort -z
+    find procedure recipes tests inputs review-admission -type f -print0 | LC_ALL=C sort -z
   )
 }
 
