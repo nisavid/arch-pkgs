@@ -180,9 +180,14 @@ grep -Fxq "lifecycle_admission_sha256=$lifecycle_sha" \
 [[ -d $staging ]]
 
 write_launcher() {
-  local launcher=$1 package=$2 attempt_id=$3 lifecycle_sha=$4
-  printf 'schema=arch-pq-outer-launcher-v3\npackage=%s\nattempt=%s\nstarted_utc=2026-09-30T00:00:00Z\ninitialization_claim_sha256=%064d\naccepted=false\nlifecycle_admission_sha256=%s\n' \
-    "$package" "$attempt_id" 0 "$lifecycle_sha" >"$launcher"
+  local launcher=$1 package=$2 attempt_id=$3 lifecycle_sha=$4 attempt_root claim claim_sha
+  attempt_root=${launcher%/receipts/outer-launcher.txt}
+  claim="$attempt_root/initialization-claim.txt"
+  printf 'schema=arch-pq-attempt-initialization-v1\npackage=%s\nattempt=%s\nlifecycle_admission_sha256=%s\n' \
+    "$package" "$attempt_id" "$lifecycle_sha" >"$claim"
+  claim_sha=$(sha256sum "$claim" | cut -d' ' -f1)
+  printf 'schema=arch-pq-outer-launcher-v3\npackage=%s\nattempt=%s\nstarted_utc=2026-09-30T00:00:00Z\ninitialization_claim_sha256=%s\naccepted=false\nlifecycle_admission_sha256=%s\n' \
+    "$package" "$attempt_id" "$claim_sha" "$lifecycle_sha" >"$launcher"
 }
 
 for mutation in missing malformed duplicate-field identity-mismatch lifecycle-mismatch; do

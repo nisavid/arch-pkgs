@@ -26,6 +26,9 @@ printf 'schema=arch-pq-final-public-cache-cleanup-v3\nstarted_utc=%s\n' \
   /usr/bin/bash "$root/procedure/verify-frozen-boundary.sh"
   /usr/bin/bash "$root/procedure/verify-toolchain.sh"
 } >>"$receipt" 2>&1
+lifecycle_admission_sha256=$(
+  /usr/bin/bash "$root/procedure/lifecycle-admission.sh" verify
+)
 
 cache_roots=()
 declare -A archive_digests=()
@@ -87,6 +90,8 @@ for package in sequoia-sq-pqc sequoia-sqv-pqc; do
   launcher="$receipts/outer-launcher.txt"
   archive_receipt="$receipts/output-archive.sha256"
   archive="$root/output/archives/${package}-${version}-4-x86_64.pkg.tar.zst"
+  /usr/bin/bash "$root/procedure/validate-canonical-attempt.sh" accepted \
+    "$attempt" "$package" "$attempt_id" "$lifecycle_admission_sha256" "$archive"
   [[ -f $accepted && ! -L $accepted ]]
   [[ -f $launcher && ! -L $launcher ]]
   [[ -f $archive_receipt && ! -L $archive_receipt ]]

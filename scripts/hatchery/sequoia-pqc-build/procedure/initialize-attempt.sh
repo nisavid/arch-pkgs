@@ -18,14 +18,6 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-field() {
-  local record=$1 key=$2
-  awk -F= -v key="$key" '
-    $1 == key { count++; value=substr($0, length(key) + 2) }
-    END { if (count != 1) exit 1; print value }
-  ' "$record"
-}
-
 checkpoint() {
   local step=$1
   [[ $fail_step != "$step" ]] || return 86
@@ -37,40 +29,15 @@ checkpoint() {
   fi
 }
 
-validate_launcher() {
-  local attempt_root=$1 expected_package=$2 expected_attempt=$3 expected_lifecycle=$4
-  local launcher="$attempt_root/receipts/outer-launcher.txt" canonical started claim_sha
-  [[ -d $attempt_root && ! -L $attempt_root ]]
-  [[ -f $launcher && ! -L $launcher ]]
-  canonical=$(realpath -e -- "$launcher")
-  [[ $canonical == "$launcher" && $canonical == "$attempt_root/receipts/outer-launcher.txt" ]]
-  [[ $(field "$launcher" schema) == arch-pq-outer-launcher-v3 ]]
-  [[ $(field "$launcher" package) == "$expected_package" ]]
-  [[ $(field "$launcher" attempt) == "$expected_attempt" ]]
-  started=$(field "$launcher" started_utc)
-  [[ $started =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]]
-  claim_sha=$(field "$launcher" initialization_claim_sha256)
-  [[ $claim_sha =~ ^[0-9a-f]{64}$ ]]
-  [[ $(awk -F= '$1 == "accepted" { count++; if (count == 1) first=$2 }
-      END { if (count == 0) exit 1; print first }' "$launcher") == false ]]
-  if [[ -n $expected_lifecycle ]]; then
-    [[ $(field "$launcher" lifecycle_admission_sha256) == "$expected_lifecycle" ]]
-  else
-    [[ $(awk -F= '$1 == "lifecycle_admission_sha256" { count++ }
-        END { print count+0 }' "$launcher") == 0 ]]
-  fi
-}
-
 verify_canonical() {
-  local attempt_root=$1 expected_lifecycle=$2 canonical package attempt_id
+  local attempt_root=$1 expected_lifecycle=$2 attempt_name package attempt_id
   [[ -d $attempt_root && ! -L $attempt_root ]]
-  canonical=$(realpath -e -- "$attempt_root")
-  [[ $canonical == "$attempt_root" && $canonical == "$host_root/attempts/"* ]]
-  package=$(field "$attempt_root/receipts/outer-launcher.txt" package)
-  attempt_id=$(field "$attempt_root/receipts/outer-launcher.txt" attempt)
-  [[ $attempt_id =~ ^[0-9]{3}$ ]]
-  [[ $attempt_root == "$host_root/attempts/${package}-attempt-${attempt_id}" ]]
-  validate_launcher "$attempt_root" "$package" "$attempt_id" "$expected_lifecycle"
+  attempt_name=${attempt_root##*/}
+  [[ $attempt_name =~ ^(.+)-attempt-([0-9]{3})$ ]]
+  package=${BASH_REMATCH[1]}
+  attempt_id=${BASH_REMATCH[2]}
+  /usr/bin/bash "$host_root/procedure/validate-canonical-attempt.sh" initialized \
+    "$attempt_root" "$package" "$attempt_id" "$expected_lifecycle" canonical
 }
 
 case "$action" in
@@ -160,12 +127,14 @@ case "$action" in
     checkpoint after-launcher-chmod
     mv -- "$launcher_temp" "$launcher"
     checkpoint after-launcher-publish
-    validate_launcher "$staging" "$package" "$attempt_id" "$lifecycle_admission_sha256"
+    /usr/bin/bash "$host_root/procedure/validate-canonical-attempt.sh" initialized \
+      "$staging" "$package" "$attempt_id" "$lifecycle_admission_sha256" staged
     checkpoint after-launcher-validation
     checkpoint before-canonical-rename
     mv -T -- "$staging" "$canonical"
     checkpoint after-canonical-rename
-    validate_launcher "$canonical" "$package" "$attempt_id" "$lifecycle_admission_sha256"
+    /usr/bin/bash "$host_root/procedure/validate-canonical-attempt.sh" initialized \
+      "$canonical" "$package" "$attempt_id" "$lifecycle_admission_sha256" canonical
     ;;
   verify)
     (( $# == 3 )) || {

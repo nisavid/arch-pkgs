@@ -14,10 +14,12 @@ for test_script in \
   "$tests_dir/final-cleanup-containment.sh" \
   "$tests_dir/lifecycle-admission.sh" \
   "$tests_dir/attempt-initialization-recovery.sh" \
+  "$tests_dir/canonical-attempt-validation.sh" \
   "$tests_dir/assembly-cleanup-admission.sh" \
   "$tests_dir/finalization-selection-binding.sh" \
   "$tests_dir/self-test-input-binding.sh" \
   "$tests_dir/self-test-freeze-alias.sh" \
+  "$tests_dir/runtime-closure-parser.sh" \
   "$tests_dir/runtime-closure-isolation.sh" \
   "$tests_dir/run-inventory-binds-status.sh" \
   "$tests_dir/toolchain-symlink-confinement.sh" \

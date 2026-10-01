@@ -7,7 +7,7 @@ scratch=$(mktemp -d)
 trap 'find "$scratch" -depth -delete' EXIT
 
 make_run() {
-  local name=$1 cleanup_state=$2 run package version executable attempt archive
+  local name=$1 cleanup_state=$2 run package lifecycle_sha archive digest version
   run="$scratch/$name"
   mkdir -p "$run/procedure" "$run/recipes" "$run/tests" "$run/inputs/rustup" \
     "$run/output/archives" "$run/output/receipts"
@@ -15,6 +15,7 @@ make_run() {
     "$source_root/procedure/final-cleanup.sh" \
     "$source_root/procedure/freeze-boundary.sh" \
     "$source_root/procedure/lifecycle-admission.sh" \
+    "$source_root/procedure/validate-canonical-attempt.sh" \
     "$source_root/procedure/verify-toolchain.sh" \
     "$source_root/procedure/verify-toolchain-links.sh" \
     "$source_root/procedure/verify-frozen-boundary.sh" \
@@ -34,27 +35,14 @@ make_run() {
   if [[ $name != missing-lifecycle ]]; then
     /usr/bin/bash "$source_root/tests/fixtures/create-lifecycle-admission.sh" "$run"
   fi
-  lifecycle_sha=
+  lifecycle_sha=0000000000000000000000000000000000000000000000000000000000000000
   if [[ -f $run/control/lifecycle-admission.txt ]]; then
     lifecycle_sha=$(sha256sum "$run/control/lifecycle-admission.txt" | cut -d' ' -f1)
   fi
 
   for package in sequoia-sq-pqc sequoia-sqv-pqc; do
-    if [[ $package == sequoia-sq-pqc ]]; then version=1.4.0 executable=sq; else version=1.5.0 executable=sqv; fi
-    attempt="$run/attempts/${package}-attempt-001"
-    archive="$run/output/archives/${package}-${version}-4-x86_64.pkg.tar.zst"
-    mkdir -p "$attempt/receipts" "$attempt/extracted/usr/bin" \
-      "$attempt/work/cargo" "$attempt/work/srcdest"
-    printf 'accepted archive for %s\n' "$package" >"$archive"
-    printf 'executable for %s\n' "$package" >"$attempt/extracted/usr/bin/$executable"
-    touch "$attempt/receipts/ACCEPTED"
-    printf 'schema=arch-pq-outer-launcher-v2\naccepted=false\nouter_exit=0\naccepted=true\n' \
-      >"$attempt/receipts/outer-launcher.txt"
-    if [[ -n $lifecycle_sha ]]; then
-      printf 'lifecycle_admission_sha256=%s\n' "$lifecycle_sha" \
-        >>"$attempt/receipts/outer-launcher.txt"
-    fi
-    sha256sum "$archive" >"$attempt/receipts/output-archive.sha256"
+    /usr/bin/bash "$source_root/tests/fixtures/create-accepted-attempt.sh" \
+      "$run" "$package" 001 "$lifecycle_sha"
   done
 
   case "$cleanup_state" in
@@ -68,8 +56,21 @@ make_run() {
         >"$run/output/receipts/final-public-cache-cleanup.txt"
       ;;
     valid)
-      /usr/bin/bash "$run/procedure/final-cleanup.sh" \
-        sequoia-sq-pqc=001 sequoia-sqv-pqc=001 >/dev/null
+      if [[ $name == missing-lifecycle ]]; then
+        {
+          printf 'schema=arch-pq-final-public-cache-cleanup-v3\n'
+          for package in sequoia-sq-pqc sequoia-sqv-pqc; do
+            if [[ $package == sequoia-sq-pqc ]]; then version=1.4.0; else version=1.5.0; fi
+            archive="$run/output/archives/${package}-${version}-4-x86_64.pkg.tar.zst"
+            digest=$(sha256sum "$archive" | cut -d' ' -f1)
+            printf 'selection\t%s\t001\t%s\ttrue\ttrue\n' "$package" "$digest"
+          done
+          printf 'toolchain_preserved=true\ncleanup_exit=0\n'
+        } >"$run/output/receipts/final-public-cache-cleanup.txt"
+      else
+        /usr/bin/bash "$run/procedure/final-cleanup.sh" \
+          sequoia-sq-pqc=001 sequoia-sqv-pqc=001 >/dev/null
+      fi
       ;;
     *) return 2 ;;
   esac

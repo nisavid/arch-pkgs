@@ -15,6 +15,7 @@ make_run() {
     "$source_root/procedure/initialize-attempt.sh" \
     "$source_root/procedure/invoke-attempt.sh" \
     "$source_root/procedure/lifecycle-admission.sh" \
+    "$source_root/procedure/validate-canonical-attempt.sh" \
     "$source_root/procedure/verify-frozen-boundary.sh" \
     "$source_root/procedure/verify-reviewed-source.sh" "$run/procedure/"
   cp "$source_root/tests/real-wrapper-failure.sh" "$run/tests/"

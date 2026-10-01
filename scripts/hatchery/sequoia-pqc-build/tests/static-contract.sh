@@ -14,6 +14,7 @@ frozen_verify="$root/procedure/verify-frozen-boundary.sh"
 reviewed_source_verify="$root/procedure/verify-reviewed-source.sh"
 runtime_closure="$root/procedure/runtime-closure.sh"
 lifecycle="$root/procedure/lifecycle-admission.sh"
+attempt_validator="$root/procedure/validate-canonical-attempt.sh"
 
 assert_absent_fixed() {
   local pattern=$1 path=$2 grep_exit
@@ -66,6 +67,10 @@ grep -Fq 'lifecycle-admission.sh" verify' "$assemble"
 grep -Fq 'arch-pq-lifecycle-admission-v1' "$lifecycle"
 grep -Fq 'lifecycle_admission_sha256' "$invoke"
 grep -Fq 'lifecycle_admission_sha256' "$assemble"
+grep -Fq 'validate-canonical-attempt.sh" initialized' "$root/procedure/initialize-attempt.sh"
+grep -Fq 'validate-canonical-attempt.sh" accepted' "$cleanup"
+grep -Fq 'validate-canonical-attempt.sh" accepted' "$assemble"
+grep -Fq 'arch-pq-attempt-initialization-v1' "$attempt_validator"
 # shellcheck disable=SC2016 # Static assertions match literal source fragments.
 grep -Fq 'mkdir -p "$prov/lifecycle"' "$assemble"
 grep -Fq 'procedure-complete-successor-candidates-built' "$assemble"

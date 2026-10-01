@@ -43,6 +43,8 @@ for selection in "$@"; do
   selected[$package]=$attempt_id
   attempt="$root/attempts/${package}-attempt-${attempt_id}"
   archive="$out/archives/${package}-${version}-4-x86_64.pkg.tar.zst"
+  /usr/bin/bash "$root/procedure/validate-canonical-attempt.sh" accepted \
+    "$attempt" "$package" "$attempt_id" "$lifecycle_admission_sha256" "$archive"
   [[ -d $attempt && ! -L $attempt && $(realpath -e -- "$attempt") == "$attempt" ]]
   [[ -f $attempt/receipts/ACCEPTED && ! -L $attempt/receipts/ACCEPTED ]]
   [[ $(realpath -e -- "$attempt/receipts/ACCEPTED") == "$attempt/receipts/ACCEPTED" ]]

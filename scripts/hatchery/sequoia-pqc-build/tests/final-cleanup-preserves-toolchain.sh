@@ -8,6 +8,8 @@ trap 'chmod -R u+rwX "$scratch" 2>/dev/null || true; find "$scratch" -depth -del
 mkdir -p "$scratch/procedure" "$scratch/recipes" "$scratch/tests" \
   "$scratch/inputs/rustup/empty-dir" "$scratch/setup-scratch/home" "$scratch/setup-scratch/cargo"
 cp "$source_root/procedure/final-cleanup.sh" \
+  "$source_root/procedure/lifecycle-admission.sh" \
+  "$source_root/procedure/validate-canonical-attempt.sh" \
   "$source_root/procedure/verify-toolchain.sh" \
   "$source_root/procedure/verify-toolchain-links.sh" \
   "$source_root/procedure/freeze-boundary.sh" \
@@ -32,19 +34,15 @@ printf 'discard\n' >"$scratch/setup-scratch/cargo/cache"
 )
 /usr/bin/bash "$source_root/tests/fixtures/create-reviewed-source-admission.sh" "$scratch"
 /usr/bin/bash "$scratch/procedure/freeze-boundary.sh" >/dev/null
+/usr/bin/bash "$source_root/tests/fixtures/create-lifecycle-admission.sh" "$scratch"
+lifecycle_sha=$(sha256sum "$scratch/control/lifecycle-admission.txt" | cut -d' ' -f1)
 
 for package in sequoia-sq-pqc sequoia-sqv-pqc; do
-  if [[ $package == sequoia-sq-pqc ]]; then version=1.4.0; else version=1.5.0; fi
+  /usr/bin/bash "$source_root/tests/fixtures/create-accepted-attempt.sh" \
+    "$scratch" "$package" 001 "$lifecycle_sha"
   attempt="$scratch/attempts/${package}-attempt-001"
-  archive="$scratch/output/archives/${package}-${version}-4-x86_64.pkg.tar.zst"
-  mkdir -p "$attempt/receipts" "$attempt/work/cargo" "$attempt/work/srcdest" \
-    "$scratch/output/archives"
   printf 'discard\n' >"$attempt/work/cargo/cache"
   printf 'discard\n' >"$attempt/work/srcdest/source"
-  printf 'archive\n' >"$archive"
-  touch "$attempt/receipts/ACCEPTED"
-  printf 'accepted=false\nouter_exit=0\naccepted=true\n' >"$attempt/receipts/outer-launcher.txt"
-  sha256sum "$archive" >"$attempt/receipts/output-archive.sha256"
 done
 mkdir -p "$scratch/attempts/failed/work/cargo"
 printf 'preserve failed attempt\n' >"$scratch/attempts/failed/work/cargo/cache"

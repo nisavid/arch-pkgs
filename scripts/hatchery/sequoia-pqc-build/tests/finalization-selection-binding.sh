@@ -7,7 +7,7 @@ scratch=$(mktemp -d)
 trap 'find "$scratch" -depth -delete' EXIT
 
 make_run() {
-  local run="$scratch/$1" package version executable attempt archive lifecycle_sha
+  local run="$scratch/$1" package attempt lifecycle_sha
   mkdir -p "$run"
   cp -a "$source_root/procedure" "$run/procedure"
   cp -a "$source_root/recipes" "$run/recipes"
@@ -28,19 +28,11 @@ make_run() {
   /usr/bin/bash "$run/tests/fixtures/create-lifecycle-admission.sh" "$run"
   lifecycle_sha=$(sha256sum "$run/control/lifecycle-admission.txt" | cut -d' ' -f1)
   for package in sequoia-sq-pqc sequoia-sqv-pqc; do
-    if [[ $package == sequoia-sq-pqc ]]; then version=1.4.0 executable=sq; else version=1.5.0 executable=sqv; fi
+    /usr/bin/bash "$run/tests/fixtures/create-accepted-attempt.sh" \
+      "$run" "$package" 001 "$lifecycle_sha"
     attempt="$run/attempts/${package}-attempt-001"
-    archive="$run/output/archives/${package}-${version}-4-x86_64.pkg.tar.zst"
-    mkdir -p "$attempt/receipts" "$attempt/extracted/usr/bin" \
-      "$attempt/work/cargo" "$attempt/work/srcdest" "$run/output/archives"
-    printf 'accepted archive for %s\n' "$package" >"$archive"
-    printf 'executable for %s\n' "$package" >"$attempt/extracted/usr/bin/$executable"
     printf 'cache\n' >"$attempt/work/cargo/cache"
     printf 'source\n' >"$attempt/work/srcdest/source"
-    touch "$attempt/receipts/ACCEPTED"
-    printf 'schema=arch-pq-outer-launcher-v2\naccepted=false\nouter_exit=0\naccepted=true\nlifecycle_admission_sha256=%s\n' \
-      "$lifecycle_sha" >"$attempt/receipts/outer-launcher.txt"
-    sha256sum "$archive" >"$attempt/receipts/output-archive.sha256"
   done
   printf '%s\n' "$run"
 }

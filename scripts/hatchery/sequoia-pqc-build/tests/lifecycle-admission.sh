@@ -21,7 +21,7 @@ prerequisite_schemas=(
 terminal_keys=(prebuild_capture_exit setup_exit frozen_boundary_exit self_test_exit)
 
 make_run() {
-  local run="$scratch/$1" package version executable attempt archive lifecycle_sha
+  local run="$scratch/$1" package lifecycle_sha
   mkdir -p "$run"
   cp -a "$source_root/procedure" "$run/procedure"
   cp -a "$source_root/recipes" "$run/recipes"
@@ -43,17 +43,8 @@ make_run() {
   lifecycle_sha=$(sha256sum "$run/control/lifecycle-admission.txt" | cut -d' ' -f1)
 
   for package in sequoia-sq-pqc sequoia-sqv-pqc; do
-    if [[ $package == sequoia-sq-pqc ]]; then version=1.4.0 executable=sq; else version=1.5.0 executable=sqv; fi
-    attempt="$run/attempts/${package}-attempt-001"
-    archive="$run/output/archives/${package}-${version}-4-x86_64.pkg.tar.zst"
-    mkdir -p "$attempt/receipts" "$attempt/extracted/usr/bin" \
-      "$attempt/work/cargo" "$attempt/work/srcdest" "$run/output/archives"
-    printf 'accepted archive for %s\n' "$package" >"$archive"
-    printf 'executable for %s\n' "$package" >"$attempt/extracted/usr/bin/$executable"
-    touch "$attempt/receipts/ACCEPTED"
-    printf 'schema=arch-pq-outer-launcher-v3\npackage=%s\nattempt=001\nstarted_utc=2026-09-30T00:00:00Z\ninitialization_claim_sha256=%064d\naccepted=false\nouter_exit=0\naccepted=true\nlifecycle_admission_sha256=%s\n' \
-      "$package" 0 "$lifecycle_sha" >"$attempt/receipts/outer-launcher.txt"
-    sha256sum "$archive" >"$attempt/receipts/output-archive.sha256"
+    /usr/bin/bash "$run/tests/fixtures/create-accepted-attempt.sh" \
+      "$run" "$package" 001 "$lifecycle_sha"
   done
   /usr/bin/bash "$run/procedure/final-cleanup.sh" \
     sequoia-sq-pqc=001 sequoia-sqv-pqc=001 >/dev/null

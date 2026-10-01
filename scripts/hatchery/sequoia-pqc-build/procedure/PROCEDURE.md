@@ -53,7 +53,13 @@ receipt, then atomically renames the tree to its canonical
 `attempts/<package>-attempt-<ID>/` path. Canonical prior attempts must have one
 matching schema, package, attempt ID, initialization-claim digest, and lifecycle
 digest. A missing, malformed, duplicated, identity-mismatched, or
-lifecycle-mismatched field rejects the next invocation.
+lifecycle-mismatched field rejects the next invocation. The shared
+`validate-canonical-attempt.sh` interface checks the staged and canonical paths,
+requires the fixed regular `initialization-claim.txt`, matches its exact
+schema-1 bytes to the expected package, attempt, and lifecycle values, and binds
+its SHA-256 to the unique version-3 launcher field. `initialize-attempt.sh`
+invokes that interface before and after publication and when admitting every
+canonical prior attempt.
 
 A failed initialization remains in its hidden staging path and prevents reuse
 of that ID without entering the canonical prior-attempt set. A later unused ID
@@ -92,7 +98,10 @@ gzip manpages, for execution paths. Candidate `ldd`, dependency resolution,
 identity, and lifecycle checks run in a separate offline namespace with the
 extracted tree read-only and only disposable runtime state writable. The
 namespace resolves, hashes, and queries ownership for reported runtime objects;
-candidate-derived text never selects a controller-host file operation.
+candidate-derived text never selects a controller-host file operation. Runtime
+closure parsing normalizes leading whitespace, rejects every `not found` entry,
+deduplicates reported absolute paths, and emits one ownership and digest record
+for each resolved object, including a directly reported loader.
 
 Every canonical or staged attempt directory is append-only by convention and
 is never reused. Initialization failures preserve the staged claim and any
@@ -109,10 +118,14 @@ attempt caches. Each container and cache must be an actual directory whose
 canonical path is its fixed path beneath the current run; symlinked attempts
 and acceptance markers are rejected. Its canonical receipt rows bind package,
 attempt, archive digest, and empty Cargo/source-cache results. Assembly requires
-that exact set and rechecks the selected caches. Once the cleanup receipt exists,
-no later real attempt is admitted. These checks prove containment and emptiness
-at their checkpoints, not atomic immutability against a concurrent same-account
-writer that can replace controller-owned paths between validation and use.
+that exact set and rechecks the selected caches. Before either cleanup deletion
+or assembly output, `validate-canonical-attempt.sh accepted` binds the selected
+canonical path to the current lifecycle admission, exact launcher identity and
+success fields, retained initialization claim, acceptance marker, and exact
+output archive receipt. Once the cleanup receipt exists, no later real attempt
+is admitted. These checks prove containment and emptiness at their checkpoints,
+not atomic immutability against a concurrent same-account writer that can
+replace controller-owned paths between validation and use.
 
 ## Prerequisites
 

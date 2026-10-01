@@ -11,18 +11,12 @@ cleanup() {
 trap cleanup EXIT
 
 add_attempt() {
-  local run=$1 package=$2 version attempt archive
-  if [[ $package == sequoia-sq-pqc ]]; then version=1.4.0; else version=1.5.0; fi
+  local run=$1 package=$2 attempt
+  /usr/bin/bash "$source_root/tests/fixtures/create-accepted-attempt.sh" \
+    "$run" "$package" 001 "$lifecycle_sha"
   attempt="$run/attempts/${package}-attempt-001"
-  archive="$run/output/archives/${package}-${version}-4-x86_64.pkg.tar.zst"
-  mkdir -p "$attempt/receipts" "$attempt/work/cargo" "$attempt/work/srcdest" \
-    "$run/output/archives"
-  printf 'archive\n' >"$archive"
   printf 'cargo\n' >"$attempt/work/cargo/cache"
   printf 'source\n' >"$attempt/work/srcdest/source"
-  touch "$attempt/receipts/ACCEPTED"
-  printf 'accepted=false\nouter_exit=0\naccepted=true\n' >"$attempt/receipts/outer-launcher.txt"
-  sha256sum "$archive" >"$attempt/receipts/output-archive.sha256"
 }
 
 make_run() {
@@ -30,6 +24,8 @@ make_run() {
   mkdir -p "$run/procedure" "$run/recipes" "$run/tests" "$run/inputs/rustup" \
     "$run/setup-scratch/home" "$run/setup-scratch/cargo"
   cp "$source_root/procedure/final-cleanup.sh" \
+    "$source_root/procedure/lifecycle-admission.sh" \
+    "$source_root/procedure/validate-canonical-attempt.sh" \
     "$source_root/procedure/freeze-boundary.sh" \
     "$source_root/procedure/verify-frozen-boundary.sh" \
     "$source_root/procedure/verify-reviewed-source.sh" \
@@ -47,6 +43,8 @@ make_run() {
   )
   /usr/bin/bash "$source_root/tests/fixtures/create-reviewed-source-admission.sh" "$run"
   /usr/bin/bash "$run/procedure/freeze-boundary.sh" >/dev/null
+  /usr/bin/bash "$source_root/tests/fixtures/create-lifecycle-admission.sh" "$run"
+  lifecycle_sha=$(sha256sum "$run/control/lifecycle-admission.txt" | cut -d' ' -f1)
   add_attempt "$run" sequoia-sq-pqc
   add_attempt "$run" sequoia-sqv-pqc
   printf '%s\n' "$run"
