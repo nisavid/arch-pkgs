@@ -58,6 +58,29 @@ for package in sequoia-sq-pqc sequoia-sqv-pqc; do
 done
 (cd "$exact" && /usr/bin/bash procedure/assemble-evidence.sh \
   sequoia-sq-pqc=001 sequoia-sqv-pqc=001) >/dev/null
+identities="$exact/output/provenance/candidate-identities.tsv"
+for package in sequoia-sq-pqc sequoia-sqv-pqc; do
+  if [[ $package == sequoia-sq-pqc ]]; then
+    version=1.4.0
+    executable=sq
+  else
+    version=1.5.0
+    executable=sqv
+  fi
+  attempt="$exact/attempts/${package}-attempt-001"
+  archive="$exact/output/archives/${package}-${version}-4-x86_64.pkg.tar.zst"
+  archive_executable_digest=$(
+    bsdtar -xOf "$archive" "usr/bin/$executable" | sha256sum | cut -d' ' -f1
+  )
+  receipt_digest=$(cut -d' ' -f1 <"$attempt/receipts/executable.sha256")
+  retained_digest=$(sha256sum "$attempt/extracted/usr/bin/$executable" | cut -d' ' -f1)
+  final_digest=$(awk -F'\t' -v package="$package" \
+    '$1 == package { count++; value=$5 } END { if (count != 1) exit 1; print value }' \
+    "$identities")
+  [[ $archive_executable_digest == "$receipt_digest" ]]
+  [[ $archive_executable_digest == "$retained_digest" ]]
+  [[ $archive_executable_digest == "$final_digest" ]]
+done
 
 substituted=$(make_run substituted)
 /usr/bin/bash "$substituted/procedure/final-cleanup.sh" \
@@ -94,6 +117,24 @@ set +e
 status=$?
 set -e
 (( status != 0 ))
+
+extracted_drift=$(make_run extracted-drift)
+/usr/bin/bash "$extracted_drift/procedure/final-cleanup.sh" \
+  sequoia-sq-pqc=001 sequoia-sqv-pqc=001 >/dev/null
+archive="$extracted_drift/output/archives/sequoia-sq-pqc-1.4.0-4-x86_64.pkg.tar.zst"
+archive_digest=$(sha256sum "$archive" | cut -d' ' -f1)
+printf 'post-acceptance drift\n' \
+  >"$extracted_drift/attempts/sequoia-sq-pqc-attempt-001/extracted/usr/bin/sq"
+set +e
+(cd "$extracted_drift" && /usr/bin/bash procedure/assemble-evidence.sh \
+  sequoia-sq-pqc=001 sequoia-sqv-pqc=001) >/dev/null 2>&1
+status=$?
+set -e
+(( status != 0 ))
+[[ $(sha256sum "$archive" | cut -d' ' -f1) == "$archive_digest" ]]
+[[ ! -e $extracted_drift/output/provenance/candidate-identities.tsv ]]
+[[ ! -e $extracted_drift/review/validation-status.txt ]]
+[[ ! -e $extracted_drift/review/final-source-and-evidence.inventory.tsv ]]
 
 sealed=$(make_run sealed)
 /usr/bin/bash "$sealed/procedure/final-cleanup.sh" \

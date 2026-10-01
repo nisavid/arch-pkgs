@@ -71,9 +71,20 @@ for selection in "$@"; do
   archive_bytes[$package]=$(stat -c %s "$archive")
   archive_digests[$package]=$digest
   executable_path="$attempt/extracted/usr/bin/$executable"
+  executable_receipt="$attempt/receipts/executable.sha256"
   [[ -f $executable_path && ! -L $executable_path ]]
   [[ $(realpath -e -- "$executable_path") == "$executable_path" && $executable_path == "$attempt/"* ]]
-  executable_digests[$package]=$(sha256sum "$executable_path" | cut -d' ' -f1)
+  [[ -f $executable_receipt && ! -L $executable_receipt ]]
+  [[ $(realpath -e -- "$executable_receipt") == "$executable_receipt" ]]
+  [[ $(wc -l <"$executable_receipt") == 1 ]]
+  IFS= read -r recorded_executable_line <"$executable_receipt"
+  retained_executable_digest=$(sha256sum "$executable_path" | cut -d' ' -f1)
+  [[ $recorded_executable_line == "$retained_executable_digest  $executable_path" ]]
+  archive_executable_digest=$(
+    bsdtar -xOf "$archive" "usr/bin/$executable" | sha256sum | cut -d' ' -f1
+  )
+  [[ $archive_executable_digest == "$retained_executable_digest" ]]
+  executable_digests[$package]=$archive_executable_digest
 done
 [[ ${selected[sequoia-sq-pqc]-} =~ ^[0-9]{3}$ && ${selected[sequoia-sqv-pqc]-} =~ ^[0-9]{3}$ ]]
 

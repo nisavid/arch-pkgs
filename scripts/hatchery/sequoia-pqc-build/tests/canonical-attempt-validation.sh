@@ -7,7 +7,7 @@ scratch=$(mktemp -d)
 trap 'chmod -R u+rwX "$scratch" 2>/dev/null || true; find "$scratch" -depth -delete' EXIT
 
 make_run() {
-  local run="$scratch/$1" lifecycle_sha package version executable attempt archive
+  local run="$scratch/$1" lifecycle_sha package version executable attempt archive archive_payload
   mkdir -p "$run"
   cp -a "$source_root/procedure" "$run/procedure"
   cp -a "$source_root/recipes" "$run/recipes"
@@ -40,12 +40,18 @@ make_run() {
       "$package" 001 "$lifecycle_sha"
     attempt="$run/attempts/${package}-attempt-001"
     archive="$run/output/archives/${package}-${version}-4-x86_64.pkg.tar.zst"
-    mkdir -p "$attempt/extracted/usr/bin"
-    printf 'accepted archive for %s\n' "$package" >"$archive"
+    archive_payload="$attempt/archive-payload"
+    mkdir -p "$attempt/extracted/usr/bin" "$archive_payload/usr/bin"
     printf 'executable for %s\n' "$package" >"$attempt/extracted/usr/bin/$executable"
+    cp -- "$attempt/extracted/usr/bin/$executable" "$archive_payload/usr/bin/$executable"
+    chmod 755 "$attempt/extracted/usr/bin/$executable" "$archive_payload/usr/bin/$executable"
+    (cd "$archive_payload" && bsdtar -cf - usr) | zstd -q -c >"$archive"
+    find "$archive_payload" -depth -delete
     printf 'cache sentinel\n' >"$attempt/work/cargo/cache"
     printf 'source sentinel\n' >"$attempt/work/srcdest/source"
     sha256sum "$archive" >"$attempt/receipts/output-archive.sha256"
+    sha256sum "$attempt/extracted/usr/bin/$executable" \
+      >"$attempt/receipts/executable.sha256"
     printf 'completed_utc=2026-09-30T00:00:01Z\nouter_exit=0\naccepted=true\noutput_archive=%s\n' \
       "$archive" >>"$attempt/receipts/outer-launcher.txt"
     touch "$attempt/receipts/ACCEPTED"

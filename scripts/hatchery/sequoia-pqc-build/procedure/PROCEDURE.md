@@ -123,9 +123,12 @@ or assembly output, `validate-canonical-attempt.sh accepted` binds the selected
 canonical path to the current lifecycle admission, exact launcher identity and
 success fields, retained initialization claim, acceptance marker, and exact
 output archive receipt. Once the cleanup receipt exists, no later real attempt
-is admitted. These checks prove containment and emptiness at their checkpoints,
-not atomic immutability against a concurrent same-account writer that can
-replace controller-owned paths between validation and use.
+is admitted. Final assembly reads each executable directly from the validated
+selected archive, requires its digest to equal both the canonical post-build
+executable receipt and the retained extraction, and publishes that
+archive-derived digest. These checks prove containment, identity, and emptiness
+at their checkpoints, not atomic immutability against a concurrent same-account
+writer that can replace controller-owned paths between validation and use.
 
 ## Prerequisites
 
@@ -204,9 +207,12 @@ the selected attempts and archive digests, rechecks both cache pairs, revalidate
 the same lifecycle record and all four prerequisite receipts, and requires both
 selected launcher receipts to bind its current digest. It retains exact copies
 of the lifecycle admission and prerequisite records plus source and retained
-digests before inventory. Only then does it record the candidates as built by a
-procedure-complete run. Operation, macOS interoperability, installation,
-rollback authenticity, acceptance, and deployment remain open gates.
+digests before inventory. It derives each final executable identity through a
+fresh data-only read of the selected archive and requires equality with the
+post-build receipt and retained executable before writing final evidence. Only
+then does it record the candidates as built by a procedure-complete run.
+Operation, macOS interoperability, installation, rollback authenticity,
+acceptance, and deployment remain open gates.
 
 ## Gate separation
 
