@@ -1,7 +1,10 @@
 import ast
 import asyncio
 import builtins
+import functools
 import importlib.util
+import inspect
+import json
 import math
 import os
 import shutil
@@ -9,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import types
+import typing
 import unittest
 from http import HTTPStatus
 from pathlib import Path
@@ -29,7 +33,6 @@ BUILTIN_GATE_HELPERS = frozenset(
     {
         "_knowledge_note_ids",
         "_rag_closed",
-        "_rag_closed_tool_error",
         "_rag_unavailable_tool_error",
     }
 )
@@ -893,6 +896,145 @@ class OpenWebUIHouseholdRAGGateTests(unittest.TestCase):
         embedding_function.assert_not_awaited()
         self.gate.require_required_reranker(marker)
 
+    def test_failed_hybrid_prefetch_fails_closed_instead_of_empty_sources(self):
+        # Upstream's hybrid prefetch logs a failed get() and skips that
+        # collection as if it were empty, so a request whose every fetch
+        # fails returns empty sources and no error. A failed fetch now fails
+        # closed with the gate's 503 on the chat and /query/collection paths.
+        # A collection that get() reports missing is still skipped, and the
+        # gate stays qualified.
+        class FixtureConfig:
+            # The packaged retrieval settings that reach this path.
+            values: ClassVar[dict] = {
+                "rag.enable_hybrid_search": True,
+                "rag.bypass_embedding_and_retrieval": False,
+                "rag.top_k_reranker": 3,
+                "rag.relevance_threshold": 0.0,
+                "rag.hybrid_bm25_weight": 0.5,
+                "rag.enable_hybrid_search_enriched_texts": False,
+            }
+
+            @classmethod
+            async def get_many(cls, *keys):
+                return {key: cls.values.get(key) for key in keys}
+
+        injected = RuntimeError("Unexpected Response: 400 (Bad Request)")
+        stored = {"file-a": object(), "file-missing": None}
+
+        def fetch(collection_name):
+            if collection_name == "file-down":
+                raise injected
+            return stored[collection_name]
+
+        vector_searches = []
+
+        def unreranked_vector_search(**kwargs):
+            vector_searches.append(kwargs["collection_name"])
+            return SimpleNamespace(
+                model_dump=lambda: {
+                    "distances": [[0.42]],
+                    "documents": [["unreranked text"]],
+                    "metadatas": [[{}]],
+                }
+            )
+
+        def merge_results(results, k):
+            return {
+                key: [[value for result in results for value in result[key][0]][:k]]
+                for key in ("distances", "documents", "metadatas")
+            }
+
+        hybrid_search = mock.AsyncMock(
+            return_value={
+                "distances": [[0.97]],
+                "documents": [["reranked text"]],
+                "metadatas": [[{}]],
+            }
+        )
+        namespace = {
+            "ASYNC_VECTOR_DB_CLIENT": SimpleNamespace(
+                get=mock.AsyncMock(side_effect=fetch)
+            ),
+            "Config": FixtureConfig,
+            "RAG_EMBEDDING_QUERY_PREFIX": "query: ",
+            "RAGUnavailableError": self.gate.RAGUnavailableError,
+            "asyncio": asyncio,
+            "log": mock.Mock(),
+            "merge_and_sort_query_results": merge_results,
+            "query_doc": unreranked_vector_search,
+            "query_doc_with_hybrid_search": hybrid_search,
+            # Qdrant has no backend-native hybrid search.
+            "query_doc_with_native_hybrid_search": mock.AsyncMock(return_value=None),
+            "require_safe_retrieval_mode": self.gate.require_safe_retrieval_mode,
+        }
+        search_functions = {"query_collection", "query_collection_with_hybrid_search"}
+        self.assertEqual(
+            self.exec_patched_definitions(
+                "backend/open_webui/retrieval/utils.py", search_functions, namespace
+            ),
+            search_functions,
+        )
+
+        request = SimpleNamespace(
+            app=SimpleNamespace(
+                state=SimpleNamespace(RERANKING_FUNCTION=lambda *_args, **_kwargs: [])
+            )
+        )
+        embedding_function = mock.AsyncMock(return_value=[[0.1, 0.2]])
+
+        def retrieve_for_chat(collection_names):
+            return asyncio.run(
+                namespace["query_collection"](
+                    request,
+                    collection_names=collection_names,
+                    queries=["private query"],
+                    embedding_function=embedding_function,
+                    k=3,
+                )
+            )
+
+        def retrieve_for_query_collection(collection_names):
+            return asyncio.run(
+                namespace["query_collection_with_hybrid_search"](
+                    collection_names=collection_names,
+                    queries=["private query"],
+                    embedding_function=embedding_function,
+                    k=3,
+                    reranking_function=lambda *_args, **_kwargs: [],
+                    k_reranker=3,
+                    r=0.0,
+                    hybrid_bm25_weight=0.5,
+                )
+            )
+
+        marker = object()
+        self.gate.configure_required_reranker(True)
+        self.gate.qualify_required_reranker([0.91, 0.08])
+
+        self.assertEqual(
+            retrieve_for_chat(["file-a", "file-missing"])["documents"],
+            [["reranked text"]],
+        )
+        self.assertEqual(hybrid_search.await_count, 1)
+
+        hybrid_search.reset_mock()
+        for path, retrieve in (
+            ("chat", retrieve_for_chat),
+            ("/query/collection", retrieve_for_query_collection),
+        ):
+            for collection_names in (["file-a", "file-down"], ["file-down"]):
+                with self.subTest(path=path, collection_names=collection_names):
+                    with self.assertRaises(self.gate.RAGUnavailableError) as refused:
+                        retrieve(collection_names)
+                    self.assertEqual(
+                        str(refused.exception), self.gate.RAG_UNAVAILABLE_DETAIL
+                    )
+                    self.assertIs(refused.exception.__cause__, injected)
+                    hybrid_search.assert_not_awaited()
+                    self.assertEqual(vector_searches, [])
+                    embedding_function.assert_not_awaited()
+                    self.gate.require_required_reranker(marker)
+
     def test_mixed_full_context_chat_refuses_while_closed_and_passes_when_qualified(
         self,
     ):
@@ -1372,9 +1514,11 @@ class OpenWebUIHouseholdRAGGateTests(unittest.TestCase):
         # A model whose file_context capability is off skips the files
         # handler, and its chat attachments reach the model only through
         # tools. process_chat_payload still refuses such a chat while the gate
-        # is closed. A qualified gate, a chat without attachments, and a chat
-        # with only filesystem items pass; file context on still goes through
-        # the files handler.
+        # is closed, and, as the files handler does, while a global
+        # full-context, non-hybrid, or bypass mode is set even when the gate
+        # is qualified. Otherwise a qualified gate passes; a chat without
+        # attachments or with only filesystem items always passes; file
+        # context on still goes through the files handler.
         relative = "backend/open_webui/utils/middleware.py"
         with tempfile.TemporaryDirectory() as temp_dir:
             source_root = Path(temp_dir)
@@ -1412,8 +1556,22 @@ class OpenWebUIHouseholdRAGGateTests(unittest.TestCase):
             "    return form_data\n"
         ).body[0]
         runner.body.insert(0, statement)
+
+        class FixtureConfig:
+            # The packaged retrieval modes.
+            values: ClassVar[dict] = {
+                "rag.enable_hybrid_search": True,
+                "rag.full_context": False,
+                "rag.bypass_embedding_and_retrieval": False,
+            }
+
+            @classmethod
+            async def get_many(cls, *keys):
+                return {key: cls.values.get(key) for key in keys}
+
         files_handler = mock.AsyncMock(return_value=({}, {"sources": []}))
         namespace = {
+            "Config": FixtureConfig,
             "RAGUnavailableError": self.gate.RAGUnavailableError,
             "chat_completion_files_handler": files_handler,
             "log": mock.Mock(),
@@ -1470,6 +1628,23 @@ class OpenWebUIHouseholdRAGGateTests(unittest.TestCase):
         for files in attached + unattached:
             with self.subTest(gate="qualified", files=files):
                 chat(files)
+
+        # Qualification does not make a global no-rerank mode safe.
+        for mode, value in (
+            ("rag.full_context", True),
+            ("rag.enable_hybrid_search", False),
+            ("rag.bypass_embedding_and_retrieval", True),
+        ):
+            with mock.patch.dict(FixtureConfig.values, {mode: value}):
+                for files in attached:
+                    with (
+                        self.subTest(gate="qualified", mode=mode, files=files),
+                        self.assertRaises(self.gate.RAGUnavailableError),
+                    ):
+                        chat(files)
+                for files in unattached:
+                    with self.subTest(gate="qualified", mode=mode, files=files):
+                        chat(files)
         files_handler.assert_not_awaited()
 
         # File context on hands the chat to the files handler, whose gate
@@ -1479,16 +1654,9 @@ class OpenWebUIHouseholdRAGGateTests(unittest.TestCase):
             chat(attached[0], file_context=True)
         files_handler.assert_awaited_once()
 
-    def test_knowledge_attached_notes_refuse_while_closed_but_personal_notes_stay(
-        self,
-    ):
-        # Notes attached to the model or its folder as knowledge are gated:
-        # view_note refuses them and search_notes omits them while the gate is
-        # closed. Unattached notes stay readable. Chat-sourced notes exist only
-        # on a model whose file context is off, where the closed gate refuses
-        # the chat in process_chat_payload, so the note gate does not filter
-        # them. A qualified gate allows every note.
-        json_codec = __import__("json")
+    def exec_patched_note_tools(self):
+        """Define the 0005-patched note tools over four stored fixture notes."""
+
         stored = {
             note_id: SimpleNamespace(
                 id=note_id,
@@ -1512,9 +1680,9 @@ class OpenWebUIHouseholdRAGGateTests(unittest.TestCase):
             "Groups": SimpleNamespace(
                 get_groups_by_member_id=mock.AsyncMock(return_value=[])
             ),
-            "JSONCodec": json_codec,
+            "JSONCodec": json,
             "Notes": notes,
-            "Optional": __import__("typing").Optional,
+            "Optional": typing.Optional,
             "RAG_UNAVAILABLE_DETAIL": self.gate.RAG_UNAVAILABLE_DETAIL,
             "RAGUnavailableError": self.gate.RAGUnavailableError,
             "Request": object,
@@ -1526,6 +1694,18 @@ class OpenWebUIHouseholdRAGGateTests(unittest.TestCase):
             {"view_note", "search_notes"} | BUILTIN_GATE_HELPERS,
             namespace,
         )
+        return namespace, notes, stored, access_grants
+
+    def test_knowledge_attached_notes_refuse_while_closed_but_personal_notes_stay(
+        self,
+    ):
+        # Notes attached to the model or its folder as knowledge are gated:
+        # view_note refuses them and search_notes omits them while the gate is
+        # closed. Unattached notes stay readable. Chat-sourced notes exist only
+        # on a model whose file context is off, where the closed gate refuses
+        # the chat in process_chat_payload, so the note gate does not filter
+        # them. A qualified gate allows every note.
+        namespace, notes, stored, access_grants = self.exec_patched_note_tools()
         knowledge = [
             {"type": "note", "id": "model-note", "source": "model"},
             {"type": "note", "id": "folder-note", "source": "folder"},
@@ -1544,7 +1724,7 @@ class OpenWebUIHouseholdRAGGateTests(unittest.TestCase):
             with mock.patch.dict(
                 sys.modules, {"open_webui.models.access_grants": access_grants}
             ):
-                return json_codec.loads(
+                return json.loads(
                     asyncio.run(
                         namespace["view_note"](
                             note_id,
@@ -1565,7 +1745,150 @@ class OpenWebUIHouseholdRAGGateTests(unittest.TestCase):
                     __model_knowledge__=knowledge,
                 )
             )
-            return [note["id"] for note in json_codec.loads(result)]
+            return [note["id"] for note in json.loads(result)]
+
+        self.gate.configure_required_reranker(True)
+        for note_id in ("model-note", "folder-note"):
+            with self.subTest(gate="closed", note=note_id):
+                self.assertEqual(view(note_id), refusal)
+        notes.get_note_by_id.assert_not_awaited()
+        for note_id in ("chat-note", "own-note"):
+            with self.subTest(gate="closed", note=note_id):
+                self.assertIn(note_id, view(note_id)["content"])
+        self.assertEqual(search(), ["chat-note", "own-note"])
+
+        self.gate.qualify_required_reranker([0.91, 0.08])
+        for note_id in stored:
+            with self.subTest(gate="qualified", note=note_id):
+                self.assertIn(note_id, view(note_id)["content"])
+        self.assertEqual(search(), list(stored))
+
+    def test_attached_knowledge_reaches_the_wrapped_note_tools(self):
+        # Upstream derives __model_knowledge__ on the server: get_builtin_tools
+        # collects the model's and the folder's knowledge, and the chat's
+        # attached notes when file context is off, then binds that list into
+        # each builtin tool with functools.partial. The model supplies only the
+        # tool's own arguments. Through that wiring, the closed gate refuses
+        # the model's and the folder's notes and allows the rest; a qualified
+        # gate allows every note.
+        builtin, notes, stored, access_grants = self.exec_patched_note_tools()
+
+        class FixtureConfig:
+            # Notes enabled; every other builtin category off.
+            @classmethod
+            async def get_many(cls, *keys):
+                return {key: key == "notes.enable" for key in keys}
+
+            @classmethod
+            async def get(cls, _key):
+                return {}
+
+        def uncalled_tool(name):
+            async def tool(**_kwargs):
+                raise AssertionError(f"{name} was called")
+
+            tool.__name__ = name
+            return tool
+
+        namespace = {
+            "Awaitable": typing.Awaitable,
+            "Callable": typing.Callable,
+            "Config": FixtureConfig,
+            "Request": object,
+            "cache": functools.cache,
+            "get_args": typing.get_args,
+            # The OpenAI spec needs langchain; the wiring does not read it.
+            "get_builtin_tool_spec": lambda _function: {},
+            "get_type_hints": typing.get_type_hints,
+            "has_permission": mock.AsyncMock(return_value=True),
+            "inspect": inspect,
+            "partial": functools.partial,
+            "search_notes": builtin["search_notes"],
+            "update_wrapper": functools.update_wrapper,
+            "view_note": builtin["view_note"],
+            **{
+                name: uncalled_tool(name)
+                for name in (
+                    "grep_knowledge_files",
+                    "list_knowledge",
+                    "query_knowledge_files",
+                    "replace_note_content",
+                    "search_knowledge_files",
+                    "write_note",
+                )
+            },
+        }
+        wiring = {
+            "get_async_tool_function_and_apply_extra_params",
+            "get_attached_knowledge",
+            "get_builtin_function_introspection",
+            "get_builtin_tools",
+        }
+        self.assertEqual(
+            self.exec_patched_definitions(
+                "backend/open_webui/utils/tools.py", wiring, namespace
+            ),
+            wiring,
+        )
+
+        model = {
+            "info": {
+                "meta": {
+                    "knowledge": [{"type": "note", "id": "model-note"}],
+                    "capabilities": {"file_context": False},
+                    "builtinTools": {
+                        "time": False,
+                        "user_input": False,
+                        "chats": False,
+                        "tasks": False,
+                    },
+                }
+            }
+        }
+        metadata = {
+            "folder_knowledge": [{"type": "note", "id": "folder-note"}],
+            "files": [{"type": "note", "id": "chat-note"}],
+        }
+        request = SimpleNamespace(
+            app=SimpleNamespace(state=SimpleNamespace(RERANKING_FUNCTION=object())),
+            state=SimpleNamespace(),
+        )
+        env = types.ModuleType("open_webui.env")
+        env.ENABLE_KB_EXEC = False
+        with mock.patch.dict(sys.modules, {"open_webui.env": env}):
+            tools = asyncio.run(
+                namespace["get_builtin_tools"](
+                    request,
+                    {
+                        "__user__": {"id": "fixture-user", "role": "user"},
+                        "__metadata__": metadata,
+                    },
+                    features={},
+                    model=model,
+                )
+            )
+        view_note = tools["view_note"]["callable"]
+        search_notes = tools["search_notes"]["callable"]
+        for tool in (view_note, search_notes):
+            with self.subTest(tool=tool.__name__):
+                self.assertNotIn(
+                    "__model_knowledge__", inspect.signature(tool).parameters
+                )
+
+        refusal = {
+            "error": self.gate.RAG_UNAVAILABLE_DETAIL,
+            "status": HTTPStatus.SERVICE_UNAVAILABLE,
+        }
+
+        def view(note_id):
+            with mock.patch.dict(
+                sys.modules, {"open_webui.models.access_grants": access_grants}
+            ):
+                return json.loads(asyncio.run(view_note(note_id=note_id)))
+
+        def search():
+            result = asyncio.run(search_notes(query="seed cabinet", count=5))
+            return [note["id"] for note in json.loads(result)]
 
         self.gate.configure_required_reranker(True)
         for note_id in ("model-note", "folder-note"):

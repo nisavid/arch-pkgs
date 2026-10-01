@@ -4,6 +4,12 @@ import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+# The listed files, byte for byte, from the Open WebUI 0.11.4 sdist that
+# packages/open-webui/PKGBUILD pins (sha256 1f1a3166...97be0), with the
+# open_webui-0.11.4/ prefix dropped. To regenerate it, write a GNU-format tar
+# with Python's tarfile: every file plus its parent directories, sorted by
+# name, mtime 0, uid and gid 0, empty user and group names, modes 0755 and
+# 0644. Then compress it with `gzip -n -6`.
 SOURCE_BUNDLE = (
     REPO_ROOT
     / "tools"
@@ -12,7 +18,7 @@ SOURCE_BUNDLE = (
     / "open-webui-0.11.4-pristine-patch-preimages.tar.gz"
 )
 SOURCE_BUNDLE_SHA256 = (
-    "f7b572c9bc2fa33c580f3a9b96d7adb19d8b9bf386527f5c70975695c1488960"
+    "0f9d6e793b0a5754ab4059a821555eda9ac1fb587a584ec915246b3d691fc4c2"
 )
 EXPECTED_SOURCE_FILES = frozenset(
     {
@@ -25,6 +31,7 @@ EXPECTED_SOURCE_FILES = frozenset(
         "backend/open_webui/tools/builtin.py",
         "backend/open_webui/utils/auth.py",
         "backend/open_webui/utils/middleware.py",
+        "backend/open_webui/utils/tools.py",
         "src/lib/apis/retrieval/index.ts",
         "src/lib/components/admin/Settings/Documents.svelte",
     }

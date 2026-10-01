@@ -6,9 +6,9 @@
 # Gate scope: knowledge-base content, anything attached to a model or folder as knowledge, and chat attachments of any kind. For notes, the gate covers notes attached as knowledge to the chat's model or the chat's folder.
 # Personal data outside the gate means only the notes, chats, and memories tools and features: a note attached as knowledge only to a different model or folder, reached from another chat, goes through those personal-notes features and stays outside the gate.
 # Gate closed: a chat with any attachment returns the 503 detail, even on a model whose file context capability is off. The builtin query_*_files, grep_*_files, view_file, and view_knowledge_file tools, and view_note for a note attached as knowledge to the chat's model or folder, return it as a tool error before reading anything; search_notes omits those notes.
-# Gate qualified: explicitly requested content is allowed whole, including full-context items and text, note, chat, and url attachments; search results are reranked. The global full-context and embedding-and-retrieval bypass modes stay refused even when qualified.
+# Gate qualified: explicitly requested content is allowed whole, including full-context items and text, note, chat, and url attachments; search results are reranked. The global full-context and embedding-and-retrieval bypass modes, and hybrid search turned off, stay refused even when qualified: a chat with any attachment returns the 503 detail under any of them, whether the model's file context capability is on or off.
 # Hybrid-search errors: when hybrid search raises anything but RAGUnavailableError, the request fails with the gate's 503 instead of upstream's unreranked vector-search fallback. The gate stays qualified, so the health probe stays 200 and the next request retries.
-# Hybrid-search errors cover only exceptions hybrid search raises; a failed collection prefetch still yields empty sources (#98).
+# Failed collection prefetch: when hybrid search's prefetch get() raises, the request fails with the same 503 instead of skipping that collection as empty. A collection that get() reports missing is still skipped, and the gate stays qualified (#98). For hybrid-search errors and a failed prefetch alike, the builtin query_*_files tools return the 503 detail as a tool error instead of failing the chat.
 # Empty candidates: RerankCompressor keeps 0.11.4's early return of [] without calling the reranker, and the gate stays qualified. Nothing unreranked reaches chat, and closing the gate on an empty knowledge base would only cause an outage.
 # tests/test_open_webui_household_rag_gate.py pins each gate path above.
 diff --git a/backend/open_webui/retrieval/models/external.py b/backend/open_webui/retrieval/models/external.py
@@ -116,7 +116,7 @@ index a66a2c5..82b99e2 100644
 +            close_required_reranker()
 +            raise
 diff --git a/backend/open_webui/retrieval/utils.py b/backend/open_webui/retrieval/utils.py
-index 055f750..2630388 100644
+index 055f750..dff18c1 100644
 --- a/backend/open_webui/retrieval/utils.py
 +++ b/backend/open_webui/retrieval/utils.py
 @@ -46,6 +46,12 @@ from open_webui.models.notes import Notes
@@ -188,7 +188,17 @@ index 055f750..2630388 100644
  
      results = []
      last_error = None
-@@ -860,6 +880,8 @@ async def query_collection_with_hybrid_search(
+@@ -838,7 +858,8 @@ async def query_collection_with_hybrid_search(
+             return name, await ASYNC_VECTOR_DB_CLIENT.get(collection_name=name)
+         except Exception as e:
+             log.exception(f'Failed to fetch collection {name}: {e}')
+-            return name, None
++            # A failed fetch is not an empty collection; fail closed instead of skipping it.
++            raise RAGUnavailableError() from e
+ 
+     collection_results = dict(await asyncio.gather(*(_fetch_collection(name) for name in collection_names)))
+ 
+@@ -860,6 +881,8 @@ async def query_collection_with_hybrid_search(
                  native_hybrid_search=False,
              )
              return result, None, collection_name
@@ -197,7 +207,7 @@ index 055f750..2630388 100644
          except Exception as e:
              return None, e, collection_name
  
-@@ -1381,9 +1403,20 @@ async def get_sources_from_items(
+@@ -1381,9 +1404,20 @@ async def get_sources_from_items(
      full_context=False,
      user: UserModel | None = None,
  ):
@@ -220,7 +230,7 @@ index 055f750..2630388 100644
      extracted_collections = []
      query_results = []
      folder_items = set()
-@@ -1689,6 +1722,8 @@ async def get_sources_from_items(
+@@ -1689,6 +1723,8 @@ async def get_sources_from_items(
                          embedding_function=embedding_function,
                          k=k,
                      )
@@ -229,7 +239,7 @@ index 055f750..2630388 100644
              except Exception as e:
                  log.exception(e)
  
-@@ -1818,34 +1853,34 @@ class RerankCompressor(BaseDocumentCompressor):
+@@ -1818,34 +1854,34 @@ class RerankCompressor(BaseDocumentCompressor):
  
          scores = None
          if reranking:
@@ -289,7 +299,7 @@ index 055f750..2630388 100644
 +            final_results.append(doc)
 +        return final_results
 diff --git a/backend/open_webui/utils/middleware.py b/backend/open_webui/utils/middleware.py
-index 8234604..81188d4 100644
+index 8234604..886068c 100644
 --- a/backend/open_webui/utils/middleware.py
 +++ b/backend/open_webui/utils/middleware.py
 @@ -54,6 +54,10 @@ from open_webui.models.notes import Notes
@@ -371,7 +381,7 @@ index 8234604..81188d4 100644
          except Exception as e:
              log.exception(e)
  
-@@ -3210,8 +3226,17 @@ async def process_chat_payload(request, form_data, user, metadata, model):
+@@ -3210,8 +3226,28 @@ async def process_chat_payload(request, form_data, user, metadata, model):
          try:
              form_data, flags = await chat_completion_files_handler(request, form_data, extra_params, user)
              sources.extend(flags.get('sources', []))
@@ -381,16 +391,27 @@ index 8234604..81188d4 100644
              log.exception(e)
 +    else:
 +        # With file context off, attachments reach the model only through
-+        # tools, so refuse the whole chat here while the gate is closed.
-+        require_file_rag_ready(
-+            [item for item in (metadata.get('files') or []) if item.get('type') != 'filesystem'],
-+            request.app.state.RERANKING_FUNCTION,
-+        )
++        # tools, so refuse the whole chat here while the gate is closed or a
++        # global no-rerank mode is set, as the files handler does.
++        attached_files = [item for item in (metadata.get('files') or []) if item.get('type') != 'filesystem']
++        if attached_files:
++            rag_config = await Config.get_many(
++                'rag.enable_hybrid_search',
++                'rag.full_context',
++                'rag.bypass_embedding_and_retrieval',
++            )
++            require_file_rag_ready(
++                attached_files,
++                request.app.state.RERANKING_FUNCTION,
++                full_context=rag_config.get('rag.full_context') is True,
++                hybrid_search=rag_config.get('rag.enable_hybrid_search') is True,
++                bypass_embedding_and_retrieval=(rag_config.get('rag.bypass_embedding_and_retrieval') is True),
++            )
  
      # Save the pre-RAG message state so the native tool call loop can
      # restore to the true original (before file-source injection) rather
 diff --git a/backend/open_webui/tools/builtin.py b/backend/open_webui/tools/builtin.py
-index d80884d..711f159 100644
+index d80884d..1a8e247 100644
 --- a/backend/open_webui/tools/builtin.py
 +++ b/backend/open_webui/tools/builtin.py
 @@ -29,6 +29,11 @@ from open_webui.models.memories import Memories
@@ -442,18 +463,17 @@ index d80884d..711f159 100644
  ) -> str:
      """
      Get the full content of a note by its ID.
-@@ -1238,6 +1252,10 @@ async def view_note(
+@@ -1238,6 +1252,9 @@ async def view_note(
      if not __user__:
          return JSONCodec.dumps({'error': 'User context not available'})
  
-+    if note_id in _knowledge_note_ids(__model_knowledge__):
-+        if refusal := _rag_closed_tool_error(__request__):
-+            return refusal
++    if note_id in _knowledge_note_ids(__model_knowledge__) and _rag_closed(__request__):
++        return _rag_unavailable_tool_error()
 +
      try:
          note = await Notes.get_note_by_id(note_id)
  
-@@ -2326,6 +2344,37 @@ async def search_knowledge_files(
+@@ -2326,6 +2343,35 @@ async def search_knowledge_files(
          return JSONCodec.dumps({'error': str(e)})
  
  
@@ -474,13 +494,11 @@ index d80884d..711f159 100644
 +    return False
 +
 +
-+def _rag_closed_tool_error(request: Request) -> Optional[str]:
-+    """Refuse knowledge content with the gate's tool error while RAG is closed."""
-+    return _rag_unavailable_tool_error() if _rag_closed(request) else None
-+
-+
 +def _knowledge_note_ids(model_knowledge: Optional[list[dict]]) -> set:
-+    """Notes attached as model or folder knowledge; chat attachments stay personal."""
++    """Notes attached as knowledge to the chat's model or folder.
++
++    Chat-attached notes are left out: while the gate is closed, process_chat_payload refuses their whole chat.
++    """
 +    return {
 +        item.get('id')
 +        for item in model_knowledge or []
@@ -491,27 +509,27 @@ index d80884d..711f159 100644
  async def _get_accessible_chat_files(
      files: Optional[list[dict]],
      user: dict,
-@@ -2476,6 +2525,9 @@ async def grep_chat_files(
+@@ -2476,6 +2522,9 @@ async def grep_chat_files(
      if not __user__:
          return JSONCodec.dumps({'error': 'User context not available'})
  
-+    if refusal := _rag_closed_tool_error(__request__):
-+        return refusal
++    if _rag_closed(__request__):
++        return _rag_unavailable_tool_error()
 +
      if not pattern or not pattern.strip():
          return JSONCodec.dumps({'error': 'Pattern is required'})
  
-@@ -2529,6 +2581,9 @@ async def query_chat_files(
+@@ -2529,6 +2578,9 @@ async def query_chat_files(
      if not __user__:
          return JSONCodec.dumps({'error': 'User context not available'})
  
-+    if refusal := _rag_closed_tool_error(__request__):
-+        return refusal
++    if _rag_closed(__request__):
++        return _rag_unavailable_tool_error()
 +
      if isinstance(file_id, str) and file_id.lower() in ('none', 'null', ''):
          file_id = None
      if isinstance(count, str):
-@@ -2621,6 +2676,8 @@ async def query_chat_files(
+@@ -2621,6 +2673,8 @@ async def query_chat_files(
                  chunks.append(chunk)
  
          return JSONCodec.dumps(chunks[:count], ensure_ascii=False)
@@ -520,47 +538,47 @@ index d80884d..711f159 100644
      except Exception as e:
          log.exception(f'query_chat_files error: {e}')
          return JSONCodec.dumps({'error': str(e)})
-@@ -2654,6 +2711,9 @@ async def grep_knowledge_files(
+@@ -2654,6 +2708,9 @@ async def grep_knowledge_files(
      if not __user__:
          return JSONCodec.dumps({'error': 'User context not available'})
  
-+    if refusal := _rag_closed_tool_error(__request__):
-+        return refusal
++    if _rag_closed(__request__):
++        return _rag_unavailable_tool_error()
 +
      if not pattern or not pattern.strip():
          return JSONCodec.dumps({'error': 'Pattern is required'})
  
-@@ -2775,6 +2835,9 @@ async def view_file(
+@@ -2775,6 +2832,9 @@ async def view_file(
      if not __user__:
          return JSONCodec.dumps({'error': 'User context not available'})
  
-+    if refusal := _rag_closed_tool_error(__request__):
-+        return refusal
++    if _rag_closed(__request__):
++        return _rag_unavailable_tool_error()
 +
      # Coerce parameters from LLM tool calls (may come as strings)
      if isinstance(offset, str):
          try:
-@@ -2887,6 +2950,9 @@ async def view_knowledge_file(
+@@ -2887,6 +2947,9 @@ async def view_knowledge_file(
      if not __user__:
          return JSONCodec.dumps({'error': 'User context not available'})
  
-+    if refusal := _rag_closed_tool_error(__request__):
-+        return refusal
++    if _rag_closed(__request__):
++        return _rag_unavailable_tool_error()
 +
      # Coerce parameters from LLM tool calls (may come as strings)
      if isinstance(offset, str):
          try:
-@@ -3172,6 +3238,9 @@ async def query_knowledge_files(
+@@ -3172,6 +3235,9 @@ async def query_knowledge_files(
      if not __user__:
          return JSONCodec.dumps({'error': 'User context not available'})
  
-+    if refusal := _rag_closed_tool_error(__request__):
-+        return refusal
++    if _rag_closed(__request__):
++        return _rag_unavailable_tool_error()
 +
      # Coerce parameters from LLM tool calls (may come as strings)
      if isinstance(count, str):
          try:
-@@ -3364,6 +3433,8 @@ async def query_knowledge_files(
+@@ -3364,6 +3430,8 @@ async def query_knowledge_files(
          chunks = chunks[:count]
  
          return JSONCodec.dumps(chunks, ensure_ascii=False)
