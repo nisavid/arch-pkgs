@@ -538,6 +538,8 @@ points per request.
     Psycopg requirements unchanged.
   - Externalize the accepted system ML/native providers and package the
     non-system application closure privately with exact hashes.
+  - Select `anyio==4.14.2` instead of upstream's locked 4.14.0 for
+    GHSA-82r6-8w77-94w6 ([Private Python closure](#private-python-closure)).
   - Freeze the frontend build, Unix-socket-only service, external-reranker
     failure boundary, automatic credential delivery, and forward-only session
     epoch as package-owned source and service assets.
@@ -576,6 +578,14 @@ pacman-owned distributions. Resolution is fixed to CPython 3.14 on
 `2026-09-21T19:31:44Z`: the first whole second after PyPI recorded the 0.11.4
 source archive upload. The lock therefore admits only index files that
 existed when upstream published the release.
+
+One version deliberately diverges from upstream's `uv.lock`: the constraints
+select `anyio==4.14.2`, where upstream locks 4.14.0. GHSA-82r6-8w77-94w6
+affects AnyIO through 4.14.1, and 4.14.2 is the patched release
+([#118](https://github.com/nisavid/arch-pkgs/issues/118)); PyPI published it
+before the index cutoff. The lock verifier records this in
+`EXPECTED_SECURITY_OVERRIDES` and accepts it only while upstream still locks
+4.14.0, so a release refresh must revisit it.
 
 Regenerate and verify the lock from an exact downloaded source archive with:
 
@@ -627,8 +637,10 @@ python python-offline-closure.py archive \
 
 The 0.11.4 archives were regenerated this way twice, in independent output
 directories with separate download caches, and both runs matched byte for
-byte. The recipe fetches them from its `open-webui-0.11.4-offline-closures-v1`
-build-input release.
+byte. The AnyIO bump changed only the Python archive, which was regenerated
+the same way twice and again matched byte for byte. The recipe fetches both
+archives from its `open-webui-0.11.4-offline-closures-v2` build-input release;
+its npm archive is byte-identical to the v1 release's.
 
 For 0.11.0, these inputs removed the dependency-network blocker. The
 subsequent no-egress 0.11.0 pkgrel-3 build and payload-inspection gate passed
