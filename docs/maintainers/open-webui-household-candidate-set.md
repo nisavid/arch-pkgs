@@ -124,10 +124,10 @@ The records:
 
 - `f25fd53` is reachable through `refs/pull/87/head`.
 - `41208bd` is reachable through the tag `open-webui-0.11.4-offline-closures-v1`.
-- `0b4b327` is reachable from no ref. GitHub serves the commit today, but no
-  clone fetches it and it may be garbage-collected. For the two CTranslate2
-  archives, the durable binding is the in-repo evidence: the `PKGBUILD` and
-  `.SRCINFO` digests in
+- `0b4b327` is reachable through the tag `ctranslate2-4.8.2-1-speech-build`,
+  created on 2026-10-02 only to keep this build commit fetchable. Before that
+  no ref reached it. For the two CTranslate2 archives, the durable binding
+  remains the in-repo evidence: the `PKGBUILD` and `.SRCINFO` digests in
   [`g0-g2.json`](evidence/speech-providers-4.8.2-1.2.1/g0-g2.json), which
   equal the blobs on `main`, together with the archive bytes and each
   `.BUILDINFO` `pkgbuild_sha256sum`.
@@ -205,6 +205,6 @@ this test.
 The Git checks run only where the commit objects exist. They cover each
 `package_tree`, each `main_tree_delta`, the derived commit, and the
 `PKGBUILD` pins of the open-webui build inputs. CI's depth-1 checkout skips
-them all. A plain full clone skips the `python-rapidocr` and CTranslate2
-records, unless `refs/pull/87/head` and `0b4b327` are fetched. Run the test in
+them all. A plain full clone fetches the tags, but skips the
+`python-rapidocr` record unless `refs/pull/87/head` is fetched. Run the test in
 a maintainer clone that has those objects before changing the manifest.
