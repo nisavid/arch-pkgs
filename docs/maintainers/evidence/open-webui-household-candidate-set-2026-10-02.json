@@ -1,0 +1,221 @@
+{
+  "schema": "arch-pkgs-candidate-set/v1",
+  "candidate_set": "open-webui-household",
+  "recorded": "2026-10-02",
+  "binding_ticket": "https://github.com/nisavid/arch-pkgs/issues/88",
+  "adoption_main_commit": "2059571d63b02ee1d66b3dfed943c7554a643876",
+  "archives": [
+    {
+      "archive": {
+        "package": "open-webui",
+        "version": "0.11.4-2",
+        "arch": "x86_64",
+        "filename": "open-webui-0.11.4-2-x86_64.pkg.tar.zst",
+        "size": 186956865,
+        "sha256": "31f3fbefc2ef3c4a6e8b8ee885372a1020de563c8845904d9a716fed5896d77a",
+        "source": "open-webui/2059571",
+        "source_commit": "2059571d63b02ee1d66b3dfed943c7554a643876"
+      },
+      "source_commit_basis": "recorded-build-commit",
+      "role": "deployed",
+      "package_directory": "packages/open-webui",
+      "package_tree": "1ec719e07e43fdaea7fe1f24bb2d73f658da96d8",
+      "main_tree_delta": [],
+      "evidence": [
+        "https://github.com/nisavid/arch-pkgs/issues/88#issuecomment-5957006596"
+      ],
+      "build_inputs": [
+        {
+          "asset": "open-webui-npm-offline-closure-0.11.4.tar.zst",
+          "release": "open-webui-0.11.4-offline-closures-v1",
+          "sha256": "617abc7d60da12f080faa690de989fff38eb4cd40b519256cce35a48086b9438",
+          "evidence": "https://github.com/nisavid/arch-pkgs/issues/88#issuecomment-5957006596"
+        },
+        {
+          "asset": "open-webui-python-offline-closure-0.11.4-cp314-x86_64.tar.zst",
+          "release": "open-webui-0.11.4-python-closure-185b40a6",
+          "sha256": "65b62d21888830ae6d25a3077626b9e1a3faca2aaa192ebe2a468a86bc40e704",
+          "evidence": "https://github.com/nisavid/arch-pkgs/issues/118#issuecomment-5955992404"
+        }
+      ]
+    },
+    {
+      "archive": {
+        "package": "python-rapidocr",
+        "version": "3.9.2-1",
+        "arch": "any",
+        "filename": "python-rapidocr-3.9.2-1-any.pkg.tar.zst",
+        "size": 27198440,
+        "sha256": "0e70fb599a535f9bb1c0c0b3a2f88abe9993f7632eba8e2c618826c7f01bf99b",
+        "source": "open-webui/f25fd53",
+        "source_commit": "f25fd53b2b059b278b68a9bb4f661bdc2a06dc34"
+      },
+      "source_commit_basis": "recorded-build-commit",
+      "role": "deployed",
+      "package_directory": "packages/python-rapidocr",
+      "package_tree": "3aca7d551b2dac91c62877c5e3c47a429714d3ee",
+      "main_tree_delta": [],
+      "evidence": [
+        "https://github.com/nisavid/arch-pkgs/issues/88",
+        "https://github.com/nisavid/arch-pkgs/issues/88#issuecomment-5789540457"
+      ]
+    },
+    {
+      "archive": {
+        "package": "qdrant",
+        "version": "1.19.1-1",
+        "arch": "x86_64",
+        "filename": "qdrant-1.19.1-1-x86_64.pkg.tar.zst",
+        "size": 28289048,
+        "sha256": "56208d6725771df687563b9d12e3c963b39c63120b1412f2335411f32c21ed85",
+        "source": "qdrant",
+        "source_commit": "41208bdcd3ecd4f73a4e1c27a3a7b4f7a65bc4ae"
+      },
+      "source_commit_basis": "recorded-build-commit",
+      "role": "deployed",
+      "package_directory": "packages/qdrant",
+      "package_tree": "8c2046f08333689abb252253bca9be6458f0cb25",
+      "main_tree_delta": [
+        "README.md"
+      ],
+      "evidence": [
+        "docs/maintainers/qdrant-production-cutover.md#candidate-identities",
+        "docs/maintainers/evidence/qdrant-1.19.1-1/g0-g1.json"
+      ]
+    },
+    {
+      "archive": {
+        "package": "qdrant-migration",
+        "version": "1.18.3-1",
+        "arch": "x86_64",
+        "filename": "qdrant-migration-1.18.3-1-x86_64.pkg.tar.zst",
+        "size": 26721008,
+        "sha256": "591f16328fcff0fc0193353a65f4c783afc1d24258ae251d3a8927283276ce9e",
+        "source": "qdrant",
+        "source_commit": "51a55e7866e37887ab206372a075d814094ef7fe"
+      },
+      "source_commit_basis": "recorded-build-commit",
+      "role": "deployed",
+      "package_directory": "packages/qdrant-migration",
+      "package_tree": "da739e31cc26c89528eea7c3f75e5408f181b02a",
+      "main_tree_delta": [
+        "README.md"
+      ],
+      "evidence": [
+        "docs/maintainers/qdrant-production-cutover.md#candidate-identities",
+        "docs/maintainers/evidence/qdrant-1.19.1-1/g0-g1.json",
+        "docs/maintainers/evidence/qdrant-1.19.0-1-rebind-2026-09-22/g0-g1-rebuild.json"
+      ]
+    },
+    {
+      "archive": {
+        "package": "qdrant-web-ui",
+        "version": "0.2.18-1",
+        "arch": "any",
+        "filename": "qdrant-web-ui-0.2.18-1-any.pkg.tar.zst",
+        "size": 5728430,
+        "sha256": "962d2b7659fb66bd2eb3b2f425ef90a91cbe7701a66c31b4fd622caeb0e0f283",
+        "source": "qdrant",
+        "source_commit": "41208bdcd3ecd4f73a4e1c27a3a7b4f7a65bc4ae"
+      },
+      "source_commit_basis": "recorded-build-commit",
+      "role": "deployed",
+      "package_directory": "packages/qdrant-web-ui",
+      "package_tree": "225aa89beebcbd13672372539fbbc641193130d4",
+      "main_tree_delta": [
+        "README.md"
+      ],
+      "evidence": [
+        "docs/maintainers/qdrant-production-cutover.md#candidate-identities",
+        "docs/maintainers/evidence/qdrant-1.19.1-1/g0-g1.json"
+      ]
+    },
+    {
+      "archive": {
+        "package": "python-faster-whisper",
+        "version": "1.2.1-1",
+        "arch": "any",
+        "filename": "python-faster-whisper-1.2.1-1-any.pkg.tar.zst",
+        "size": 1087994,
+        "sha256": "9b052be890fd7f21135ca2ebc090ff140432e0e8493dd484b44585386ae8d1cb",
+        "source": "speech",
+        "source_commit": "9b41578c06fbda2b22cfda73c2fd30255d1137e9"
+      },
+      "source_commit_basis": "derived-tree-equal",
+      "role": "deployed",
+      "package_directory": "packages/python-faster-whisper",
+      "package_tree": "0746eed1d054788470fec1d71f82ee1141d01921",
+      "main_tree_delta": [
+        "README.md"
+      ],
+      "evidence": [
+        "docs/maintainers/evidence/speech-providers-4.8.2-1.2.1/"
+      ]
+    },
+    {
+      "archive": {
+        "package": "ctranslate2",
+        "version": "4.8.2-1",
+        "arch": "x86_64",
+        "filename": "ctranslate2-4.8.2-1-x86_64.pkg.tar.zst",
+        "size": 1055772,
+        "sha256": "d0843d9254afde3dedd7d92e6e218aae63d559926f3ebffcdbf2827373d8267b",
+        "source": "speech",
+        "source_commit": "0b4b32705c7873f34405daccb415edc59ca58833"
+      },
+      "source_commit_basis": "recorded-build-commit",
+      "role": "publication-identity-only",
+      "package_directory": "packages/ctranslate2",
+      "package_tree": "7d5bf8615f3033f9f791fff43fa00082a04db6a3",
+      "main_tree_delta": [
+        "README.md"
+      ],
+      "evidence": [
+        "docs/maintainers/evidence/speech-providers-4.8.2-1.2.1/"
+      ]
+    },
+    {
+      "archive": {
+        "package": "python-ctranslate2",
+        "version": "4.8.2-1",
+        "arch": "x86_64",
+        "filename": "python-ctranslate2-4.8.2-1-x86_64.pkg.tar.zst",
+        "size": 431574,
+        "sha256": "6c8e5813e12e1a36d68af357afdce744481eca359a4d1576bfcd2d46ec765d0e",
+        "source": "speech",
+        "source_commit": "0b4b32705c7873f34405daccb415edc59ca58833"
+      },
+      "source_commit_basis": "recorded-build-commit",
+      "role": "publication-identity-only",
+      "package_directory": "packages/ctranslate2",
+      "package_tree": "7d5bf8615f3033f9f791fff43fa00082a04db6a3",
+      "main_tree_delta": [
+        "README.md"
+      ],
+      "evidence": [
+        "docs/maintainers/evidence/speech-providers-4.8.2-1.2.1/"
+      ]
+    }
+  ],
+  "external_inputs": [
+    {
+      "package": "python-ctranslate2-gfx1151",
+      "version": "4.7.2-1",
+      "origin": "https://github.com/nisavid/arch-strix-halo-pkgs",
+      "role": "host speech provider; provides and conflicts with python-ctranslate2",
+      "evidence": [
+        "https://github.com/nisavid/arch-strix-halo-pkgs/blob/ac51a22f4444bc0e70bcfaa5be0fde7539d13533/packages/ctranslate2-gfx1151/PKGBUILD",
+        "docs/maintainers/evidence/speech-providers-4.8.2-1.2.1/README.md#host-provider-seam"
+      ]
+    },
+    {
+      "package": "python-sentence-transformers",
+      "version": "5.7.0-1",
+      "origin": "https://aur.archlinux.org/packages/python-sentence-transformers",
+      "role": "knowingly foreign provider of record; Open WebUI only imports it",
+      "evidence": [
+        "https://github.com/nisavid/arch-pkgs/issues/63#issuecomment-5789382398"
+      ]
+    }
+  ]
+}
