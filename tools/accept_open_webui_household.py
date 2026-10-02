@@ -875,6 +875,30 @@ def port_in_use(port: int) -> bool:
     return False
 
 
+PROC_NET_TCP = (Path("/proc/net/tcp"), Path("/proc/net/tcp6"))
+
+
+def port_listening(port: int, tables: Sequence[Path] = PROC_NET_TCP) -> bool:
+    """Whether a socket listens on ``port``, read from the kernel's TCP tables.
+
+    Unlike ``port_in_use``, it neither binds the port, which could race the
+    starting service's own bind, nor connects, which would make the relay
+    open its upstream connection.
+    """
+
+    wanted = f"{port:04X}"
+    for table in tables:
+        try:
+            rows = table.read_text().splitlines()[1:]
+        except OSError:
+            continue
+        for row in rows:
+            fields = row.split()
+            if len(fields) > 3 and fields[3] == "0A" and fields[1].rpartition(":")[2] == wanted:
+                return True
+    return False
+
+
 def filesystem_usage(path: Path) -> tuple[int, int, int]:
     """(df Use%, available bytes, used bytes) for the filesystem holding ``path``."""
 
@@ -1603,15 +1627,42 @@ def require_lemond_ready(kit: Kit) -> Any:
     mismatch = provider_mismatch(kit, kit.effective_env())
     if mismatch:
         raise sc.Blocked(mismatch)
+    provider = "the rehearsal stub" if kit.provider == "stub" else "Lemonade"
     try:
         health, models = sc.lemond_snapshot(kit.lemond())
     except (OSError, http.client.HTTPException, sc.ScenarioFailure) as error:
-        raise sc.Blocked(f"NEEDS LEAD: Lemonade is unreachable ({type(error).__name__})") from error
+        raise sc.Blocked(f"NEEDS LEAD: {provider} is unreachable ({type(error).__name__})") from error
     embedding, reranking = effective_models(kit)
     if not kit.chat_model:
         raise sc.Blocked("NEEDS LEAD: no chat model is designated")
-    sc.require_models_ready(models, health, (embedding, reranking, kit.chat_model))
+    try:
+        sc.require_models_ready(models, health, (embedding, reranking, kit.chat_model))
+    except sc.Blocked as error:
+        if kit.provider != "stub":
+            raise
+        raise sc.Blocked(str(error).replace("Lemonade", provider)) from error
     return health
+
+
+SUPPORT_UNITS = ("valkey", "relay", "sampler")
+SUPPORT_WAIT_S = 30.0
+
+
+def start_support_units(kit: Kit, timeout: float = SUPPORT_WAIT_S) -> None:
+    """Start Valkey, the reranker relay, the peer sampler, and, in a rehearsal, the stub; then wait for their ports.
+
+    The units are ``Type=simple``, so ``systemctl start`` returns at exec.
+    Open WebUI's start checks the provider and qualifies the reranker through
+    the relay, so every caller that (re)starts these units waits here for the
+    relay's port and, in a rehearsal, the stub's before starting Open WebUI.
+    """
+
+    names = SUPPORT_UNITS + (("stub",) if kit.provider == "stub" else ())
+    for name in names:
+        systemctl("start", UNITS[name])
+    waits = [("relay", "the reranker relay")] + ([("stub", "the rehearsal stub")] if kit.provider == "stub" else [])
+    for name, what in waits:
+        wait_until(lambda port=PORTS[name]: port_listening(port), timeout, what)
 
 
 def effective_models(kit: Kit) -> tuple[str, str]:
@@ -3250,7 +3301,7 @@ class Trial:
     def recovery(self) -> dict[str, Any]:
         kit = self.kit
         systemctl("start", UNITS["relay"])
-        wait_until(lambda: port_in_use(PORTS["relay"]), 30, "the reranker relay")
+        wait_until(lambda: port_listening(PORTS["relay"]), SUPPORT_WAIT_S, "the reranker relay")
         latched = kit.uds().request("GET", sc.API["rag_health"], token=self.token).status
         health = sc.resave_rag_config(kit.uds(), self.token)
         cited = cited_fact(kit.caddy(), self.token, self.chat_id(), self.seed_file)
@@ -3384,8 +3435,7 @@ class Trial:
         started = time.monotonic()
         qdrant = start_qdrant(kit)
         restored = restore_tuple(kit, qdrant)
-        for name in ("valkey", "relay", "sampler") + (("stub",) if kit.provider == "stub" else ()):
-            systemctl("start", UNITS[name])
+        start_support_units(kit)
         start_open_webui(kit)
         self.token = admin_token(kit)
         cited = cited_fact(kit.uds(), self.token, self.chat_id(), self.seed_file)
@@ -4163,10 +4213,7 @@ def cmd_up(kit: Kit, args: argparse.Namespace) -> int:
         # first up that stopped part-way decides from the recorded first-up
         # state and creates whatever collection is still missing.
         qdrant.create_collections()
-    for name in ("valkey", "relay", "sampler") + (("stub",) if kit.provider == "stub" else ()):
-        systemctl("start", UNITS[name])
-    if kit.provider == "stub":
-        wait_until(lambda: port_in_use(PORTS["stub"]), 30, "the rehearsal stub")
+    start_support_units(kit)
     if not state.get("commissioned"):
         kit.bootstrap_dropin.parent.mkdir(parents=True, exist_ok=True)
         kit.bootstrap_dropin.write_text(bootstrap_dropin(kit))

@@ -975,6 +975,7 @@ class PreflightTests(unittest.TestCase):
             with mock.patch.object(kit_module, "install_units"), mock.patch.object(kit_module, "systemctl"), \
                     mock.patch.object(kit_module, "start_qdrant", return_value=qdrant), \
                     mock.patch.object(kit_module, "start_open_webui", return_value=7.5), \
+                    mock.patch.object(kit_module, "port_listening", return_value=True), \
                     mock.patch.object(kit_module, "snapshot_resources"), \
                     mock.patch.object(kit_module.time, "time", side_effect=lambda: next(times)), \
                     contextlib.redirect_stdout(io.StringIO()):
@@ -1008,6 +1009,7 @@ class PreflightTests(unittest.TestCase):
             with mock.patch.object(kit_module, "install_units"), mock.patch.object(kit_module, "systemctl"), \
                     mock.patch.object(kit_module, "start_qdrant", return_value=qdrant), \
                     mock.patch.object(kit_module, "start_open_webui", side_effect=start), \
+                    mock.patch.object(kit_module, "port_listening", return_value=True), \
                     mock.patch.object(kit_module, "snapshot_resources"), \
                     contextlib.redirect_stdout(io.StringIO()):
                 with self.assertRaises(sc.Blocked):
@@ -1473,6 +1475,104 @@ class LemonadeSafetyTests(unittest.TestCase):
         # A health document with no start time or uptime cannot show a
         # restart, so the result is unknown rather than "no restart".
         self.assertIsNone(restarted({"status": "ok"}, {"status": "ok"}))
+
+
+
+class SupportUnitTests(unittest.TestCase):
+    """The support units start, then the relay and the stub must listen, before Open WebUI starts."""
+
+    def test_port_listening_reads_only_listening_sockets(self):
+        header = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n"
+        with tempfile.TemporaryDirectory() as directory:
+            tcp, tcp6 = Path(directory) / "tcp", Path(directory) / "tcp6"
+            tcp.write_text(header
+                           + "   0: 0100007F:33FA 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000 0 1\n"
+                           + "   1: 0100007F:5AF9 0100007F:9C40 01 00000000:00000000 00:00000000 00000000  1000 0 2\n")
+            tcp6.write_text(header
+                            + "   0: 00000000000000000000000001000000:3FC3 00000000000000000000000000000000:0000 0A "
+                            + "00000000:00000000 00:00000000 00000000  1000 0 3\n")
+            tables = (tcp, tcp6, Path(directory) / "absent")
+            self.assertTrue(kit_module.port_listening(13306, tables))   # 0x33FA, listening
+            self.assertFalse(kit_module.port_listening(23289, tables))  # 0x5AF9, established only
+            self.assertTrue(kit_module.port_listening(16323, tables))   # 0x3FC3, IPv6 listener
+            self.assertFalse(kit_module.port_listening(23305, tables))
+
+    def run_support(self, provider, listening):
+        kit = make_kit(tempfile.mkdtemp(dir=self.scratch), rehearsal=provider == "stub")
+        log = []
+        with mock.patch.object(kit_module, "systemctl", side_effect=lambda *args, **_: log.append(("start", args[1]))), \
+                mock.patch.object(kit_module, "port_listening",
+                                  side_effect=lambda port: log.append(("probe", port)) or listening(port)), \
+                mock.patch.object(kit_module.time, "sleep"):
+            kit_module.start_support_units(kit, timeout=0.05)
+        return log
+
+    def setUp(self):
+        scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(scratch.cleanup)
+        self.scratch = scratch.name
+
+    def test_the_helper_waits_for_the_relay_and_the_stub(self):
+        polls = {kit_module.PORTS["relay"]: iter([False, True]), kit_module.PORTS["stub"]: iter([False, False, True])}
+        log = self.run_support("stub", lambda port: next(polls[port]))
+        units = kit_module.UNITS
+        self.assertEqual([item for item in log if item[0] == "start"],
+                         [("start", units[name]) for name in ("valkey", "relay", "sampler", "stub")])
+        probes = [item[1] for item in log if item[0] == "probe"]
+        self.assertEqual(probes, [kit_module.PORTS["relay"]] * 2 + [kit_module.PORTS["stub"]] * 3)
+        # Every start precedes every probe.
+        self.assertLess(max(i for i, item in enumerate(log) if item[0] == "start"),
+                        min(i for i, item in enumerate(log) if item[0] == "probe"))
+        # The trial with Lemonade starts no stub and waits only for the relay.
+        log = self.run_support("lemond", lambda port: True)
+        self.assertNotIn(("start", units["stub"]), log)
+        self.assertEqual([item[1] for item in log if item[0] == "probe"], [kit_module.PORTS["relay"]])
+        with self.assertRaisesRegex(sc.ScenarioFailure, "the rehearsal stub"):
+            self.run_support("stub", lambda port: port != kit_module.PORTS["stub"])
+
+    def test_the_rollback_drill_waits_for_the_support_units_before_open_webui(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit = make_kit(directory, rehearsal=True)
+            kit.raw.mkdir(parents=True)
+            kit.anchor.mkdir(parents=True)
+            (kit.anchor / "anchor.json").write_text("{}")
+            trial = kit_module.Trial(kit)
+            trial.anchor = {"archives": [{"name": CANDIDATE_ARCHIVES[0]}], "epoch_bound": 0}
+            order = []
+
+            def open_webui(_kit, **_):
+                order.append("open-webui")
+                raise RuntimeError("stop at Open WebUI")
+
+            stubs = {name: mock.DEFAULT for name in (
+                "verify_anchor", "snapshot_resources", "systemctl", "remove_tree", "restage_trees",
+                "create_state_directories", "place_whisper", "snapshot_pre_rollback_inventory", "restore_tuple")}
+            with mock.patch.multiple(kit_module, **stubs), \
+                    mock.patch.object(kit_module, "legacy_service_state", return_value={}), \
+                    mock.patch.object(kit_module, "ledger", return_value=1), \
+                    mock.patch.object(kit_module, "start_qdrant"), \
+                    mock.patch.object(kit_module, "start_support_units",
+                                      side_effect=lambda _kit: order.append("support")), \
+                    mock.patch.object(kit_module, "start_open_webui", side_effect=open_webui), \
+                    self.assertRaisesRegex(RuntimeError, "stop at Open WebUI"):
+                trial.rollback_drill()
+        self.assertEqual(order, ["support", "open-webui"])
+
+    def test_a_rehearsal_refusal_names_the_stub_not_lemonade(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit = make_kit(directory, rehearsal=True)
+            env = candidate_env(kit_module.STUB_URL)
+            with mock.patch.object(kit_module.Kit, "effective_env", return_value=env), \
+                    mock.patch.object(sc, "lemond_snapshot", side_effect=ConnectionRefusedError()):
+                with self.assertRaisesRegex(sc.Blocked, "the rehearsal stub is unreachable") as raised:
+                    kit_module.require_lemond_ready(kit)
+            self.assertNotIn("Lemonade", str(raised.exception))
+            with mock.patch.object(kit_module.Kit, "effective_env", return_value=env), \
+                    mock.patch.object(sc, "lemond_snapshot", return_value=({"all_models_loaded": []}, {"data": []})):
+                with self.assertRaises(sc.Blocked) as raised:
+                    kit_module.require_lemond_ready(kit)
+            self.assertNotIn("Lemonade", str(raised.exception))
+            self.assertIn("the rehearsal stub", str(raised.exception))
 
 
 class PeerTests(unittest.TestCase):

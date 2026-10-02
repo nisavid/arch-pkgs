@@ -371,7 +371,9 @@ Notes on specific checks:
   clocks.
 - **The rollback drill (A-D2)** stops the slice, snapshots the cache
   inventory, removes `tree/` and all state, re-extracts from `inputs/` after a digest check against the anchor manifest,
-  reserves the epoch, and restores the tuple into fresh Qdrant 1.19.1.
+  reserves the epoch, and restores the tuple into fresh Qdrant 1.19.1. It then
+  starts the support units and waits until the reranker relay, and in a
+  rehearsal the stub, listen before it starts Open WebUI, as `up` does.
 - **The A-D3 checks** run before Caddy restarts after each drill: SQLite
   `quick_check` at Alembic head, backup digests, Valkey RDB and a sentinel
   key, collection shape and point counts, the credential tuple's
