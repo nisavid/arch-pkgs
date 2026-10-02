@@ -638,9 +638,12 @@ python python-offline-closure.py archive \
 The 0.11.4 archives were regenerated this way twice, in independent output
 directories with separate download caches, and both runs matched byte for
 byte. The AnyIO bump changed only the Python archive, which was regenerated
-the same way twice and again matched byte for byte. The recipe fetches both
-archives from its `open-webui-0.11.4-offline-closures-v2` build-input release;
-its npm archive is byte-identical to the v1 release's.
+the same way twice and again matched byte for byte. The recipe fetches the
+npm archive from its `open-webui-0.11.4-offline-closures-v1` build-input
+release. The Python archive has a release of its own, named after its lock:
+`open-webui-0.11.4-python-closure-` plus the first 8 hex characters of
+`open-webui-private-requirements.lock`'s sha256, currently `185b40a6`. A new
+lock gets a new release, and an unchanged closure is never republished.
 
 For 0.11.0, these inputs removed the dependency-network blocker. The
 subsequent no-egress 0.11.0 pkgrel-3 build and payload-inspection gate passed

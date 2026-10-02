@@ -56,12 +56,15 @@ options=(!strip !debug)
 _pyver=3.14
 _source_root="open_webui-${pkgver}"
 _pyodide_manifest_sha256=0ab15d00cda8a7dca4499d11960ea4532db5827ad5f55975c1062f6434cfbe9a
-_offline_closure_release=open-webui-0.11.4-offline-closures-v2
+# Build-input releases: the Python closure's tag ends in the first 8 hex of
+# its lock's sha256, so a new lock gets a new release.
+_npm_closure_release=open-webui-0.11.4-offline-closures-v1
+_python_closure_release=open-webui-0.11.4-python-closure-185b40a6
 source=(
   "open_webui-${pkgver}.tar.gz::https://files.pythonhosted.org/packages/57/f0/5d17412331055e9c188ff9d02ff9e3a86f631ce36839875e3454219a2d83/open_webui-${pkgver}.tar.gz"
   "open_webui-${pkgver}-py3-none-any.whl::https://files.pythonhosted.org/packages/ca/8d/051d8145b88cb3f97f9e165feaa4a266aa46f4f5f2df67affb0e72ba8066/open_webui-${pkgver}-py3-none-any.whl"
-  "open-webui-npm-offline-closure-${pkgver}.tar.zst::https://github.com/nisavid/arch-pkgs/releases/download/${_offline_closure_release}/open-webui-npm-offline-closure-${pkgver}.tar.zst"
-  "open-webui-python-offline-closure-${pkgver}-cp314-x86_64.tar.zst::https://github.com/nisavid/arch-pkgs/releases/download/${_offline_closure_release}/open-webui-python-offline-closure-${pkgver}-cp314-x86_64.tar.zst"
+  "open-webui-npm-offline-closure-${pkgver}.tar.zst::https://github.com/nisavid/arch-pkgs/releases/download/${_npm_closure_release}/open-webui-npm-offline-closure-${pkgver}.tar.zst"
+  "open-webui-python-offline-closure-${pkgver}-cp314-x86_64.tar.zst::https://github.com/nisavid/arch-pkgs/releases/download/${_python_closure_release}/open-webui-python-offline-closure-${pkgver}-cp314-x86_64.tar.zst"
   '0001-support-python-3.14.patch'
   '0002-use-system-ml-stack.patch'
   '0003-build-frozen-frontend.patch'

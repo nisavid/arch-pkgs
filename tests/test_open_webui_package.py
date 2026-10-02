@@ -268,7 +268,15 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
 
         self.assertIn("pkgrel=2", recipe)
         self.assertIn(
-            "_offline_closure_release=open-webui-0.11.4-offline-closures-v2", recipe
+            "_npm_closure_release=open-webui-0.11.4-offline-closures-v1", recipe
+        )
+        lock_digest = hashlib.sha256(
+            (OPEN_WEBUI / "open-webui-private-requirements.lock").read_bytes()
+        ).hexdigest()
+        self.assertIn(
+            "_python_closure_release=open-webui-0.11.4-python-closure-"
+            f"{lock_digest[:8]}",
+            recipe,
         )
         for asset, digest in (
             (
