@@ -436,11 +436,28 @@ class HouseholdProfileTests(unittest.TestCase):
         }
         self.assertEqual({name: kit_module.sha256_file(CANDIDATE / name) for name in pinned}, pinned)
 
-    def test_the_candidate_fixture_matches_the_in_tree_package(self):
+    def test_the_candidate_fixture_matches_the_candidates_source_commit(self):
+        # The fixture is the trial candidate's bytes, not whatever main carries
+        # later: compare it with packages/open-webui at the open-webui
+        # source_commit the committed candidate manifest binds.
+        commit = next(record["source_commit"] for record in kit_module.load_manifest(CANDIDATE_SET)["deployed"]
+                      if record["package"] == "open-webui")
+
+        def git(*arguments):
+            try:
+                return subprocess.run(["git", "-C", str(REPO_ROOT), *arguments], capture_output=True, check=False)
+            except OSError:
+                return None
+
+        present = git("cat-file", "-e", f"{commit}^{{commit}}")
+        if present is None or present.returncode != 0:
+            self.skipTest(f"the candidate's source commit {commit[:7]} is not in this clone")
         for name in ("open-webui.env", "household.env.example", "open-webui.service"):
             with self.subTest(name):
-                self.assertEqual((CANDIDATE / name).read_bytes(),
-                                 (REPO_ROOT / "packages" / "open-webui" / name).read_bytes())
+                shown = git("show", f"{commit}:packages/open-webui/{name}")
+                assert shown is not None
+                self.assertEqual(shown.returncode, 0, shown.stderr)
+                self.assertEqual((CANDIDATE / name).read_bytes(), shown.stdout)
 
 
 class UnitDerivationTests(unittest.TestCase):
