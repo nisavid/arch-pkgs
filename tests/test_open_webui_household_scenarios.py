@@ -534,22 +534,81 @@ class LemonadeSafetyTests(unittest.TestCase):
         self.assertEqual(scenarios.listed_model_id({canonical}, bare), canonical)
         self.assertIsNone(scenarios.listed_model_id({"x"}, canonical))
 
-    def test_configure_sets_the_listed_chat_id_as_the_default(self):
+    class FakeWebui:
+        """Open WebUI's admin routes for configure: a model list and a model-entry table."""
+
+        def __init__(self, listed, registered=(), inaccessible=(), create_status=200, raced=False):
+            self.listed = listed
+            # raced: another writer registers the model while this create fails.
+            self.raced = raced
+            self.registered = set(registered)
+            self.inaccessible = set(inaccessible)
+            self.create_status = create_status
+            self.posted = {}
+            self.creates = []
+
+        def json(self, method, path, payload=None, token=None):
+            if method == "POST":
+                self.posted[path] = payload
+                return {}
+            return {"data": [{"id": item} for item in self.listed]} if path == scenarios.API["models"] else {}
+
+        def request(self, method, path, payload=None, token=None, **_):
+            if method == "POST" and path == scenarios.API["model_create"]:
+                assert payload is not None
+                self.creates.append(payload)
+                if self.create_status == 200 or self.raced:
+                    self.registered.add(payload["id"])
+                if self.create_status == 200:
+                    return scenarios.Response(200, "application/json", json.dumps(payload).encode())
+                return scenarios.Response(self.create_status, "application/json", b'{"detail":"taken"}')
+            prefix = scenarios.API["model"].split("{")[0]
+            if method == "GET" and path.startswith(prefix):
+                model_id = scenarios.urllib.parse.unquote(path[len(prefix):])
+                if model_id in self.inaccessible:
+                    return scenarios.Response(401, "application/json", b'{"detail":"prohibited"}')
+                if model_id in self.registered:
+                    return scenarios.Response(200, "application/json", b"{}")
+                return scenarios.Response(404, "application/json", b'{"detail":"We could not find what you are looking for :/"}')
+            raise AssertionError(f"unexpected {method} {path}")
+
+    def test_configure_registers_the_listed_chat_model_and_sets_it_as_the_default(self):
         bare = scenarios.bare_model_id(scenarios.DEFAULT_CHAT_MODEL)
-        posted = {}
-
-        class FakeWebui:
-            def json(self, method, path, payload=None, token=None):
-                if method == "POST":
-                    posted[path] = payload
-                    return {}
-                return {"data": [{"id": bare}]} if path == scenarios.API["models"] else {}
-
-        summary = scenarios.configure(FakeWebui(), "t", chat_model=scenarios.DEFAULT_CHAT_MODEL)
-        self.assertEqual(posted[scenarios.API["models_config"]]["DEFAULT_MODELS"], bare)
+        webui = self.FakeWebui([bare])
+        summary = scenarios.configure(webui, "t", chat_model=scenarios.DEFAULT_CHAT_MODEL)
+        self.assertEqual(webui.posted[scenarios.API["models_config"]]["DEFAULT_MODELS"], bare)
         self.assertEqual(summary["chat_model"], bare)
+        self.assertEqual(summary["chat_model_registration"], "created")
         self.assertEqual(summary["designated_chat_model"], scenarios.DEFAULT_CHAT_MODEL)
         self.assertEqual(summary["whisper_model"], "base")
+        # The entry is the 0.11.4 ModelForm for the connection's own model.
+        self.assertEqual(webui.creates, [{"id": bare, "base_model_id": None, "name": bare, "meta": {}, "params": {}}])
+        self.assertEqual(scenarios.webui_chat_model(webui, "t", scenarios.DEFAULT_CHAT_MODEL), bare)
+
+    def test_registering_the_chat_model_is_idempotent(self):
+        webui = self.FakeWebui(["chat"], registered={"chat"})
+        self.assertEqual(scenarios.configure(webui, "t", chat_model="chat")["chat_model_registration"], "existing")
+        self.assertEqual(webui.creates, [])
+        # A create that loses a race to another writer still ends registered.
+        racing = self.FakeWebui(["chat"], create_status=401, raced=True)
+        self.assertEqual(scenarios.register_chat_model(racing, "t", "chat"), "existing")
+        # A create that fails outright is a failure that names Open WebUI's detail.
+        failing = self.FakeWebui(["chat"], create_status=400)
+        with self.assertRaisesRegex(scenarios.ScenarioFailure, "HTTP 400: taken"):
+            scenarios.register_chat_model(failing, "t", "chat")
+
+    def test_the_chat_precondition_refuses_a_listed_but_unregistered_model(self):
+        webui = self.FakeWebui(["chat"])
+        with self.assertRaisesRegex(scenarios.Blocked, "lists the chat model chat but has no model entry"):
+            scenarios.webui_chat_model(webui, "t", "chat")
+        self.assertEqual(webui.creates, [])
+        hidden = self.FakeWebui(["chat"], inaccessible={"chat"})
+        with self.assertRaisesRegex(scenarios.Blocked, "grant this account read access"):
+            scenarios.webui_chat_model(hidden, "t", "chat")
+        with self.assertRaisesRegex(scenarios.Blocked, "cannot read"):
+            scenarios.register_chat_model(hidden, "t", "chat")
+        with self.assertRaisesRegex(scenarios.Blocked, "does not list"):
+            scenarios.webui_chat_model(self.FakeWebui(["other"]), "t", "chat")
 
     def test_the_resmoke_chat_model_defaults_to_the_owner_pin(self):
         args = scenarios._parser().parse_args(["resmoke", "--target", "production", "--receipt", "r.json"])

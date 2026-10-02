@@ -230,6 +230,8 @@ API = MappingProxyType(
         "chat_create": "/api/v1/chats/new",
         "chat_record": "/api/v1/chats/{id}",
         "models": "/api/models",
+        "model": "/api/v1/models/model?id={id}",
+        "model_create": "/api/v1/models/create",
         "transcriptions": "/api/v1/audio/transcriptions",
         "ollama_config": "/ollama/config",
         "ollama_config_update": "/ollama/config/update",
@@ -854,8 +856,55 @@ class Endpoint:
     def json(self, method: str, path: str, payload: Any = None, *, token: str | None = None, expected: tuple[int, ...] = (200,)) -> Any:
         response = self.request(method, path, payload=payload, token=token)
         if response.status not in expected:
-            raise ScenarioFailure(f"{method} {path} returned HTTP {response.status}")
+            raise ScenarioFailure(f"{method} {path.split('?')[0]} returned HTTP {response.status}{error_detail(response)}")
         return response.json()
+
+
+ERROR_DETAIL_LIMIT = 200
+_DETAIL_REDACTIONS = (
+    (re.compile(r"\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b"), "<email>"),
+    (re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b"), "<address>"),
+    (re.compile(r"(?<![\w.:/])/(?:[\w.@+-]+/)+[\w.@+-]*"), "<path>"),
+    (re.compile(r"(?i)\b(bearer|token|key|secret|password)([=: ]+)\S+"), r"\1\2<redacted>"),
+)
+
+
+def public_detail(text: str) -> str:
+    """One line of error text, bounded and redacted for public evidence."""
+
+    line = " ".join(text.split())
+    for pattern, token in _DETAIL_REDACTIONS:
+        line = pattern.sub(token, line)
+    return line if len(line) <= ERROR_DETAIL_LIMIT else line[: ERROR_DETAIL_LIMIT - 1] + "…"
+
+
+def response_detail(response: Response) -> str | None:
+    """The error detail a response carries: its JSON ``detail`` (or ``error``), else its text, public-safe."""
+
+    if not response.body:
+        return None
+    text: Any = None
+    try:
+        document = response.json()
+    except (ValueError, UnicodeDecodeError):
+        document = None
+    if isinstance(document, dict):
+        text = document.get("detail", document.get("error"))
+        if isinstance(text, dict):
+            text = text.get("message") or json.dumps(text, sort_keys=True)
+        elif text is not None and not isinstance(text, str):
+            text = json.dumps(text, sort_keys=True)
+    if text is None:
+        text = response.body.decode("utf-8", "replace")
+    detail = public_detail(text)
+    return detail or None
+
+
+def error_detail(response: Response) -> str:
+    """``": <detail>"`` for a failure message, or ``""`` when the response carries none."""
+
+    detail = response_detail(response)
+    return f": {detail}" if detail else ""
 
 
 def multipart_file(field: str, filename: str, data: bytes, content_type: str) -> tuple[bytes, str]:
@@ -1157,7 +1206,7 @@ def zerank_qualification(ctx: Context) -> dict[str, Any]:
             raise Blocked(NEEDS_OWNER_RESTART)
         raise Blocked(f"NEEDS: re-save the RAG config or restart {ctx.unit}")
     if health.status != 200 or (health.json() or {}).get("status") != "qualified":
-        raise ScenarioFailure(f"retrieval health returned HTTP {health.status}")
+        raise ScenarioFailure(f"retrieval health returned HTTP {health.status}{error_detail(health)}")
     query, documents = rag_gate_constants()
     response = ctx.lemond.json(
         "POST",
@@ -1212,7 +1261,7 @@ def cited_answer(ctx: Context) -> dict[str, Any]:
     started = time.monotonic()
     upload = ctx.webui.request("POST", API["files"], body=body, content_type=content_type, token=ctx.token)
     if upload.status != 200 or not isinstance((upload.json() or {}).get("id"), str):
-        raise ScenarioFailure(f"handbook upload returned HTTP {upload.status}")
+        raise ScenarioFailure(f"handbook upload returned HTTP {upload.status}{error_detail(upload)}")
     file_id = upload.json()["id"]
     timings = {"upload_s": round(time.monotonic() - started, 3)}
     try:
@@ -1235,7 +1284,7 @@ def cited_answer(ctx: Context) -> dict[str, Any]:
         )
         timings["chat_s"] = round(time.monotonic() - started, 3)
         if response.status != 200:
-            raise ScenarioFailure(f"file-scoped chat returned HTTP {response.status}")
+            raise ScenarioFailure(f"file-scoped chat returned HTTP {response.status}{error_detail(response)}")
         text, sources = parse_chat_response(response.body, response.content_type)
         summary = summarize_sources(sources)
         values = {
@@ -1298,7 +1347,7 @@ def stt(ctx: Context) -> dict[str, Any]:
     )
     elapsed = round(time.monotonic() - started, 3)
     if response.status != 200:
-        raise ScenarioFailure(f"transcription returned HTTP {response.status}")
+        raise ScenarioFailure(f"transcription returned HTTP {response.status}{error_detail(response)}")
     result = response.json()
     if not isinstance(result, dict):
         result = {}
@@ -1473,11 +1522,13 @@ def configure(
     audio = webui.json("GET", API["audio_config"], token=token) or {}
     stt_config = {**(audio.get("stt") or {}), "ENGINE": "", "WHISPER_MODEL": whisper_model}
     webui.json("POST", API["audio_config_update"], {**audio, "stt": stt_config}, token=token)
-    listed = webui_chat_model(webui, token, chat_model)
+    listed = listed_chat_model(webui, token, chat_model)
+    registration = register_chat_model(webui, token, listed)
     defaults = webui.json("GET", API["models_config"], token=token) or {}
     webui.json("POST", API["models_config"], {**defaults, "DEFAULT_MODELS": listed}, token=token)
     return {
         "chat_model": listed,
+        "chat_model_registration": registration,
         "designated_chat_model": chat_model,
         "whisper_model": whisper_model,
         "ollama": False,
@@ -1485,12 +1536,12 @@ def configure(
     }
 
 
-def webui_chat_model(webui: Endpoint, token: str, chat_model: str) -> str:
+def listed_chat_model(webui: Endpoint, token: str, chat_model: str) -> str:
     """The id Open WebUI lists for the designated chat model, as this account sees it.
 
     Open WebUI forwards chat by the id it lists, which may be the bare name of
-    a ``user.`` id.  A model the account cannot see is a precondition: the
-    owner grants the account access in the admin UI.
+    a ``user.`` id.  Listed is not usable: ``/api/models`` also lists a model
+    with no model entry to an admin.
     """
 
     models = webui.json("GET", API["models"], token=token) or {}
@@ -1499,6 +1550,64 @@ def webui_chat_model(webui: Endpoint, token: str, chat_model: str) -> str:
         raise Blocked(
             f"NEEDS OWNER: Open WebUI does not list the chat model {chat_model} for this account"
         )
+    return listed
+
+
+def model_registration(webui: Endpoint, token: str, model_id: str) -> str:
+    """``registered``, ``unregistered``, or ``inaccessible``: Open WebUI's model entry, as this account sees it."""
+
+    response = webui.request("GET", API["model"].format(id=urllib.parse.quote(model_id, safe="")), token=token)
+    if response.status == 200:
+        return "registered"
+    if response.status == 404:
+        return "unregistered"
+    if response.status in (401, 403):
+        return "inaccessible"
+    raise ScenarioFailure(f"the model entry read returned HTTP {response.status}{error_detail(response)}")
+
+
+def register_chat_model(webui: Endpoint, token: str, model_id: str) -> str:
+    """Create Open WebUI's model entry for the listed chat model, once; return ``created`` or ``existing``.
+
+    With ``BYPASS_ADMIN_ACCESS_CONTROL=false``, the packaged default, Open
+    WebUI checks even an admin's chat against the model's entry and refuses a
+    model that has none ("Model not found", HTTP 400), although it lists that
+    model to admins.  The entry carries no base model, so it configures the
+    connection's own model, and the admin who creates it owns it.
+    """
+
+    state = model_registration(webui, token, model_id)
+    if state == "registered":
+        return "existing"
+    if state == "inaccessible":
+        raise Blocked(f"NEEDS OWNER: the chat model {model_id} has an entry this account cannot read")
+    form = {"id": model_id, "base_model_id": None, "name": model_id, "meta": {}, "params": {}}
+    created = webui.request("POST", API["model_create"], payload=form, token=token)
+    # A concurrent create answers 401 "taken"; the read below settles either way.
+    if model_registration(webui, token, model_id) != "registered":
+        raise ScenarioFailure(
+            f"registering the chat model returned HTTP {created.status}{error_detail(created)}"
+        )
+    return "created" if created.status == 200 else "existing"
+
+
+def webui_chat_model(webui: Endpoint, token: str, chat_model: str) -> str:
+    """The listed id of the designated chat model, once Open WebUI has a model entry for it this account can read.
+
+    Listed and registered is the precondition for chat: a listed model with no
+    entry is refused at chat time even for an admin.  ``configure`` registers
+    it, and the owner grants a non-admin account read access in the admin UI.
+    """
+
+    listed = listed_chat_model(webui, token, chat_model)
+    state = model_registration(webui, token, listed)
+    if state == "unregistered":
+        raise Blocked(
+            f"NEEDS OWNER: Open WebUI lists the chat model {listed} but has no model entry for it; "
+            "run configure as the admin to register it"
+        )
+    if state == "inaccessible":
+        raise Blocked(f"NEEDS OWNER: grant this account read access to the chat model {listed}")
     return listed
 
 

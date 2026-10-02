@@ -647,8 +647,9 @@ reach the socket.
      /usr/lib/open-webui/open-webui-commission-admin
    ```
 
-4. Configure the chat model over the socket with the kit's shared `configure`
-   helper, the same code the acceptance trial ran:
+4. Configure the chat connection and register the chat model over the
+   socket with the kit's shared `configure` helper, the same code the
+   acceptance trial ran:
 
    ```bash
    sudo systemd-run --pipe --wait --collect \
@@ -661,6 +662,16 @@ reach the socket.
    `--lemond-url` is the origin the profile names: the helper rewrites the
    chat connection to it. `--chat-model` defaults to the owner-pinned id; the
    helper sets whichever form Open WebUI lists as the default model.
+
+   **Register the chat model.** The helper also creates Open WebUI's model
+   entry for that listed id, as the admin (`POST /api/v1/models/create`, no
+   base model, so the entry configures the connection's own model), unless
+   the entry already exists. This step is required: the packaged
+   `BYPASS_ADMIN_ACCESS_CONTROL=false` makes Open WebUI check even an admin's
+   chats against the model's entry, and it refuses a model with no entry
+   ("Model not found", HTTP 400), although it still lists that model to
+   admins. The helper's JSON line must show `"configure": "PASS"` and
+   `"chat_model_registration"` as `created` or `existing`.
 
 5. Remove the bootstrap inputs and restart normally:
 
@@ -851,7 +862,8 @@ sudo tailscale --socket=/run/open-webui-tailnet/tailscaled.sock serve status
 
 The owner decided that the re-smoke runs as a dedicated smoke account,
 created in this window. The owner creates it in the admin UI as an ordinary
-user, never an admin, grants it access to the owner-pinned chat model, and
+user, never an admin, grants it read access to the chat model's entry that
+P4 step 4 registered (the entry's access settings in the admin UI), and
 stores its credentials as the acceptance runbook's re-smoke section shows. On
 a host where `systemd-creds --user` cannot decrypt, those credentials are 0400
 files in a 0700 directory the owner owns, loaded with `LoadCredential=`; the
@@ -864,8 +876,8 @@ index, and cited-answer canary, and the speech-to-text smoke.
 - Rollback: delete the account in the admin UI and remove its two
   credential files.
 - HAND-BACK: `HAND-BACK: open-webui smoke account ready`
-- Agent: the re-smoke precondition passes: the account signs in and Open
-  WebUI lists the chat model for it.
+- Agent: the re-smoke precondition passes: the account signs in, Open WebUI
+  lists the chat model for it, and the account can read the model's entry.
 
 ## P6: production anchor
 
