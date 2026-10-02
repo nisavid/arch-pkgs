@@ -331,7 +331,7 @@ only.
 | `open-webui.acceptance.drill.rollback` (A-D2, A-D3) | Archives match the anchor manifest; state restore timed; total window recorded; never `:8080`: the host's own `open-webui.service` state is unchanged across the drill and no acceptance process listens on `:8080`. | ceiling 40 s state; window recorded |
 | `open-webui.acceptance.qdrant.paging` | The generated paging corpus indexes with packaged hybrid search on: its file tenant and a knowledge base built from it each hold exactly 1,100 points, a knowledge-scoped chat returns non-empty sources that include the sentence planted in section 1,050, and a BM25-only query finds the knowledge tenant's first point past one scroll page. The step detail records both measured point counts. The knowledge base and file are deleted afterwards, and a failed delete fails the step; an upload whose processing fails or times out is deleted before the step fails. See [Qdrant paging](#qdrant-paging). | counts exact; timings recorded |
 | `open-webui.acceptance.failclosed.hybrid-error` | The reranker is healthy and health is 200. A knowledge base built from the indexed handbook gets one planted Qdrant point whose metadata payload is null, and Qdrant reads that point back in the knowledge tenant, which counts one point more than the copy, before any chat. A knowledge-scoped chat returns 503 with the fixed detail and no sources, because hybrid search fails for the only collection and 0005 refuses the unreranked vector fallback. Health stays 200 (no latch). After the point is deleted and the tenant is back to the copy's count, the same chat returns 200 with the canonical fact in non-empty sources that carry finite scores, with no restart or re-save. The knowledge base is deleted afterwards; a failed delete fails the step. See [Gate checks](#gate-checks). | exact |
-| `open-webui.acceptance.resources` (A-RES1..3) | `memory.events` `oom_kill` 0 for every unit and for the kit slice, whose count is hierarchical and so still covers a unit whose cgroup is gone; an active unit whose count cannot be read fails the gate as unobserved; and `NRestarts` 0 in every snapshot for every unit (systemd resets it on each planned start, and a snapshot precedes each one); peak memory, CPU, Qdrant sizes, snapshot and backup sizes, and the cache inventory recorded. | gates: no OOM, no unplanned restart |
+| `open-webui.acceptance.resources` (A-RES1..3) | `memory.events` `oom_kill` 0 for every unit and for the kit slice, whose count is hierarchical and so still covers a unit whose cgroup is gone; an active unit whose count cannot be read fails the gate as unobserved; and `NRestarts` 0 in every snapshot for every unit (systemd resets it on each planned start, and a snapshot precedes each one); peak memory, CPU, Qdrant sizes, snapshot and backup sizes, and the cache additions since `stage`, including those the rollback wipe removed, recorded and labelled. | gates: no OOM, no unplanned restart |
 | `open-webui.acceptance.evidence` (A-E1, A-E3) | Public-safe evidence with `trial_set_count=1`, the restore and rollback drills counted from the steps that actually ran (a critical failure that stops the trial first records 0 and fails this step), and no generation fields. | pass/fail |
 
 Between the stored-secret check and the zembed canary, the trial also
@@ -369,14 +369,19 @@ Notes on specific checks:
   the drill with the live state as the backup left it, and the restore drill
   restarts the services it stopped. The check runs outside the drill
   clocks.
-- **The rollback drill (A-D2)** stops the slice, removes `tree/` and all state,
-  re-extracts from `inputs/` after a digest check against the anchor manifest,
+- **The rollback drill (A-D2)** stops the slice, snapshots the cache
+  inventory, removes `tree/` and all state, re-extracts from `inputs/` after a digest check against the anchor manifest,
   reserves the epoch, and restores the tuple into fresh Qdrant 1.19.1.
 - **The A-D3 checks** run before Caddy restarts after each drill: SQLite
   `quick_check` at Alembic head, backup digests, Valkey RDB and a sentinel
   key, collection shape and point counts, the credential tuple's
   fingerprints, the epoch above the recorded bound, a pre-backup session
   rejected with 401, and a fresh login succeeding.
+- **The cache inventory** is recorded, never gated. Because the rollback wipe
+  removes every cache, the resources step adds the inventory taken just before
+  it to the end-of-trial one, and labels each file added since `stage` as
+  `model_or_asset_like` (Hugging Face `models--*`, weight, ONNX, tokenizer, or
+  tiktoken files) or `generated`; the expected record has no model or asset.
 
 ### Gate checks
 

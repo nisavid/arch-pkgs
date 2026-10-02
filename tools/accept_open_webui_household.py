@@ -3357,6 +3357,9 @@ class Trial:
         systemctl("stop", UNITS["caddy"])
         for unit in reversed(kit.units()):
             systemctl("stop", unit, check=False)
+        # The wipe below removes every containment cache, so the end-of-trial
+        # inventory alone would miss anything the trial added before it.
+        (kit.raw / PRE_ROLLBACK_INVENTORY).write_text(json.dumps(cache_inventory(kit)))
         remove_tree(kit.tree)
         remove_tree(kit.path("state"))
         restage_trees(kit, self.anchor["archives"])
@@ -3409,15 +3412,17 @@ class Trial:
         snapshot_resources(kit, "end of trial")
         gates = resource_gates(read_jsonl(kit.raw / "resources.jsonl"))
         qdrant = kit.qdrant()
-        before = set(json.loads((kit.raw / "cache-inventory.json").read_text()))
-        after = set(cache_inventory(kit))
+        before = json.loads((kit.raw / "cache-inventory.json").read_text())
+        pre_rollback_path = kit.raw / PRE_ROLLBACK_INVENTORY
+        pre_rollback = json.loads(pre_rollback_path.read_text()) if pre_rollback_path.is_file() else None
         values = {
             **gates,
             "qdrant_storage": tree_sizes(kit.path("state", "qdrant", "storage")),
             "points": {name: shape.get("points") for name, shape in qdrant.shapes().items()},
             "anchor": self.anchor.get("sizes"),
             "snapshot_bytes": self.anchor.get("snapshot_bytes"),
-            "cache_inventory_new_files": sorted(after - before),
+            # Record only, never a gate (the lead's ruling on #89).
+            "cache_inventory": cache_inventory_record(before, pre_rollback, cache_inventory(kit)),
         }
         if not gates["passes"]:
             raise sc.ScenarioFailure(json.dumps({"oom_kills": gates["oom_kills"],
@@ -3620,8 +3625,59 @@ def _rag_unavailable_detail() -> str:
     return detail
 
 
+PRE_ROLLBACK_INVENTORY = "cache-inventory-before-rollback.json"
+# Additions that look like a fetched model or asset: the Hugging Face hub's
+# models--<org>--<name> layout, weight, ONNX, and tokenizer files, and
+# tiktoken's BPE cache.  Everything else is labelled generated.
+MODEL_ASSET_SUFFIXES = (
+    ".safetensors", ".bin", ".pt", ".pth", ".ckpt", ".onnx", ".onnx_data", ".ort",
+    ".gguf", ".ggml", ".h5", ".msgpack", ".tflite", ".pb", ".model", ".tiktoken",
+)
+TOKENIZER_FILES = frozenset({
+    "tokenizer.json", "tokenizer_config.json", "tokenizer.model", "special_tokens_map.json",
+    "added_tokens.json", "vocab.json", "vocab.txt", "vocabulary.txt", "vocabulary.json", "merges.txt",
+    "spiece.model", "sentencepiece.bpe.model",
+})
+
+
+def cache_addition_kind(path: str) -> str:
+    """``model-or-asset`` for a path that looks fetched, else ``generated``; a label for review only."""
+
+    parts = Path(path).parts
+    name = parts[-1] if parts else ""
+    if (
+        any(part.startswith("models--") for part in parts)
+        or "tiktoken" in parts
+        or name in TOKENIZER_FILES
+        or name.lower().endswith(MODEL_ASSET_SUFFIXES)
+    ):
+        return "model-or-asset"
+    return "generated"
+
+
+def cache_inventory_record(
+    staged: Iterable[str], pre_rollback: Iterable[str] | None, end: Iterable[str]
+) -> dict[str, Any]:
+    """The trial's cache additions: the union of the pre-rollback and end-of-trial
+    inventories, less the inventory ``stage`` took, labelled by kind."""
+
+    added = (set(pre_rollback or ()) | set(end)) - set(staged)
+    return {
+        "pre_rollback_snapshot": pre_rollback is not None,
+        "new_files": sorted(added),
+        "model_or_asset_like": sorted(path for path in added if cache_addition_kind(path) == "model-or-asset"),
+        "generated": sorted(path for path in added if cache_addition_kind(path) == "generated"),
+    }
+
+
 def cache_inventory(kit: Kit) -> list[str]:
-    """Files under every containment cache, HOME, and TMPDIR (uploads excluded)."""
+    """Files, relative to the root, under each unit's containment XDG cache, data,
+    and config directories, ``TORCH_HOME``, ``HF_HOME``, and ``TMPDIR``, and
+    under Open WebUI's ``CACHE_DIR`` (uploads excluded).
+
+    No unit's ``HOME`` is walked: Open WebUI's is its whole state directory, which
+    holds the database and the uploads.
+    """
 
     roots = {Path(value.split("=", 1)[1]) for directory in ("open-webui", "qdrant", "valkey", "relay", "caddy", "sampler", "stub")
              for _, value in containment_environment(kit, directory)

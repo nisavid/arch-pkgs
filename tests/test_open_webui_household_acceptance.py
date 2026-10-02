@@ -2694,6 +2694,74 @@ class ResourceTests(unittest.TestCase):
         self.assertEqual(kit_module.resource_gates(no_slice)["oom_unobserved"], [kit_slice])
 
 
+    def test_the_cache_inventory_walks_the_caches_but_not_home_or_uploads(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit = make_kit(directory)
+            root = kit.root
+            files = {
+                "state/open-webui/cache/xdg/fetched.bin": True,  # XDG_CACHE_HOME
+                "state/qdrant/cache/huggingface/hub/x.json": True,  # HF_HOME
+                "tmp/relay/scratch": True,  # TMPDIR
+                "state/open-webui/cache/tiktoken/9b5ad71b2ce5302211f9c61530b329a4922fc6a4": True,  # CACHE_DIR
+                "state/open-webui/cache/uploads/handbook.md": False,
+                "state/open-webui/data/webui.db": False,
+                "state/qdrant/home/.bash_history": False,  # HOME
+            }
+            for relative in files:
+                (root / relative).parent.mkdir(parents=True, exist_ok=True)
+                (root / relative).write_text("x")
+            with mock.patch.object(kit_module.Kit, "overlay",
+                                   return_value={"CACHE_DIR": str(root / "state" / "open-webui" / "cache")}):
+                inventory = kit_module.cache_inventory(kit)
+        self.assertEqual(inventory, sorted(relative for relative, walked in files.items() if walked))
+
+    def test_cache_additions_include_files_the_rollback_wipe_removed_and_are_labelled(self):
+        staged = ["state/open-webui/cache/whisper/models/models--Systran--faster-whisper-base/blobs/a"]
+        pre_rollback = staged + [
+            "state/open-webui/cache/huggingface/hub/models--org--reranker/snapshots/r/model.safetensors",
+            "state/open-webui/cache/xdg/fontconfig/cache-1",
+        ]
+        end = staged + ["state/open-webui/cache/tiktoken/9b5ad71b2ce5302211f9c61530b329a4922fc6a4",
+                        "tmp/open-webui/upload-1.part"]
+        record = kit_module.cache_inventory_record(staged, pre_rollback, end)
+        self.assertTrue(record["pre_rollback_snapshot"])
+        self.assertEqual(record["new_files"], sorted(set(pre_rollback[1:] + end[1:])))
+        self.assertEqual(record["model_or_asset_like"], [
+            "state/open-webui/cache/huggingface/hub/models--org--reranker/snapshots/r/model.safetensors",
+            "state/open-webui/cache/tiktoken/9b5ad71b2ce5302211f9c61530b329a4922fc6a4",
+        ])
+        self.assertEqual(record["generated"], ["state/open-webui/cache/xdg/fontconfig/cache-1",
+                                               "tmp/open-webui/upload-1.part"])
+        for name in ("tokenizer.json", "model.onnx", "weights.gguf"):
+            self.assertEqual(kit_module.cache_addition_kind(f"tmp/x/{name}"), "model-or-asset", name)
+        # A trial that stopped before the rollback drill has only the end set.
+        self.assertFalse(kit_module.cache_inventory_record(staged, None, end)["pre_rollback_snapshot"])
+
+    def test_the_rollback_drill_snapshots_the_cache_inventory_before_its_wipe(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit = make_kit(directory)
+            kit.raw.mkdir(parents=True)
+            kit.anchor.mkdir(parents=True)
+            (kit.anchor / "anchor.json").write_text("{}")
+            trial = kit_module.Trial(kit)
+            trial.anchor = {"archives": [{"name": CANDIDATE_ARCHIVES[0]}]}
+            seen = []
+
+            def wipe(path):
+                seen.append((path, json.loads((kit.raw / kit_module.PRE_ROLLBACK_INVENTORY).read_text())))
+                raise RuntimeError("stop after the first wipe")
+
+            with mock.patch.object(kit_module, "verify_anchor"), \
+                    mock.patch.object(kit_module, "legacy_service_state", return_value={}), \
+                    mock.patch.object(kit_module, "snapshot_resources"), \
+                    mock.patch.object(kit_module, "systemctl"), \
+                    mock.patch.object(kit_module, "cache_inventory", return_value=["tmp/open-webui/fetched.onnx"]), \
+                    mock.patch.object(kit_module, "remove_tree", side_effect=wipe), \
+                    self.assertRaisesRegex(RuntimeError, "first wipe"):
+                trial.rollback_drill()
+        self.assertEqual(seen, [(kit.tree, ["tmp/open-webui/fetched.onnx"])])
+
+
 class EvidenceTests(unittest.TestCase):
     def test_trial_map_is_one_pass_with_the_frozen_resmoke_ids_in_order(self):
         steps = kit_module.TRIAL_STEPS
