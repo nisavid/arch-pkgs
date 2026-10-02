@@ -19,8 +19,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SCENARIOS = REPO_ROOT / "tools" / "open_webui_household_scenarios.py"
 STUB = REPO_ROOT / "tools" / "fixtures" / "open-webui-household-acceptance" / "stub_provider.py"
 # The trial candidate's open-webui.env and household profile example (exact
-# copies of the 0.11.4-1 package files; the kit tests pin their digests).
-CANDIDATE = REPO_ROOT / "tools" / "fixtures" / "open-webui-household-acceptance" / "open-webui-0.11.4-1"
+# copies of the 0.11.4-2 package files; the kit tests pin their digests).
+CANDIDATE = REPO_ROOT / "tools" / "fixtures" / "open-webui-household-acceptance" / "open-webui-0.11.4-2"
 PACKAGED_ENV = CANDIDATE / "open-webui.env"
 PROFILE_EXAMPLE = CANDIDATE / "household.env.example"
 RAG_GATE = REPO_ROOT / "packages" / "open-webui" / "open-webui-rag-gate.py"
@@ -282,8 +282,8 @@ class EnvironTests(unittest.TestCase):
 
     def test_the_trial_derives_the_production_entry_from_the_deployed_archive(self):
         env = candidate_env()
-        derived = scenarios.production_expectation("open-webui-0.11.4-1-x86_64.pkg.tar.zst", "a" * 64, env)
-        self.assertEqual(derived["version"], "0.11.4-1")
+        derived = scenarios.production_expectation("open-webui-0.11.4-2-x86_64.pkg.tar.zst", "a" * 64, env)
+        self.assertEqual(derived["version"], "0.11.4-2")
         self.assertEqual(derived["entry"]["archive_sha256"], "a" * 64)
         for key in scenarios.PRODUCTION_EXPECTATION_KEYS:
             self.assertEqual(derived["entry"][key], env[key])
@@ -293,16 +293,16 @@ class EnvironTests(unittest.TestCase):
     def test_production_settings_claim_the_digest_only_when_the_cached_archive_matched(self):
         env = candidate_env()
         with tempfile.TemporaryDirectory() as cache:
-            name = "open-webui-0.11.4-1-x86_64.pkg.tar.zst"
+            name = "open-webui-0.11.4-2-x86_64.pkg.tar.zst"
             (Path(cache) / name).write_bytes(b"exact")
             digest = scenarios.v1._sha256_bytes(b"exact")
             entry = scenarios.production_expectation(name, digest, env)["entry"]
-            with mock.patch.object(scenarios, "PRODUCTION_EXPECTATIONS", {"0.11.4-1": entry}):
-                verified = scenarios.settings_for_production("0.11.4-1", Path(cache))
-                unverified = scenarios.settings_for_production("0.11.4-1", Path(cache) / "absent")
+            with mock.patch.object(scenarios, "PRODUCTION_EXPECTATIONS", {"0.11.4-2": entry}):
+                verified = scenarios.settings_for_production("0.11.4-2", Path(cache))
+                unverified = scenarios.settings_for_production("0.11.4-2", Path(cache) / "absent")
                 (Path(cache) / name).write_bytes(b"other")
                 with self.assertRaises(scenarios.Blocked):
-                    scenarios.settings_for_production("0.11.4-1", Path(cache))
+                    scenarios.settings_for_production("0.11.4-2", Path(cache))
         self.assertTrue(verified.archive_verified)
         self.assertFalse(unverified.archive_verified)
         receipt = scenarios.build_receipt(

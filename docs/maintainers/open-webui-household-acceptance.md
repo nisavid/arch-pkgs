@@ -65,17 +65,19 @@ rehearsal may run earlier.
 
    | Archive | Size (bytes) | SHA-256 |
    | --- | --- | --- |
-   | `open-webui-0.11.4-1-x86_64.pkg.tar.zst` | **pending** | **pending** |
+   | `open-webui-0.11.4-2-x86_64.pkg.tar.zst` | 186956865 | `31f3fbefc2ef3c4a6e8b8ee885372a1020de563c8845904d9a716fed5896d77a` |
    | `python-rapidocr-3.9.2-1-any.pkg.tar.zst` | 27198440 | `0e70fb599a535f9bb1c0c0b3a2f88abe9993f7632eba8e2c618826c7f01bf99b` |
    | `qdrant-1.19.1-1-x86_64.pkg.tar.zst` | 28289048 | `56208d6725771df687563b9d12e3c963b39c63120b1412f2335411f32c21ed85` |
    | `qdrant-migration-1.18.3-1-x86_64.pkg.tar.zst` | 26721008 | `591f16328fcff0fc0193353a65f4c783afc1d24258ae251d3a8927283276ce9e` |
    | `qdrant-web-ui-0.2.18-1-any.pkg.tar.zst` | 5728430 | `962d2b7659fb66bd2eb3b2f425ef90a91cbe7701a66c31b4fd622caeb0e0f283` |
    | `python-faster-whisper-1.2.1-1-any.pkg.tar.zst` | 1087994 | `9b052be890fd7f21135ca2ebc090ff140432e0e8493dd484b44585386ae8d1cb` |
 
-   Open WebUI 0.11.4-1 is the trial candidate. It re-bases the package on
-   Open WebUI 0.11.4 with patches 0001 through 0008, including the hardened
-   fail-closed RAG gate in 0005 and patch 0008, which pages Open WebUI's
-   Qdrant scroll reads at no more than 1000 points per page. Qdrant's
+   Open WebUI 0.11.4-2 is the trial candidate, built from `main` at
+   `2059571`. It re-bases the package on Open WebUI 0.11.4 with patches 0001
+   through 0008, including the hardened fail-closed RAG gate in 0005, whose
+   0.11.4-2 revision also fails closed when hybrid search's prefetch of a
+   collection fails, and patch 0008, which pages Open WebUI's Qdrant scroll
+   reads at no more than 1000 points per page. Qdrant's
    strict-mode `max_query_limit` stays at 1000 (owner decision), and an Open
    WebUI build without 0008 fails the first handbook upload against it. The
    package still carries the `open-webui-tailnet.service` sidecar (packaged
@@ -87,9 +89,10 @@ rehearsal may run earlier.
    file, and the package installs only the documented example,
    `/usr/share/open-webui/household.env.example`, with `<lemond>` for the
    model server's origin. The kit renders that example for its trial; see
-   [Deviations and the A-ID2 table](#deviations-and-the-a-id2-table). The 0.11.4-1 size
-   and SHA-256 stay **pending** until the candidate is built, merged, and
-   tree-equal. The Qdrant trio's values are the ones the Qdrant 1.19.1
+   [Deviations and the A-ID2 table](#deviations-and-the-a-id2-table). The 0.11.4-2
+   size and SHA-256 are those of the
+   [candidate build](https://github.com/nisavid/arch-pkgs/issues/88#issuecomment-5957006596)
+   that the build ticket recorded. The Qdrant trio's values are the ones the Qdrant 1.19.1
    re-baseline's G0-G3 evidence accepted
    (`docs/maintainers/evidence/qdrant-1.19.1-1/`), and
    `python-faster-whisper`'s are the speech G0-G2 evidence's
@@ -365,13 +368,14 @@ Notes on specific checks:
 
 ### Gate checks
 
-Patch 0005's gate scope, as the lead classified it: content from knowledge
-bases, or anything attached to a model or a folder as knowledge, is gated
-while the gate is closed. Once the gate qualifies, explicitly requested
-content is allowed whole and search results are reranked. Unattached notes,
-chats, memories, and user-provided attachments are personal data outside the
-gate. Three steps pin the explicit-read paths, and a fourth pins how a
-hybrid-search error fails:
+Patch 0005's gate scope, as the package README states it for 0.11.4-2:
+content from knowledge bases, anything attached to a model or a folder as
+knowledge, and chat attachments of any kind are gated while the gate is
+closed, and a chat with any attachment is refused with the gate's 503 detail.
+Once the gate qualifies, explicitly requested content is allowed whole and
+search results are reranked. Personal data outside the gate means only the
+notes, chats, and memories tools and features. Three steps pin the
+explicit-read paths, and a fourth pins how a hybrid-search error fails:
 
 - `open-webui.acceptance.failclosed.full-context` and
   `open-webui.acceptance.failclosed.native-tools` run between reranker-down
@@ -497,7 +501,7 @@ that the gate checks prove:
 The packaged Qdrant strict mode caps every query and scroll at
 `max_query_limit` 1000, and that cap stays (owner decision). Open WebUI 0.11
 reads a whole tenant with one scroll whose limit is 999999999, which the cap
-rejects; patch 0008, which 0.11.4-1 carries, reads it in pages of at most
+rejects; patch 0008, which 0.11.4-2 carries, reads it in pages of at most
 1000 points.
 Only a tenant with more than 1000 points proves the paging. At or below the
 cap, one page returns everything, so a read that stops after one page passes
@@ -772,7 +776,7 @@ instead.
   private path with the reason, so the one trial's values survive. Teardown
   refuses until that file is moved out of the root.
 - It records `production_expectation`, the frozen production-settings entry
-  for the deployed `open-webui` archive (for this trial, the `0.11.4-1`
+  for the deployed `open-webui` archive (for this trial, the `0.11.4-2`
   entry), and the trial prints it. The evidence commit adds that entry to
   `PRODUCTION_EXPECTATIONS` in `tools/open_webui_household_scenarios.py`; a
   test ties every entry to committed acceptance evidence, so no entry lands

@@ -131,7 +131,7 @@ REFUSED_ROOT_PREFIXES = (Path("/home"), Path("/tmp"), Path("/var/tmp"))
 MAX_ROOT_USE_PERCENT = 80
 FOOTPRINT_BYTES = 6 * 1024**3
 
-# The trial candidate is open-webui 0.11.4-1 on qdrant 1.19.1-1, not the
+# The trial candidate is open-webui 0.11.4-2 on qdrant 1.19.1-1, not the
 # 0.11.0 and 1.19.0 pair the v1 envelope contract measured.  Open WebUI 0.11.1
 # added revisions 1ce6ade7d93b, 6d09d1bf1f23, and d4c1a8e37b62 on top of
 # 0.11.0's head f0bd01a18a3d, so 0.11.4's single head is d4c1a8e37b62

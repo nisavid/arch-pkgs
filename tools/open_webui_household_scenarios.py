@@ -113,7 +113,7 @@ ZEMBED_QUERY_HEAD = "<|im_start|>system\nquery<|im_end|>\n<|im_start|>user\n"
 ZEMBED_DOCUMENT_HEAD = "<|im_start|>system\ndocument<|im_end|>\n<|im_start|>user\n"
 
 # Expected production settings, keyed by the promoted open-webui package
-# version and bound to its archive SHA-256.  From 0.11.4-1 the values come
+# version and bound to its archive SHA-256.  From 0.11.4 the values come
 # from the archive's household profile example, which the owner copies to the
 # root-only /etc/open-webui/household.env and fills in only at its
 # placeholders, so production re-smoke uses these frozen values instead of
@@ -125,7 +125,7 @@ ZEMBED_DOCUMENT_HEAD = "<|im_start|>system\ndocument<|im_end|>\n<|im_start|>user
 # here.  A consistency test ties every entry to committed acceptance
 # evidence.  Until that evidence exists this map is empty, so production S6
 # exits 75 instead of passing against bytes that are not of record.  The
-# first entry is the 0.11.4-1 candidate's, from its trial's evidence commit.
+# first entry is the 0.11.4-2 candidate's, from its trial's evidence commit.
 PRODUCTION_EXPECTATION_KEYS = (
     "RAG_EMBEDDING_MODEL",
     "RAG_RERANKING_MODEL",
@@ -261,7 +261,7 @@ OVERLAY_FIXED_KEYS: frozenset[str] = frozenset(
 )
 PACKAGED_STATE_ROOT = "/var/lib/open-webui"
 
-# From 0.11.4-1 the packaged open-webui.env carries only generic, security,
+# From 0.11.4 the packaged open-webui.env carries only generic, security,
 # and RAG-gate defaults.  open-webui.service reads the host-owned household
 # profile after it, through ``EnvironmentFile=-`` so a host without one still
 # starts, and the package installs a documented example with ``<lemond>`` for

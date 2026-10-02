@@ -17,9 +17,9 @@ from unittest import mock
 REPO_ROOT = Path(__file__).resolve().parents[1]
 KIT = REPO_ROOT / "tools" / "accept_open_webui_household.py"
 # The trial candidate's open-webui.env, household profile example, and unit:
-# exact copies of the 0.11.4-1 package files, which move the household
-# settings out of open-webui.env.  The in-tree package predates that split.
-CANDIDATE = REPO_ROOT / "tools" / "fixtures" / "open-webui-household-acceptance" / "open-webui-0.11.4-1"
+# exact copies of the 0.11.4-2 package files, which move the household
+# settings out of open-webui.env.
+CANDIDATE = REPO_ROOT / "tools" / "fixtures" / "open-webui-household-acceptance" / "open-webui-0.11.4-2"
 PACKAGED_ENV = CANDIDATE / "open-webui.env"
 PROFILE_EXAMPLE = CANDIDATE / "household.env.example"
 OPEN_WEBUI_UNIT = CANDIDATE / "open-webui.service"
@@ -95,7 +95,7 @@ def write_archive(directory, name, data=b"candidate"):
 
 # The six deployed candidates of the 0.11.4 re-baseline, in DEPLOYED_PACKAGES order.
 CANDIDATE_ARCHIVES = (
-    "open-webui-0.11.4-1-x86_64.pkg.tar.zst",
+    "open-webui-0.11.4-2-x86_64.pkg.tar.zst",
     "python-rapidocr-3.9.2-1-any.pkg.tar.zst",
     "qdrant-1.19.1-1-x86_64.pkg.tar.zst",
     "qdrant-migration-1.18.3-1-x86_64.pkg.tar.zst",
@@ -294,7 +294,7 @@ class HouseholdProfileTests(unittest.TestCase):
     def test_rendering_fills_only_the_provider_origin(self):
         example = PROFILE_EXAMPLE.read_text(encoding="utf-8")
         # The lines the operator's grep -nE '^[^#]*<[a-z]+>' prints for the example.
-        self.assertEqual(sc.profile_placeholder_lines(example), [25, 32, 54])
+        self.assertEqual(sc.profile_placeholder_lines(example), [28, 41, 63])
         rendered = sc.render_household_profile(example, "http://lemond-host:13400/")
         self.assertEqual(sc.profile_placeholder_lines(rendered), [])
         self.assertNotIn("<lemond>", rendered)
@@ -308,7 +308,7 @@ class HouseholdProfileTests(unittest.TestCase):
 
     def test_a_placeholder_left_after_rendering_is_refused(self):
         example = PROFILE_EXAMPLE.read_text(encoding="utf-8") + "WEBUI_URL=https://<name>.<tailnet>.ts.net\n"
-        with self.assertRaisesRegex(ValueError, "placeholders on lines 67$"):
+        with self.assertRaisesRegex(ValueError, "placeholders on lines 76$"):
             sc.render_household_profile(example, sc.DEFAULT_LEMOND_URL)
         self.assertEqual(sc.profile_placeholder_lines("# x=<lemond>\nA=<b>\nB=<|im_end|>\n"), [2])
         with self.assertRaises(ValueError):
@@ -380,7 +380,7 @@ class HouseholdProfileTests(unittest.TestCase):
     def test_the_production_expectation_comes_from_the_profile_example(self):
         with tempfile.TemporaryDirectory() as directory:
             kit = self.rendered_root(directory)
-            kit.save_state(archives=[{"name": "open-webui-0.11.4-1-x86_64.pkg.tar.zst", "sha256": "a" * 64}])
+            kit.save_state(archives=[{"name": "open-webui-0.11.4-2-x86_64.pkg.tar.zst", "sha256": "a" * 64}])
             expectation = kit_module.production_expectation_for(kit)
             assert expectation is not None
             self.assertEqual(expectation["entry"]["RAG_EMBEDDING_MODEL"], "zembed-1-Q4_K_M-GGUF-Q4_K_M")
@@ -390,16 +390,14 @@ class HouseholdProfileTests(unittest.TestCase):
             self.assertIsNone(kit_module.production_expectation_for(kit))
 
     def test_the_candidate_fixture_is_the_0_11_4_package_files(self):
-        # The digests the 0.11.4-1 PKGBUILD pins for these three sources.
+        # The digests the 0.11.4-2 PKGBUILD pins for these three sources.
         pinned = {
             "open-webui.env": "b039eb10d67a8f59e3749296e57b895d1a36ed4f769fb1b56bcaa2aeb55aaeb3",
-            "household.env.example": "cc6f1e164e36e814778d1d0d441d2801b21f02401107ed0a875aa58cee308177",
-            "open-webui.service": "634e7f16c6ccf1e0e994e48adb978e8235d194153742ed73493be5851bf1b9be",
+            "household.env.example": "c07f9ba10212859e2db09b0904c681375181f368aeabde8f8dc1379fa3b674dc",
+            "open-webui.service": "18f8113ca4d8cdfec13500a1b53be4c154bccad89c31662c5be819e42924a2aa",
         }
         self.assertEqual({name: kit_module.sha256_file(CANDIDATE / name) for name in pinned}, pinned)
 
-    @unittest.skipUnless((REPO_ROOT / "packages" / "open-webui" / "household.env.example").is_file(),
-                         "the in-tree open-webui package predates the household profile split")
     def test_the_candidate_fixture_matches_the_in_tree_package(self):
         for name in ("open-webui.env", "household.env.example", "open-webui.service"):
             with self.subTest(name):
@@ -1272,7 +1270,7 @@ class ProductionDocTests(unittest.TestCase):
         for text in (acceptance, self.doc):
             self.assertNotIn("0.11.0-7", text)
             self.assertNotIn("1.19.0-1", text)
-        self.assertIn("`HAND-BACK: open-webui P2 installed 0.11.4-1`", self.doc)
+        self.assertIn("`HAND-BACK: open-webui P2 installed 0.11.4-2`", self.doc)
         self.assertIn("`HAND-BACK: qdrant verify PASSED on 1.19.1-1; …`", self.doc)
 
     def test_the_production_qdrant_loops_name_the_kit_collections(self):
