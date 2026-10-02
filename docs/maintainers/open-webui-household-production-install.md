@@ -231,13 +231,6 @@ that verify's `HAND-BACK:` line prints, exactly as printed and without
   `HAND-BACK: qdrant rollback dry run complete; …`.
 - Agent: the Qdrant runbook's post-verification.
 
-Cutover follow-ups, outside this handoff:
-
-- The cutover's snapshot-restore drill (step 7 of the Qdrant runbook) only
-  prints a warning when it cannot delete a drill snapshot. The hand-back could
-  confirm the snapshot-drill files were removed; that change belongs to the
-  cutover tooling, not to this handoff.
-
 ## P2: install the packages
 
 Run on a fully upgraded host (the owner's routine `sudo pacman -Syu`). P1

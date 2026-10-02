@@ -387,14 +387,18 @@ Notes on specific checks:
 
 ### Gate checks
 
-Patch 0005's gate scope, as the package README states it for 0.11.4-2:
-content from knowledge bases, anything attached to a model or a folder as
-knowledge, and chat attachments of any kind are gated while the gate is
-closed, and a chat with any attachment is refused with the gate's 503 detail.
-Once the gate qualifies, explicitly requested content is allowed whole and
-search results are reranked. Personal data outside the gate means only the
-notes, chats, and memories tools and features. Three steps pin the
-explicit-read paths, and a fourth pins how a hybrid-search error fails:
+Patch 0005's gate scope, as the package README states it for 0.11.4-2: content
+from knowledge bases, anything attached to a model or a folder as knowledge,
+and chat attachments of any kind are gated while the gate is closed, and a
+chat with any attachment is refused with the gate's 503 detail. Once the gate
+qualifies, explicitly requested content is allowed whole and search results
+are reranked. The global full-context and embedding-and-retrieval bypass
+modes, and hybrid search turned off, stay refused even then: under any of
+them, a chat with any attachment returns the 503 detail. The kit requires
+hybrid search on and turns on neither bypass mode. Personal data outside the
+gate means only the notes, chats, and memories tools and features. Three steps
+pin the explicit-read paths, and a fourth pins how a hybrid-search error
+fails:
 
 - `open-webui.acceptance.failclosed.full-context` and
   `open-webui.acceptance.failclosed.native-tools` run between reranker-down
