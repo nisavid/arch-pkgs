@@ -1,5 +1,14 @@
 # python-sentence-transformers
 
+> [!WARNING]
+> Retired on 2026-10-02 under the
+> [amendment on Freeze the Open WebUI package and Python 3.14 provider closure](https://github.com/nisavid/arch-pkgs/issues/63#issuecomment-5789382398).
+> The host's AUR `python-sentence-transformers` 5.7.0-1 is the knowingly
+> foreign provider of record; Open WebUI only imports it. This directory is
+> kept only until preservation-aware cleanup under
+> [Release retained rollback anchors and clean target-local state](https://github.com/nisavid/arch-pkgs/issues/62).
+> Do not build or publish it. The baseline below is historical.
+
 Arch package for Sentence Transformers.
 
 Use this package when Open WebUI or another local application needs embedding or
