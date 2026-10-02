@@ -664,6 +664,12 @@ class PreflightTests(unittest.TestCase):
             (kit.candidate_store / "linked" / name).symlink_to(kit.candidate_store / "open-webui" / "2059571" / name)
             with self.assertRaises(ValueError):
                 kit_module.locate_archive(kit, {**record, "source": "linked"})
+            # A symlinked directory that points outside the store is refused.
+            outside = Path(directory) / "outside"
+            write_archive(outside, name, b"record bytes")
+            (kit.candidate_store / "escape").symlink_to(outside, target_is_directory=True)
+            with self.assertRaisesRegex(ValueError, "inside the candidate store"):
+                kit_module.locate_archive(kit, {**record, "source": "escape"})
             staged = write_archive(kit.root / "inputs", name, b"record bytes", "open-webui/2059571")
             self.assertEqual(kit_module.locate_archive(kit, staged), kit.root / "inputs" / name)
 
@@ -711,6 +717,14 @@ class PreflightTests(unittest.TestCase):
                     kit_module.load_manifest(write_manifest(directory, broken))
             with self.assertRaises(ValueError):
                 kit_module.load_manifest(write_manifest(directory, archives, external_inputs=[{"package": "x"}]))
+            # An archive.package that differs from the filename's package.
+            mismatched = manifest_entry(archives[-1])
+            mismatched["archive"]["package"] = "python-ctranslate2"
+            with self.assertRaisesRegex(ValueError, "does not belong to package"):
+                kit_module.load_manifest(write_manifest(directory, archives[:-1] + [mismatched]))
+            # adoption_main_commit must be a full commit when present.
+            with self.assertRaisesRegex(ValueError, "adoption_main_commit"):
+                kit_module.load_manifest(write_manifest(directory, archives, adoption_main_commit="2059571"))
 
     def test_a_manifest_of_another_schema_is_refused(self):
         with tempfile.TemporaryDirectory() as directory:
