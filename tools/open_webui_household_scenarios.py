@@ -865,7 +865,7 @@ _DETAIL_REDACTIONS = (
     (re.compile(r"\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b"), "<email>"),
     (re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b"), "<address>"),
     (re.compile(r"(?<![\w.:/])/(?:[\w.@+-]+/)+[\w.@+-]*"), "<path>"),
-    (re.compile(r"(?i)\b(bearer|token|key|secret|password)([=: ]+)\S+"), r"\1\2<redacted>"),
+    (re.compile(r"(?i)\b(?:bearer|token|key|secret|password)[=: ]+\S+"), "<redacted>"),
 )
 
 

@@ -1575,6 +1575,97 @@ class SupportUnitTests(unittest.TestCase):
             self.assertIn("the rehearsal stub", str(raised.exception))
 
 
+
+class FailureDetailTests(unittest.TestCase):
+    """Failed chats say why, and both drills split their clocks into phases."""
+
+    MODEL_NOT_FOUND = b'{"detail":"Model not found"}'
+
+    def test_a_wrong_refusal_records_open_webuis_detail(self):
+        reply = kit_module.ChatReply(400, "", [], "Model not found", self.MODEL_NOT_FOUND)
+        record = kit_module.refusal_record(reply)
+        self.assertEqual((record["status"], record["fixed_detail"], record["detail"]), (400, False, "Model not found"))
+        fixed = kit_module.ChatReply(503, "", [], kit_module._rag_unavailable_detail(), b"")
+        self.assertIsNone(kit_module.refusal_record(fixed)["detail"])
+        self.assertIsNone(kit_module.reply_detail(200, "ignored"))
+        long_detail = "x" * 500
+        self.assertLessEqual(len(kit_module.reply_detail(400, long_detail)), sc.ERROR_DETAIL_LIMIT)
+
+    def test_the_cited_check_keeps_the_failed_chats_status_and_detail(self):
+        with mock.patch.object(kit_module, "file_chat", return_value=(400, "", {"count": 0, "names": []},
+                                                                      "Model not found")):
+            check = kit_module.cited_check(mock.Mock(), "t", "chat", "f1")
+        self.assertEqual(check, {"cited": False, "status": 400, "detail": "Model not found"})
+
+    def drill_mocks(self, kit, laps):
+        """Mocks for one drill run; each timed call advances the fake clock by its ``laps`` seconds."""
+
+        clock = {"now": 100.0}
+
+        def timed(name, value=None):
+            def call(*_args, **_kwargs):
+                clock["now"] += laps.get(name, 0.0)
+                return value
+            return call
+
+        qdrant = mock.Mock()
+        patches = {
+            "systemctl": timed("systemctl"),
+            "restore_tuple": timed("restore_tuple", {}),
+            "start_open_webui": timed("start_open_webui"),
+            "admin_token": timed("admin_token", "token"),
+            "cited_check": timed("cited_check", {"cited": True, "status": 200, "detail": None}),
+            "start_qdrant": timed("start_qdrant", qdrant),
+            "start_support_units": timed("start_support_units"),
+            "snapshot_resources": timed("x"), "verify_anchor": timed("x"), "valkey_command": timed("x"),
+            "valkey_password": timed("x", "p"), "backup_anchor": timed("x", {"epoch_bound": 0, "archives": [{}]}),
+            "marker_divergence": timed("x", {"sentinel": True}), "ledger": timed("x", 1), "start_caddy": timed("x"),
+            "a_d3_checks": timed("x", {"passes": True}), "route_checks": timed("x", {}), "one_admin": timed("x", {}),
+            "legacy_service_state": timed("x", {}), "acceptance_listeners_on": timed("x", False),
+            "remove_tree": timed("x"), "restage_trees": timed("x"), "create_state_directories": timed("x"),
+            "place_whisper": timed("x"), "snapshot_pre_rollback_inventory": timed("x"),
+        }
+        stack = contextlib.ExitStack()
+        stack.enter_context(mock.patch.multiple(kit_module, **patches))
+        stack.enter_context(mock.patch.object(kit_module.time, "monotonic", side_effect=lambda: clock["now"]))
+        stack.enter_context(mock.patch.object(kit_module.Kit, "qdrant", return_value=qdrant))
+        stack.enter_context(mock.patch.object(kit_module.Kit, "store_credential"))
+        stack.enter_context(mock.patch.object(kit_module.Kit, "caddy"))
+        uds = stack.enter_context(mock.patch.object(kit_module.Kit, "uds"))
+        uds.return_value.request.return_value.status = 200
+        return stack
+
+    def test_both_drills_record_their_phase_timings(self):
+        laps = {"systemctl": 0.5, "restore_tuple": 15.0, "start_open_webui": 50.0, "admin_token": 0.25,
+                "cited_check": 0.75, "start_qdrant": 2.0, "start_support_units": 1.0}
+        with tempfile.TemporaryDirectory() as directory:
+            kit = make_kit(directory, rehearsal=True)
+            kit.raw.mkdir(parents=True)
+            kit.anchor.mkdir(parents=True)
+            (kit.anchor / "anchor.json").write_text("{}")
+            trial = kit_module.Trial(kit)
+            trial.listed_chat_model = "chat"
+            trial.seed_file = "f1"
+            with self.drill_mocks(kit, laps), self.assertRaises(sc.ScenarioFailure) as raised:
+                trial.restore_drill()
+            restore = json.loads(str(raised.exception))
+            # The ceilings are unchanged; the phases say where the time went.
+            self.assertEqual(restore["ceiling_s"], 40.0)
+            self.assertEqual(restore["phases_s"], {"stop": 1.0, "restore_tuple": 15.0, "open_webui_start": 50.5,
+                                                   "sign_in": 0.25, "chat": 0.75})
+            self.assertEqual(restore["restore_s"], 67.5)
+            self.assertEqual(restore["cited_chat"], {"status": 200, "detail": None})
+            # Both runs miss the 40 s ceiling, so each drill fails with its record.
+            with self.drill_mocks(kit, laps), self.assertRaises(sc.ScenarioFailure) as raised:
+                trial.rollback_drill()
+            rollback = json.loads(str(raised.exception))
+        self.assertEqual(rollback["ceiling_s"], 40.0)
+        self.assertEqual(rollback["phases_s"], {"qdrant_start": 2.0, "restore_tuple": 15.0, "support_units": 1.0,
+                                                "open_webui_start": 50.0, "sign_in": 0.25, "chat": 0.75})
+        self.assertEqual(rollback["state_restore_s"], 69.0)
+        self.assertIn("before_clock_s", rollback)
+
+
 class PeerTests(unittest.TestCase):
     listen = {"owui-acc-qdrant.service": frozenset({16333, 16334})}
 
@@ -2066,7 +2157,7 @@ class GateCheckTests(unittest.TestCase):
     def test_a_closed_gate_refuses_both_full_context_attachment_sets(self):
         webui = self.FakeOpenWebUI()
         values = self.run_step("full_context", webui)
-        refusal = {"status": 503, "fixed_detail": True, "sources": 0, "handbook_text": False}
+        refusal = {"status": 503, "fixed_detail": True, "detail": None, "sources": 0, "handbook_text": False}
         self.assertEqual(values["chats"], {"mixed": refusal, "all-full": refusal})
         self.assertEqual((values["health_before"], values["health_after"]), (503, 503))
         full = {"type": "file", "id": "f1", "context": "full"}
@@ -2232,7 +2323,7 @@ class GateCheckTests(unittest.TestCase):
     def test_a_qualified_gate_allows_every_explicit_read_whole(self):
         webui = self.FakeOpenWebUI("qualified")
         values = self.run_step("explicit_reads", webui)
-        read = {"status": 200, "sources": 1, "fact_in_sources": True}
+        read = {"status": 200, "sources": 1, "fact_in_sources": True, "detail": None}
         self.assertEqual(values["chats"], {"mixed": read, "all-full": read})
         self.assertEqual(values["view_knowledge_file_calls"], 1)
         self.assertTrue(values["view_knowledge_file_holds_fact"])
@@ -2615,7 +2706,8 @@ class HybridErrorTests(unittest.TestCase):
     def test_a_hybrid_error_fails_closed_without_latching_and_recovers(self):
         fakes = self.Fakes()
         values, journal = self.check(fakes)
-        refusal = {"status": 503, "fixed_detail": True, "sources": 0, "handbook_text": False, "sentinel": False}
+        refusal = {"status": 503, "fixed_detail": True, "detail": None, "sources": 0, "handbook_text": False,
+                   "sentinel": False}
         self.assertEqual(values["fault"], refusal)
         self.assertEqual((values["health_before"], values["health_after_fault"], values["health_after_recovery"]),
                          (200, 200, 200))

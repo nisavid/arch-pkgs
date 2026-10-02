@@ -2064,7 +2064,7 @@ def upload_markdown(webui: sc.Endpoint, token: str, name: str, data: bytes, what
     upload = webui.request("POST", sc.API["files"], body=body, content_type=content_type, token=token)
     file_id = (upload.json() or {}).get("id") if upload.status == 200 else None
     if not isinstance(file_id, str):
-        raise sc.ScenarioFailure(f"{what} upload returned HTTP {upload.status}")
+        raise sc.ScenarioFailure(f"{what} upload returned HTTP {upload.status}{sc.error_detail(upload)}")
 
     def processed() -> bool:
         response = webui.request("GET", sc.API["file_status"].format(id=file_id), token=token)
@@ -2160,9 +2160,36 @@ def file_chat(webui: sc.Endpoint, token: str, chat_model: str, file_id: str | No
     return reply.status, reply.text, sc.summarize_sources(reply.sources), reply.detail
 
 
-def cited_fact(webui: sc.Endpoint, token: str, chat_model: str, file_id: str) -> bool:
-    status, text, summary, _ = file_chat(webui, token, chat_model, file_id)
-    return status == 200 and sc.cited_answer_passes(text, summary, sc.HANDBOOK_NAME)
+def reply_detail(status: int, detail: Any) -> str | None:
+    """A failed chat's error detail for the record: bounded and public-safe; None on success."""
+
+    if status == 200 or detail is None:
+        return None
+    return sc.public_detail(detail if isinstance(detail, str) else json.dumps(detail, sort_keys=True))
+
+
+def cited_check(webui: sc.Endpoint, token: str, chat_model: str, file_id: str) -> dict[str, Any]:
+    """The cited-fact chat: whether it passed, with its status and any error detail."""
+
+    status, text, summary, detail = file_chat(webui, token, chat_model, file_id)
+    return {
+        "cited": status == 200 and sc.cited_answer_passes(text, summary, sc.HANDBOOK_NAME),
+        "status": status,
+        "detail": reply_detail(status, detail),
+    }
+
+
+class PhaseClock:
+    """Seconds per named phase of a drill, each from the end of the one before."""
+
+    def __init__(self) -> None:
+        self.mark = time.monotonic()
+        self.phases: dict[str, float] = {}
+
+    def lap(self, name: str) -> None:
+        now = time.monotonic()
+        self.phases[name] = round(now - self.mark, 3)
+        self.mark = now
 
 
 # The gate's explicit-read checks.  Patch 0005 gates knowledge-base content
@@ -2182,9 +2209,12 @@ def full_context_files(file_id: str) -> dict[str, list[dict[str, str]]]:
 
 
 def refusal_record(reply: ChatReply) -> dict[str, Any]:
+    fixed = reply.detail == _rag_unavailable_detail()
     return {
         "status": reply.status,
-        "fixed_detail": reply.detail == _rag_unavailable_detail(),
+        "fixed_detail": fixed,
+        # Any other refusal's detail, so a wrong refusal says why.
+        "detail": None if fixed else reply_detail(reply.status, reply.detail),
         "sources": len(reply.sources),
         "handbook_text": reply.handbook_text(),
     }
@@ -2307,7 +2337,7 @@ def native_tool_chat(webui: sc.Endpoint, token: str, chat_model: str, file_id: s
         started = time.monotonic()
         response = webui.request("POST", sc.API["chat"], payload=payload, token=token)
         if response.status != 200:
-            raise sc.ScenarioFailure(f"the native-tools chat returned HTTP {response.status}")
+            raise sc.ScenarioFailure(f"the native-tools chat returned HTTP {response.status}{sc.error_detail(response)}")
         stored: dict[str, Any] = {}
 
         def done() -> bool:
@@ -2561,7 +2591,7 @@ def paging_check(webui: sc.Endpoint, qdrant: Qdrant, token: str, chat_model: str
         )
         timings["chat_s"] = round(time.monotonic() - started, 3)
         if response.status != 200:
-            raise sc.ScenarioFailure(f"the knowledge-scoped chat returned HTTP {response.status}")
+            raise sc.ScenarioFailure(f"the knowledge-scoped chat returned HTTP {response.status}{sc.error_detail(response)}")
         _, sources = sc.parse_chat_response(response.body, response.content_type)
         retrieved = retrieved_chunks(sources)
         started = time.monotonic()
@@ -3203,7 +3233,7 @@ class Trial:
         systemctl("stop", UNITS["relay"])
         query = {"collection_name": f"file-{self.seed_file}", "query": sc.CANONICAL_QUERY}
         latch = uds.request("POST", "/api/v1/retrieval/query/doc", payload=query, token=self.token).status
-        chat_status, _, _, _ = file_chat(uds, self.token, self.chat_id(), None)
+        chat_status, _, _, chat_detail = file_chat(uds, self.token, self.chat_id(), None)
         retrieval = uds.request("POST", "/api/v1/retrieval/query/doc", payload=query, token=self.token)
         file_status, _, sources, detail = file_chat(uds, self.token, self.chat_id(), self.seed_file)
         health = uds.request("GET", sc.API["rag_health"], token=self.token).status
@@ -3217,6 +3247,8 @@ class Trial:
             "health_status": health,
             "fixed_detail": retrieval_detail == from_gate and detail == from_gate,
             "file_chat_sources": sources["count"],
+            "plain_chat_detail": reply_detail(chat_status, chat_detail),
+            "file_chat_detail": None if detail == from_gate else reply_detail(file_status, detail),
         }
         if not (chat_status == 200 and retrieval.status == 503 and file_status == 503 and health == 503
                 and values["fixed_detail"] and sources["count"] == 0):
@@ -3286,7 +3318,8 @@ class Trial:
             **native_values(chat),
             "health": health,
             "chats": {name: {"status": reply.status, "sources": len(reply.sources),
-                             "fact_in_sources": reply.holds(sc.CANONICAL_FACT)}
+                             "fact_in_sources": reply.holds(sc.CANONICAL_FACT),
+                             "detail": reply_detail(reply.status, reply.detail)}
                       for name, reply in replies.items()},
             "view_knowledge_file_calls": len(views),
             "view_knowledge_file_holds_fact": any(sc.CANONICAL_FACT in text for text in views),
@@ -3304,8 +3337,10 @@ class Trial:
         wait_until(lambda: port_listening(PORTS["relay"]), SUPPORT_WAIT_S, "the reranker relay")
         latched = kit.uds().request("GET", sc.API["rag_health"], token=self.token).status
         health = sc.resave_rag_config(kit.uds(), self.token)
-        cited = cited_fact(kit.caddy(), self.token, self.chat_id(), self.seed_file)
-        values = {"latched_status": latched, "health_after_resave": health, "cited_fact": cited}
+        check = cited_check(kit.caddy(), self.token, self.chat_id(), self.seed_file)
+        cited = check["cited"]
+        values = {"latched_status": latched, "health_after_resave": health, "cited_fact": cited,
+                  "cited_chat": {"status": check["status"], "detail": check["detail"]}}
         if latched != 503 or health != 200 or not cited:
             raise sc.ScenarioFailure(json.dumps(values, sort_keys=True))
         return values
@@ -3383,20 +3418,29 @@ class Trial:
         snapshot_resources(kit, "before restore")
         epoch = ledger(kit, "reserve")
         started = time.monotonic()
+        clock = PhaseClock()
         systemctl("stop", UNITS["open-webui"])
         systemctl("stop", UNITS["valkey"])
+        clock.lap("stop")
         restored = restore_tuple(kit, qdrant)
+        clock.lap("restore_tuple")
         systemctl("start", UNITS["valkey"])
         start_open_webui(kit)
+        clock.lap("open_webui_start")
         self.token = admin_token(kit)
-        cited = cited_fact(kit.uds(), self.token, self.chat_id(), self.seed_file)
+        clock.lap("sign_in")
+        check = cited_check(kit.uds(), self.token, self.chat_id(), self.seed_file)
+        cited = check["cited"]
+        clock.lap("chat")
         elapsed = round(time.monotonic() - started, 3)
         checks = a_d3_checks(kit, self.anchor, restored, qdrant, self.pre_backup_session)
         start_caddy(kit)
         values = {
             "restore_s": elapsed,
             "ceiling_s": LIMITS["restore_s"],
+            "phases_s": clock.phases,
             "cited_fact": cited,
+            "cited_chat": {"status": check["status"], "detail": check["detail"]},
             "reserved_epoch_above_bound": epoch > self.anchor["epoch_bound"],
             "pre_restore_divergence": pre_restore,
             "a_d3": checks,
@@ -3433,12 +3477,20 @@ class Trial:
         place_whisper(kit)
         epoch = ledger(kit, "reserve")
         started = time.monotonic()
+        clock = PhaseClock()
         qdrant = start_qdrant(kit)
+        clock.lap("qdrant_start")
         restored = restore_tuple(kit, qdrant)
+        clock.lap("restore_tuple")
         start_support_units(kit)
+        clock.lap("support_units")
         start_open_webui(kit)
+        clock.lap("open_webui_start")
         self.token = admin_token(kit)
-        cited = cited_fact(kit.uds(), self.token, self.chat_id(), self.seed_file)
+        clock.lap("sign_in")
+        check = cited_check(kit.uds(), self.token, self.chat_id(), self.seed_file)
+        cited = check["cited"]
+        clock.lap("chat")
         state_elapsed = round(time.monotonic() - started, 3)
         checks = a_d3_checks(kit, self.anchor, restored, qdrant, pre_backup_session)
         start_caddy(kit)
@@ -3447,9 +3499,12 @@ class Trial:
         values = {
             "state_restore_s": state_elapsed,
             "ceiling_s": LIMITS["rollback_state_s"],
+            "phases_s": clock.phases,
+            "before_clock_s": round(started - window, 3),
             "window_s": round(time.monotonic() - window, 3),
             "archives_match_anchor": True,
             "cited_fact": cited,
+            "cited_chat": {"status": check["status"], "detail": check["detail"]},
             "reserved_epoch_above_bound": epoch > self.anchor["epoch_bound"],
             "a_d3": checks,
             "route": route_checks(kit, self.token),

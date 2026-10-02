@@ -867,6 +867,41 @@ class ZembedCanaryTests(unittest.TestCase):
         json.dumps(outcome.values, allow_nan=False)
 
 
+class ErrorDetailTests(unittest.TestCase):
+    """Failure messages carry the HTTP status and Open WebUI's detail, bounded and public-safe."""
+
+    def response(self, status, body, content_type="application/json"):
+        return scenarios.Response(status, content_type, body)
+
+    def test_the_detail_comes_from_the_json_detail_or_the_body(self):
+        detail = scenarios.response_detail
+        self.assertEqual(detail(self.response(400, b'{"detail":"Model not found"}')), "Model not found")
+        self.assertEqual(detail(self.response(500, b'{"error":{"message":"upstream failed"}}')), "upstream failed")
+        self.assertEqual(detail(self.response(422, b'{"detail":[{"loc":["body","id"],"msg":"field required"}]}')),
+                         '[{"loc": ["body", "id"], "msg": "field required"}]')
+        self.assertEqual(detail(self.response(502, b"Bad Gateway\n\n", "text/plain")), "Bad Gateway")
+        self.assertIsNone(detail(self.response(500, b"")))
+        self.assertEqual(scenarios.error_detail(self.response(500, b"")), "")
+        self.assertEqual(scenarios.error_detail(self.response(400, b'{"detail":"Model not found"}')), ": Model not found")
+
+    def test_the_detail_is_bounded_and_redacted(self):
+        text = ("failed reading /var/lib/example/data/webui.db for admin@example.org "
+                "from 203.0.113.7 with Bearer abc123 token=xyz")
+        detail = scenarios.public_detail(text)
+        for private in ("/var/lib/example", "admin@example.org", "203.0.113.7", "abc123", "xyz"):
+            self.assertNotIn(private, detail)
+        self.assertIn("<path>", detail)
+        self.assertLessEqual(len(scenarios.public_detail("x" * 1000)), scenarios.ERROR_DETAIL_LIMIT)
+        scenarios.v1.assert_public_safe({"detail": detail})
+
+    def test_a_failed_json_call_names_the_status_and_the_detail(self):
+        endpoint = scenarios.Endpoint(origin="http://127.0.0.1:9")
+        with mock.patch.object(endpoint, "request", return_value=self.response(400, b'{"detail":"Model not found"}')):
+            with self.assertRaisesRegex(scenarios.ScenarioFailure,
+                                        r"^POST /api/v1/models/model returned HTTP 400: Model not found$"):
+                endpoint.json("POST", "/api/v1/models/model?id=x", {})
+
+
 class ReceiptTests(unittest.TestCase):
     def test_receipt_is_public_safe_and_carries_the_exit_code(self):
         settings = scenarios.settings_from_environ(candidate_env())
