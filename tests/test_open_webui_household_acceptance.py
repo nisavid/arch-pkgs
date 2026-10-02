@@ -86,11 +86,36 @@ def make_kit(root, *, rehearsal=False, route=None):
     )
 
 
-def write_archive(directory, name, data=b"candidate"):
+def write_archive(directory, name, data=b"candidate", source="open-webui/test"):
     Path(directory).mkdir(parents=True, exist_ok=True)
     path = Path(directory) / name
     path.write_bytes(data)
-    return {"name": name, "size": len(data), "sha256": v1._sha256_bytes(data)}
+    return {"name": name, "size": len(data), "sha256": v1._sha256_bytes(data), "source": source}
+
+
+# The candidate manifest the build ticket committed, schema arch-pkgs-candidate-set/v1.
+CANDIDATE_SET = REPO_ROOT / "docs" / "maintainers" / "evidence" / "open-webui-household-candidate-set-2026-10-02.json"
+EXTERNAL_INPUTS = [
+    {"package": "python-ctranslate2-gfx1151", "version": "4.7.2-1", "role": "host speech provider"},
+]
+
+
+def manifest_entry(record, *, role="deployed", commit=None, basis="recorded-build-commit"):
+    """One arch-pkgs-candidate-set/v1 archives[] entry for a write_archive record."""
+
+    name = record["name"]
+    return {
+        "archive": {
+            "package": kit_module.archive_package(name),
+            "filename": name,
+            "size": record["size"],
+            "sha256": record["sha256"],
+            "source": record.get("source", "open-webui/test"),
+            "source_commit": commit or v1._sha256_bytes(name.encode())[:40],
+        },
+        "source_commit_basis": basis,
+        "role": role,
+    }
 
 
 # The six deployed candidates of the 0.11.4 re-baseline, in DEPLOYED_PACKAGES order.
@@ -104,13 +129,26 @@ CANDIDATE_ARCHIVES = (
 )
 
 
-def six_archives(directory):
-    return [write_archive(directory, name, name.encode()) for name in CANDIDATE_ARCHIVES]
+def six_archives(directory, source=None):
+    """The six candidates' stand-ins, under ``<directory>/<source>`` when a source is named."""
+
+    target = Path(directory) / source if source else Path(directory)
+    return [write_archive(target, name, name.encode(), source or "open-webui/test") for name in CANDIDATE_ARCHIVES]
 
 
 def write_manifest(directory, archives, **extra):
+    """An arch-pkgs-candidate-set/v1 manifest; plain write_archive records are deployed entries."""
+
     path = Path(directory) / "manifest.json"
-    path.write_text(json.dumps({"source_commit": "3647a6f", "archives": archives, **extra}))
+    entries = [item if "archive" in item else manifest_entry(item) for item in archives]
+    path.write_text(json.dumps({
+        "schema": kit_module.CANDIDATE_SET_SCHEMA,
+        "candidate_set": "open-webui-household",
+        "adoption_main_commit": "2059571d63b02ee1d66b3dfed943c7554a643876",
+        "archives": entries,
+        "external_inputs": EXTERNAL_INPUTS,
+        **extra,
+    }))
     return path
 
 
@@ -588,15 +626,29 @@ class UnitDerivationTests(unittest.TestCase):
 
 
 class PreflightTests(unittest.TestCase):
-    def test_locate_archive_picks_the_store_file_with_the_pinned_bytes(self):
+    def test_locate_archive_reads_the_records_store_source(self):
+        # The store keeps same-named archives with different bytes; the
+        # record's source picks the directory, and the kit never searches.
         name = CANDIDATE_ARCHIVES[0]
         with tempfile.TemporaryDirectory() as directory:
             kit = make_kit(directory)
-            write_archive(kit.candidate_store / "3647a6f", name, b"superseded")
-            record = write_archive(kit.candidate_store / "dd9a307", name, b"record bytes")
-            self.assertEqual(kit_module.locate_archive(kit, record), kit.candidate_store / "dd9a307" / name)
-            stale = {**record, "sha256": "0" * 64}
-            self.assertEqual(kit_module.locate_archive(kit, stale), kit.candidate_store / "3647a6f" / name)
+            superseded = write_archive(kit.candidate_store / "open-webui" / "3647a6f", name, b"superseded",
+                                       "open-webui/3647a6f")
+            record = write_archive(kit.candidate_store / "open-webui" / "2059571", name, b"record bytes",
+                                   "open-webui/2059571")
+            self.assertEqual(kit_module.locate_archive(kit, record), kit.candidate_store / "open-webui" / "2059571" / name)
+            self.assertEqual(kit_module.locate_archive(kit, superseded),
+                             kit.candidate_store / "open-webui" / "3647a6f" / name)
+            self.assertIsNone(kit_module.locate_archive(kit, {**record, "source": "open-webui/absent"}))
+            for source in ("../outside", "/abs", "open-webui//2059571", ""):
+                with self.assertRaises(ValueError):
+                    kit_module.locate_archive(kit, {**record, "source": source})
+            (kit.candidate_store / "linked").mkdir()
+            (kit.candidate_store / "linked" / name).symlink_to(kit.candidate_store / "open-webui" / "2059571" / name)
+            with self.assertRaises(ValueError):
+                kit_module.locate_archive(kit, {**record, "source": "linked"})
+            staged = write_archive(kit.root / "inputs", name, b"record bytes", "open-webui/2059571")
+            self.assertEqual(kit_module.locate_archive(kit, staged), kit.root / "inputs" / name)
 
     def test_root_refusals(self):
         refuse = kit_module.root_refusals
@@ -621,21 +673,105 @@ class PreflightTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             archives = six_archives(directory)
             bound = write_archive(directory, "python-ctranslate2-4.8.2-1-x86_64.pkg.tar.zst")
-            manifest = kit_module.load_manifest(write_manifest(directory, archives + [{**bound, "deployed": False}]))
+            identity_only = manifest_entry(bound, role="publication-identity-only")
+            manifest = kit_module.load_manifest(write_manifest(directory, archives + [identity_only]))
             self.assertEqual([item["package"] for item in manifest["deployed"]], list(kit_module.DEPLOYED_PACKAGES))
             self.assertEqual(manifest["bound_not_deployed"][0]["package"], "python-ctranslate2")
+            hayhooks = write_archive(directory, "hayhooks-1.18.0-1-any.pkg.tar.zst")
+            unknown_role = {**manifest_entry(archives[-1]), "role": "trial"}
             for broken in (
                 archives[:-1],
                 archives + [archives[0]],
-                archives + [{**write_archive(directory, "hayhooks-1.18.0-1-any.pkg.tar.zst"), "deployed": False}],
+                archives + [manifest_entry(hayhooks, role="publication-identity-only")],
                 archives[:-1] + [{**archives[-1], "sha256": "not-a-digest"}],
+                archives[:-1] + [unknown_role],
+                archives[:-1] + [manifest_entry(archives[-1], commit="9b41578")],
+                archives[:-1] + [manifest_entry(archives[-1], basis="guessed")],
+                archives[:-1] + [{**archives[-1], "source": "../store"}],
+                archives[:-1] + [manifest_entry(bound)],
             ):
                 with self.assertRaises(ValueError):
                     kit_module.load_manifest(write_manifest(directory, broken))
-            path = Path(directory) / "manifest.json"
-            path.write_text(json.dumps({"archives": archives}))
             with self.assertRaises(ValueError):
+                kit_module.load_manifest(write_manifest(directory, archives, external_inputs=[{"package": "x"}]))
+
+    def test_a_manifest_of_another_schema_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            archives = six_archives(directory)
+            for schema in (None, "arch-pkgs-accepted-publication/v1", "arch-pkgs-candidate-set/v2"):
+                with self.subTest(schema), self.assertRaisesRegex(ValueError, "schema"):
+                    kit_module.load_manifest(write_manifest(directory, archives, schema=schema))
+            # The pre-v1 shape: flat name records under a top-level source commit.
+            path = Path(directory) / "flat.json"
+            path.write_text(json.dumps({"source_commit": "3647a6f", "archives": archives}))
+            with self.assertRaisesRegex(ValueError, "schema"):
                 kit_module.load_manifest(path)
+            # Every subcommand that reads the manifest exits 75 on it.
+            kit = make_kit(directory)
+            (kit.root / kit_module.MARKER).write_text("marker\n")
+            kit.raw.mkdir(parents=True)
+            (kit.raw / "first-start.json").write_text(json.dumps({"started_at": 1.0}))
+            kit.save_state(mode="record", manifest={"sha256": kit_module.sha256_file(path)})
+            kit.manifest_path = path
+            with mock.patch.object(kit_module, "kit_from_args", return_value=kit), \
+                    mock.patch.object(kit_module, "require_lemond_ready") as ready, \
+                    contextlib.redirect_stderr(io.StringIO()) as stderr:
+                code = kit_module.main(["trial", "--lemonade-receipt", "r"])
+            self.assertEqual(code, sc.EXIT_PRECONDITION)
+            self.assertIn("schema", stderr.getvalue())
+            ready.assert_not_called()
+            self.assertNotIn("trial_started", kit.state())
+
+    def test_the_committed_candidate_manifest_loads_with_its_roles_and_commits(self):
+        raw = json.loads(CANDIDATE_SET.read_text(encoding="utf-8"))
+        manifest = kit_module.load_manifest(CANDIDATE_SET)
+        self.assertEqual(manifest["schema"], "arch-pkgs-candidate-set/v1")
+        self.assertNotIn("source_commit", manifest)
+        self.assertEqual(manifest["adoption_main_commit"], raw["adoption_main_commit"])
+        # Role filtering: the six deployed candidates, and the CTranslate2
+        # pair as publication identities only.
+        self.assertEqual([item["package"] for item in manifest["deployed"]], list(kit_module.DEPLOYED_PACKAGES))
+        self.assertEqual([item["package"] for item in manifest["bound_not_deployed"]],
+                         list(kit_module.BOUND_NOT_DEPLOYED))
+        self.assertEqual(sorted(item["name"] for item in manifest["deployed"]), sorted(CANDIDATE_ARCHIVES))
+        # Each archive keeps its own source commit, store source, and basis.
+        by_name = {entry["archive"]["filename"]: entry for entry in raw["archives"]}
+        for record in manifest["deployed"] + manifest["bound_not_deployed"]:
+            entry = by_name[record["name"]]
+            for key in ("size", "sha256", "source", "source_commit"):
+                self.assertEqual(record[key], entry["archive"][key], (record["name"], key))
+            self.assertEqual(record["source_commit_basis"], entry["source_commit_basis"])
+        commits = {record["package"]: record["source_commit"] for record in manifest["deployed"]}
+        self.assertEqual(commits["open-webui"], "2059571d63b02ee1d66b3dfed943c7554a643876")
+        self.assertEqual(commits["qdrant-migration"], "51a55e7866e37887ab206372a075d814094ef7fe")
+        self.assertGreater(len(set(commits.values())), 3)
+        # External inputs are carried verbatim, not merged into the providers.
+        self.assertEqual(manifest["external_inputs"], raw["external_inputs"])
+        v1.assert_public_safe(manifest)
+
+    def test_the_identity_step_carries_per_archive_commits_and_declared_inputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            archives = six_archives(f"{directory}/inputs")
+            commits = [f"{index:x}" * 40 for index in range(1, 7)]
+            entries = [manifest_entry(record, commit=commit) for record, commit in zip(archives, commits)]
+            bound = manifest_entry(write_archive(f"{directory}/elsewhere", "ctranslate2-4.8.2-1-x86_64.pkg.tar.zst"),
+                                   role="publication-identity-only", commit="a" * 40)
+            kit = make_kit(directory)
+            kit.manifest_path = write_manifest(directory, entries + [bound])
+            kit.save_state(manifest={"sha256": kit_module.load_manifest(kit.manifest_path)["sha256"]})
+            with mock.patch.object(kit_module, "module_origins", return_value={}), \
+                    mock.patch.object(kit_module, "host_package_version", return_value="1-1"), \
+                    mock.patch.object(kit_module, "providers_of_record", return_value={"observed": True}), \
+                    mock.patch.object(kit_module.Kit, "effective_env", return_value={}):
+                identity = kit_module.Trial(kit).identity()
+        self.assertEqual([item["source_commit"] for item in identity["archives"]], commits)
+        self.assertEqual({item["source_commit_basis"] for item in identity["archives"]}, {"recorded-build-commit"})
+        self.assertEqual(identity["bound_not_deployed"][0]["source_commit"], "a" * 40)
+        self.assertEqual(identity["bound_not_deployed"][0]["status"], kit_module.BOUND_NOT_DEPLOYED_STATUS)
+        self.assertEqual(identity["external_inputs_declared"], EXTERNAL_INPUTS)
+        self.assertEqual(identity["providers_of_record"], {"observed": True})
+        self.assertEqual(identity["manifest"]["adoption_main_commit"], "2059571d63b02ee1d66b3dfed943c7554a643876")
+        self.assertNotIn("source_commit", identity["manifest"])
 
     def test_archives_are_checked_by_exact_bytes(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -665,7 +801,7 @@ class PreflightTests(unittest.TestCase):
         kit = make_kit(directory)
         if lemond_url:
             kit.lemond_url = lemond_url
-        archives = six_archives(kit.root / "store") if store else [
+        archives = six_archives(kit.root / "store", "open-webui/2059571") if store else [
             {"name": name, "size": 1, "sha256": "0" * 64} for name in CANDIDATE_ARCHIVES
         ]
         kit.manifest_path = write_manifest(directory, archives)
@@ -2589,7 +2725,7 @@ class EvidenceTests(unittest.TestCase):
         # A changed step gets a new id and an evidence schema bump, never a
         # rewritten id; new steps bump the schema too.
         self.assertEqual(steps[7], "open-webui.acceptance.connections.no-stored-secret")
-        self.assertEqual(kit_module.SCHEMA, "open-webui-household-acceptance/v4")
+        self.assertEqual(kit_module.SCHEMA, "open-webui-household-acceptance/v5")
 
     def test_the_runbook_scenario_map_is_the_trial_map(self):
         runbook = (REPO_ROOT / "docs" / "maintainers" / "open-webui-household-acceptance.md").read_text(encoding="utf-8")
@@ -2652,7 +2788,7 @@ class EvidenceTests(unittest.TestCase):
             kit, trial = self.trial(directory, rehearsal=False)
             evidence = kit_module.build_evidence(kit, trial, 0, False)
             v1.assert_public_safe(evidence)
-            self.assertEqual(evidence["schema"], "open-webui-household-acceptance/v4")
+            self.assertEqual(evidence["schema"], "open-webui-household-acceptance/v5")
             self.assertEqual(
                 (evidence["trial_set_count"], evidence["restore_drills"], evidence["rollback_drills"]), (1, 1, 1)
             )

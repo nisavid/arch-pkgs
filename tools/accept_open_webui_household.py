@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Single-trial acceptance kit for the Open WebUI household candidate set.
 
-The kit deploys the exact candidate bytes named by the build ticket's manifest
-as user-level services under one disposable, marked root, wires them to the
+The kit deploys the exact candidate bytes named by the build ticket's committed
+candidate manifest (schema ``arch-pkgs-candidate-set/v1``; its ``role:
+deployed`` archives, each read from ``<store>/<source>/<filename>``) as
+user-level services under one disposable, marked root, wires them to the
 shared Lemonade provider through the candidate's household profile example,
 rendered for that provider, and runs exactly one integrated trial set: one
 pass over the scenario map, one restore drill, and one rollback drill.
-Evidence schema: ``open-webui-household-acceptance/v4``.
+Evidence schema: ``open-webui-household-acceptance/v5``.
 
 Subcommands: preflight [--probe-only], stage, up, down, trial, resmoke,
 teardown [--keep-anchor].  The stub rehearsal (``--provider stub
@@ -59,7 +61,7 @@ sys.path.insert(0, str(TOOLS))
 import measure_open_webui_household as v1  # noqa: E402
 import open_webui_household_scenarios as sc  # noqa: E402
 
-SCHEMA = "open-webui-household-acceptance/v4"
+SCHEMA = "open-webui-household-acceptance/v5"
 MARKER = ".owui-acceptance"
 KIT_STATE = "kit.json"
 DEFAULT_ROOT = Path("/srv/build/arch-pkgs-owui-acceptance")
@@ -230,28 +232,64 @@ def archive_package(name: str) -> str:
     return match.group("package")
 
 
-def load_manifest(path: Path) -> dict[str, Any]:
-    """Read the build ticket's candidate manifest (name, size, SHA-256, source commit).
+CANDIDATE_SET_SCHEMA = "arch-pkgs-candidate-set/v1"
+MANIFEST_ROLES = MappingProxyType({"deployed": True, "publication-identity-only": False})
+SOURCE_COMMIT_BASES = ("recorded-build-commit", "derived-tree-equal")
+_FULL_COMMIT = re.compile(r"[0-9a-f]{40}")
 
-    The kit reads only this file, never a directory listing.  Deployed
-    archives must be exactly the six candidates; the generic CTranslate2
-    archives may appear with ``"deployed": false``.
+
+def _store_source(value: Any) -> str:
+    """A manifest ``source``: a relative store subdirectory with no empty or parent part."""
+
+    if (
+        not isinstance(value, str)
+        or value.startswith("/")
+        or any(part in ("", ".", "..") for part in value.split("/"))
+    ):
+        raise ValueError(f"malformed manifest archive source: {value!r}")
+    return value
+
+
+def load_manifest(path: Path) -> dict[str, Any]:
+    """Read the build ticket's candidate manifest, schema ``arch-pkgs-candidate-set/v1``.
+
+    The manifest is the one #88 commits under ``docs/maintainers/evidence/``.
+    Each ``archives[]`` entry's inner ``archive`` object is authoritative for
+    the bytes: ``filename``, ``size``, ``sha256``, ``source`` (the store
+    subdirectory, so the archive is ``<store>/<source>/<filename>``), and that
+    archive's own ``source_commit``; ``source_commit_basis`` and ``role`` sit
+    beside it.  ``role: deployed`` archives must be exactly the six
+    candidates; ``publication-identity-only`` ones may be only the generic
+    CTranslate2 pair.  There is no top-level source commit:
+    ``adoption_main_commit`` is the main commit the tree check ran against.
+    ``external_inputs`` are declared inputs, kept verbatim as evidence; they
+    are neither the provider list nor a gate.  The kit reads only this file,
+    never a directory listing.
     """
 
     raw = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(raw, dict) or not isinstance(raw.get("archives"), list):
-        raise ValueError("the manifest must be an object with an archives list")
-    source_commit = raw.get("source_commit")
-    if not isinstance(source_commit, str) or not re.fullmatch(r"[0-9a-f]{7,40}", source_commit):
-        raise ValueError("the manifest must name its source commit")
+    if not isinstance(raw, dict):
+        raise ValueError("the manifest must be a JSON object")
+    if raw.get("schema") != CANDIDATE_SET_SCHEMA:
+        raise ValueError(f"the manifest's schema is {raw.get('schema')!r}, not {CANDIDATE_SET_SCHEMA}")
+    if not isinstance(raw.get("archives"), list):
+        raise ValueError("the manifest must carry an archives list")
+    external = raw.get("external_inputs", [])
+    if not isinstance(external, list) or not all(
+        isinstance(item, dict) and isinstance(item.get("package"), str) and isinstance(item.get("version"), str)
+        for item in external
+    ):
+        raise ValueError("the manifest's external_inputs must be a list of package and version records")
     deployed: dict[str, dict[str, Any]] = {}
     bound: dict[str, dict[str, Any]] = {}
     for item in raw["archives"]:
-        if not isinstance(item, dict):
-            raise ValueError("every manifest archive must be an object")
-        name = item.get("name")
-        size = item.get("size", item.get("size_bytes"))
-        digest = item.get("sha256")
+        if not isinstance(item, dict) or not isinstance(item.get("archive"), dict):
+            raise ValueError("every manifest archive entry must be an object with an archive object")
+        archive = item["archive"]
+        name = archive.get("filename")
+        size = archive.get("size")
+        digest = archive.get("sha256")
+        commit = archive.get("source_commit")
         if (
             not isinstance(name, str)
             or isinstance(size, bool)
@@ -259,14 +297,31 @@ def load_manifest(path: Path) -> dict[str, Any]:
             or size <= 0
             or not isinstance(digest, str)
             or not re.fullmatch(r"[0-9a-f]{64}", digest)
+            or not isinstance(commit, str)
+            or not _FULL_COMMIT.fullmatch(commit)
         ):
             raise ValueError(f"malformed manifest archive record: {name!r}")
         package = archive_package(name)
-        record = {"package": package, "name": name, "size": size, "sha256": digest}
-        target = deployed if item.get("deployed", True) else bound
+        if archive.get("package", package) != package:
+            raise ValueError(f"{name} does not belong to package {archive.get('package')!r}")
+        basis = item.get("source_commit_basis")
+        if basis not in SOURCE_COMMIT_BASES:
+            raise ValueError(f"{name} has no known source_commit_basis: {basis!r}")
+        role = item.get("role")
+        if not isinstance(role, str) or role not in MANIFEST_ROLES:
+            raise ValueError(f"{name} has an unknown role: {role!r}")
+        record = {
+            "package": package,
+            "name": name,
+            "size": size,
+            "sha256": digest,
+            "source": _store_source(archive.get("source")),
+            "source_commit": commit,
+            "source_commit_basis": basis,
+        }
         if package in deployed or package in bound:
             raise ValueError(f"the manifest names {package} more than once")
-        target[package] = record
+        (deployed if MANIFEST_ROLES[role] else bound)[package] = record
     if set(deployed) != set(DEPLOYED_PACKAGES):
         raise ValueError(
             "the manifest's deployed archives must be exactly "
@@ -275,12 +330,17 @@ def load_manifest(path: Path) -> dict[str, Any]:
         )
     unexpected = set(bound) - set(BOUND_NOT_DEPLOYED)
     if unexpected:
-        raise ValueError(f"unexpected undeployed archives: {', '.join(sorted(unexpected))}")
+        raise ValueError(f"unexpected publication-identity-only archives: {', '.join(sorted(unexpected))}")
+    adoption = raw.get("adoption_main_commit")
+    if adoption is not None and not (isinstance(adoption, str) and _FULL_COMMIT.fullmatch(adoption)):
+        raise ValueError(f"malformed adoption_main_commit: {adoption!r}")
     return {
-        "schema": raw.get("schema"),
-        "source_commit": source_commit,
+        "schema": CANDIDATE_SET_SCHEMA,
+        "candidate_set": raw.get("candidate_set"),
+        "adoption_main_commit": adoption,
         "deployed": [deployed[package] for package in DEPLOYED_PACKAGES],
         "bound_not_deployed": [bound[package] for package in BOUND_NOT_DEPLOYED if package in bound],
+        "external_inputs": external,
         "sha256": sha256_file(path),
     }
 
@@ -2898,12 +2958,20 @@ class Trial:
         state = kit.state()
         if manifest is None or manifest["sha256"] != state.get("manifest", {}).get("sha256"):
             raise sc.ScenarioFailure("the manifest differs from the one staged")
-        archives = [verify_archive(kit.path("inputs", record["name"]), record) for record in manifest["deployed"]]
+        archives = [
+            {**verify_archive(kit.path("inputs", record["name"]), record),
+             "source_commit": record["source_commit"], "source_commit_basis": record["source_commit_basis"]}
+            for record in manifest["deployed"]
+        ]
         origins = module_origins(kit)
         return {
-            "manifest": {"source_commit": manifest["source_commit"], "sha256": manifest["sha256"], "schema": manifest["schema"]},
+            "manifest": {key: manifest[key] for key in ("schema", "candidate_set", "adoption_main_commit", "sha256")},
             "archives": archives,
             "bound_not_deployed": [{**record, "status": BOUND_NOT_DEPLOYED_STATUS} for record in manifest["bound_not_deployed"]],
+            # Declared by the manifest, verbatim: evidence, not gates, and not
+            # the provider list (host_providers and providers_of_record are
+            # what the host actually has installed).
+            "external_inputs_declared": manifest["external_inputs"],
             "supporting": state.get("supporting", []),
             "host_providers": {package: host_package_version(package) for package in HOST_PROVIDERS},
             "providers_of_record": providers_of_record(),
@@ -3672,7 +3740,7 @@ def preflight_facts(kit: Kit, *, probe_only: bool) -> tuple[dict[str, Any], list
     else:
         try:
             manifest = load_manifest(kit.manifest_path)
-            report["manifest_source_commit"] = manifest["source_commit"]
+            report["manifest"] = {key: manifest[key] for key in ("schema", "candidate_set", "adoption_main_commit")}
             located = {}
             for record in manifest["deployed"]:
                 path = locate_archive(kit, record)
@@ -3723,28 +3791,24 @@ def preflight_facts(kit: Kit, *, probe_only: bool) -> tuple[dict[str, Any], list
 
 
 def locate_archive(kit: Kit, record: Mapping[str, Any]) -> Path | None:
-    """Find one manifest archive: the staged input, else the store file with its bytes.
+    """Find one manifest archive: the staged input, else ``<store>/<source>/<filename>``.
 
-    The candidate store keeps superseded builds under the same file name, so
-    a store match must equal the record's size and SHA-256.  When none does,
-    the first name match is returned and ``verify_archive`` reports why.
+    The candidate store keeps superseded builds under the same file name in
+    other subdirectories, so the record's ``source`` names the one to use; the
+    kit never searches the store.  ``verify_archive`` then checks the bytes.
     """
 
     name = record["name"]
     staged = kit.path("inputs", name)
     if staged.is_file():
         return staged
-    if not kit.candidate_store.is_dir():
+    store = kit.candidate_store
+    candidate = store / _store_source(record["source"]) / name
+    if not candidate.is_file():
         return None
-    matches = [
-        candidate
-        for candidate in sorted(kit.candidate_store.rglob(name))
-        if candidate.is_file() and not candidate.is_symlink()
-    ]
-    for candidate in matches:
-        if candidate.stat().st_size == record["size"] and sha256_file(candidate) == record["sha256"]:
-            return candidate
-    return matches[0] if matches else None
+    if candidate.is_symlink() or not candidate.resolve().is_relative_to(store.resolve()):
+        raise ValueError(f"{record['source']}/{name} is not a regular file inside the candidate store")
+    return candidate
 
 
 def candidate_env_from_archive(archive: Path | None, lemond_url: str) -> dict[str, str]:
@@ -3914,7 +3978,7 @@ def cmd_stage(kit: Kit, args: argparse.Namespace) -> int:
     route = "systemd-creds" if probe_systemd_creds(kit.slice) else "plaintext-0400"
     kit.save_state(
         **staged_pins(kit), credential_route=route, commissioned=False, trial_started=False,
-        manifest={"sha256": manifest["sha256"], "source_commit": manifest["source_commit"]},
+        manifest={"sha256": manifest["sha256"], "schema": manifest["schema"]},
         archives=archives + [record for record in supporting if record["source"] == "sync-db"],
         supporting=supporting, kit_commit=kit_commit(),
     )
@@ -4173,7 +4237,8 @@ def slice_name(value: str) -> str:
 def parser() -> argparse.ArgumentParser:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--root", type=Path, default=DEFAULT_ROOT, help=f"disposable acceptance root (default {DEFAULT_ROOT})")
-    common.add_argument("--manifest", type=Path, help="the candidate manifest of record (name, size, SHA-256, source commit)")
+    common.add_argument("--manifest", type=Path,
+                        help=f"the candidate manifest of record ({CANDIDATE_SET_SCHEMA}, committed under docs/maintainers/evidence/)")
     common.add_argument("--lemond-url", help=f"Lemonade origin (default {sc.DEFAULT_LEMOND_URL}; the stub origin with --provider stub)")
     common.add_argument("--chat-model", help=f"the designated resident chat model; its bare name also matches (default {sc.DEFAULT_CHAT_MODEL})")
     common.add_argument("--embedding-model", help="zembed id to confirm (default: the packaged env)")

@@ -9,7 +9,7 @@ live-validated Lemonade provider, and runs **one** integrated trial set with
 one restore drill and one rollback drill.
 
 The kit is `tools/accept_open_webui_household.py` (evidence schema
-`open-webui-household-acceptance/v4`) plus the shared scenario module
+`open-webui-household-acceptance/v5`) plus the shared scenario module
 `tools/open_webui_household_scenarios.py`. The kit PR alone means *source
 updated*. The candidate set is *acceptance deployed* only after the trial's
 evidence merges.
@@ -53,15 +53,16 @@ rehearsal may run earlier.
    id), and the evidence cites them; record-mode `trial` exits 75 without
    them, before the trial starts. This repository writes nothing to the
    lemonade repository.
-2. **The candidate of record.** The pull request that stages the candidate has
-   merged, and
+2. **The candidate of record.**
    [Build the Open WebUI household candidate set from main](https://github.com/nisavid/arch-pkgs/issues/88)
-   has recorded its manifest, either by adopting the pre-merge bytes through
-   its tree-id equality check or by rebuilding. The kit reads that manifest
-   (`--manifest`); it never reads a directory listing. Because only one trial
-   set is allowed, running it on non-record bytes would waste it.
-   The candidate of record, which the manifest must carry, is the 0.11.4
-   re-baseline set:
+   commits its candidate manifest as
+   [`evidence/open-webui-household-candidate-set-2026-10-02.json`](evidence/open-webui-household-candidate-set-2026-10-02.json),
+   schema `arch-pkgs-candidate-set/v1`, described in
+   [Open WebUI household candidate set](open-webui-household-candidate-set.md).
+   The kit reads that file (`--manifest`); it never reads a directory
+   listing. Because only one trial set is allowed, running it on non-record
+   bytes would waste it. The deployed candidates of record, the manifest's
+   `role: deployed` archives, are the 0.11.4 re-baseline set:
 
    | Archive | Size (bytes) | SHA-256 |
    | --- | --- | --- |
@@ -100,10 +101,21 @@ rehearsal may run earlier.
    `qdrant-migration`, `python-rapidocr`, and `python-faster-whisper` are
    unchanged.
 
+   The manifest's `publication-identity-only` archives, the generic
+   `ctranslate2` and `python-ctranslate2` 4.8.2-1, are bound but never
+   deployed. Each archive record carries its own `source_commit`, and the kit
+   copies each one into A-ID1; the manifest has no top-level source commit,
+   and its `adoption_main_commit` is only the `main` commit that the build
+   ticket's tree check ran against. The kit records the manifest's `external_inputs`
+   verbatim as declared inputs, next to the host providers it observes; they
+   are evidence, not gates. The kit refuses a manifest of any other schema
+   with exit 75.
+
    The candidate store also keeps superseded archives, some under the same
-   names (an earlier `open-webui-0.11.0-5` build differs in size and digest),
-   so the kit picks the store file whose size and SHA-256 match the manifest
-   record, never the first name match.
+   names (it keeps two `python-rapidocr-3.9.2-1` archives), so the kit reads
+   each archive from `<store>/<source>/<filename>`, the record's `source`
+   subdirectory, and never searches the store; the size and SHA-256 must
+   then match the record.
 3. **The build root.** A user-owned directory on a filesystem below 80% use.
    The preferred root is `/srv/build/arch-pkgs-owui-acceptance`. Any other
    filesystem needs lead or owner approval. Preflight refuses `/home`, the shared `/tmp` volume, any root at
@@ -170,8 +182,8 @@ each value used.
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `--root DIR` | `/srv/build/arch-pkgs-owui-acceptance` | Disposable acceptance root. It holds a `.owui-acceptance` marker, and teardown deletes only a marked root. |
-| `--manifest FILE` | none; required | The candidate manifest of record from the build ticket (name, size, SHA-256, source commit). `trial` refuses with exit 75, before the trial starts, when it is missing or differs from the manifest `stage` used. |
-| `--candidate-store DIR` | the operator's arch-pkgs candidate store under the XDG state directory | Where `preflight` and `stage` look for a manifest archive that is not yet under `<root>/inputs/`; the file whose size and SHA-256 match the record is used. |
+| `--manifest FILE` | none; required | The build ticket's committed candidate manifest, schema `arch-pkgs-candidate-set/v1`. The kit reads each archive record's `filename`, `size`, `sha256`, `source`, and `source_commit`, with its `source_commit_basis` and `role`, and the `external_inputs` block; any other schema exits 75. `trial` refuses with exit 75, before the trial starts, when it is missing or differs from the manifest `stage` used. |
+| `--candidate-store DIR` | the operator's arch-pkgs candidate store under the XDG state directory | Where `preflight` and `stage` read a manifest archive that is not yet under `<root>/inputs/`: `<store>/<source>/<filename>`, from the record's `source`. The file must be a regular file inside the store, and its size and SHA-256 must match the record. |
 | `--lemonade-receipt ID` | none; required for a record-mode `trial` | One Lemonade M4 receipt id; repeat it for each id. |
 | `--lemond-url URL` | `http://127.0.0.1:13305` | Lemonade origin. Only `GET /api/v1/health`, `GET /api/v1/models`, and inference requests are sent. The kit renders the candidate's household profile example with `<lemond>` set to this URL's origin, so the URL must be an origin with no path; if the packaged env and the rendered profile do not give Open WebUI exactly this provider for chat, embedding, and reranking, preflight and every re-entry exit 75. |
 | `--chat-model ID` | `user.Qwen3.6-35B-A3B-MTP-GGUF-UD-Q4_K_XL` (owner-pinned) | The resident chat model used for ordinary chat and the cited answer. Readiness accepts this canonical id or its bare form without the leading `user.`. |
@@ -296,7 +308,7 @@ only.
 
 | Id | Requirement | Limit |
 | --- | --- | --- |
-| `open-webui.acceptance.identity.archives` (A-ID1) | All deployed archives match the manifest by name, size, and SHA-256, before extraction and again at rollback. The generic `ctranslate2` and `python-ctranslate2` 4.8.2 archives are listed as "bound, not deployed"; the host `python-ctranslate2-gfx1151` provides and conflicts. | exact |
+| `open-webui.acceptance.identity.archives` (A-ID1) | All deployed archives match the manifest by name, size, and SHA-256, before extraction and again at rollback. Each record carries its archive's `source_commit` and `source_commit_basis` from the manifest, and the step records the manifest's `external_inputs` verbatim as declared inputs beside the observed host providers. The generic `ctranslate2` and `python-ctranslate2` 4.8.2 archives are listed as "bound, not deployed"; the host `python-ctranslate2-gfx1151` provides and conflicts. | exact |
 | `open-webui.acceptance.identity.unit-properties` (A-ID2) | Every packaged unit property the user manager cannot apply, generated (see below). | record |
 | `open-webui.acceptance.ready.first-start` (A-R2) | First fresh start reaches Alembic head `d4c1a8e37b62`, Open WebUI 0.11.4's single head, with no migration error; UDS `/ready` 200 before commissioning. | head exact; duration recorded |
 | `open-webui.acceptance.profile.persisted` | Before commissioning rewrites the connection, the SQLite `config` row of each persistent key in the rendered household profile holds the profile's value, parsed as Open WebUI 0.11.4 parses it, or the acceptance overlay's value where the overlay sets the key (the relayed reranker URL). A first start without the profile would have persisted the vanilla values instead, and the stored values win after that. An absent row, a differing value, or a profile key the kit cannot classify fails the step and stops the trial. The record lists key names only, never values. | exact |
@@ -760,7 +772,8 @@ instead.
   `docs/maintainers/evidence/open-webui-household-acceptance-<YYYY-MM-DD>.json`.
   It lands as a follow-up commit on the kit PR, or as a stacked PR if the kit
   has already merged. The ticket closes only when that evidence merges.
-- It binds the archive identities, the supporting packages (host pacman
+- It binds the archive identities with each archive's source commit, the
+  manifest's declared external inputs, the supporting packages (host pacman
   identity or verified archive), the host provider identities, the
   knowingly-foreign providers of record, the Whisper model and audio pins, the Lemonade version, the
   pre- and post-trial model snapshots, the M4 receipt ids, the canary texts,
