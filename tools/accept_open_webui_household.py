@@ -2926,7 +2926,7 @@ class Trial:
             outcome, result = action(), sc.PASS
             values, detail = (outcome.values, outcome.detail) if isinstance(outcome, Passed) else (outcome, "ok")
         except sc.Escalation as error:
-            values, result, detail = {}, sc.ESCALATE, str(error)
+            values, result, detail = dict(error.values), sc.ESCALATE, str(error)
         except sc.Blocked as error:
             values, result, detail = {}, sc.BLOCKED, str(error)
         except STEP_FAILURES as error:

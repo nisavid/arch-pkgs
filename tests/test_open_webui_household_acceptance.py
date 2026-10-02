@@ -3004,7 +3004,7 @@ class EvidenceTests(unittest.TestCase):
             trial.steps = []
 
             def escalate():
-                raise sc.Escalation("ESCALATE: zembed canary")
+                raise sc.Escalation("ESCALATE: zembed canary", {"margin": 0.1})
 
             def fail():
                 raise sc.ScenarioFailure("no")
@@ -3016,6 +3016,7 @@ class EvidenceTests(unittest.TestCase):
                 with self.assertRaises(kit_module.Stop):
                     trial.step("c", escalate)
             self.assertEqual([step.result for step in trial.steps], [sc.FAIL, sc.FAIL, sc.ESCALATE])
+            self.assertEqual(trial.steps[-1].values, {"margin": 0.1})
             self.assertEqual(sc.aggregate_exit_code([step.result for step in trial.steps]), sc.EXIT_ESCALATE)
 
 

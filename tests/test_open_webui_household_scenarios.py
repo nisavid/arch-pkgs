@@ -724,6 +724,75 @@ class SpeechTests(unittest.TestCase):
             json.dumps(record)
 
 
+def unit_vector(*components, dimensions=2560):
+    vector = [0.0] * dimensions
+    for index, value in enumerate(components):
+        vector[index] = value
+    return vector
+
+
+class ZembedCanaryTests(unittest.TestCase):
+    """The canary's record: per-vector dimensions and norms, kept on escalation."""
+
+    QUERY = unit_vector(1.0)
+    RELEVANT = unit_vector(0.9, math.sqrt(1 - 0.81))
+    UNRELATED = unit_vector(0.0, 0.0, 1.0)
+
+    def context(self, stored_chunk=None):
+        settings = scenarios.settings_from_environ(candidate_env())
+        endpoint = scenarios.Endpoint(origin="http://127.0.0.1:9")
+        return scenarios.Context(target="acceptance", webui=endpoint, lemond=endpoint, token="", settings=settings,
+                                 chat_model="chat", stored_chunk=stored_chunk)
+
+    def run_canary(self, *, unrelated=None, stored_chunk=None, direct=None):
+        def embed(_ctx, text):
+            for canary, vector in ((scenarios.CANARY_QUERY, self.QUERY), (scenarios.CANARY_RELEVANT, self.RELEVANT),
+                                   (scenarios.CANARY_UNRELATED, unrelated or self.UNRELATED)):
+                if text.endswith(canary):
+                    return vector
+            return direct
+
+        with mock.patch.object(scenarios, "lemond_embed", side_effect=embed):
+            return scenarios.run_scenario(self.context(stored_chunk), "open-webui.resmoke.zembed-canary")
+
+    def test_a_pass_records_every_vectors_dimensions_and_norm(self):
+        outcome = self.run_canary(stored_chunk=lambda: ("chunk", self.QUERY), direct=self.QUERY)
+        self.assertEqual(outcome.result, scenarios.PASS)
+        vectors = outcome.values["vectors"]
+        self.assertEqual(sorted(vectors), ["direct_chunk", "query", "relevant", "stored_chunk", "unrelated"])
+        for name, record in vectors.items():
+            self.assertEqual(record["dimensions"], 2560, name)
+            self.assertAlmostEqual(record["norm"], 1.0, places=9, msg=name)
+        self.assertEqual(outcome.values["margin"], 0.9)
+        self.assertEqual(outcome.values["stored_vector_cosine"], 1.0)
+
+    def test_an_escalation_keeps_the_values_it_computed(self):
+        # A norm outside the tolerance escalates before the stored-vector check.
+        outcome = self.run_canary(unrelated=unit_vector(0.0, 0.0, 2.0),
+                                  stored_chunk=lambda: self.fail("the stored chunk is read only after a pass"))
+        self.assertEqual(outcome.result, scenarios.ESCALATE)
+        self.assertEqual(outcome.detail, "ESCALATE: zembed canary")
+        self.assertEqual(outcome.values["vectors"]["unrelated"], {"dimensions": 2560, "norm": 2.0})
+        self.assertEqual(outcome.values["vectors"]["query"], {"dimensions": 2560, "norm": 1.0})
+        self.assertEqual(outcome.values["margin"], 0.9)
+        self.assertEqual(outcome.values["texts"]["query"], scenarios.CANARY_QUERY)
+        self.assertEqual(outcome.values["prefix_source"], scenarios.settings_from_environ(candidate_env()).source)
+        # A stored vector that differs from the settings-prefixed one escalates
+        # with its cosine and both chunk vectors recorded.
+        outcome = self.run_canary(stored_chunk=lambda: ("chunk", self.QUERY), direct=self.UNRELATED)
+        self.assertEqual(outcome.result, scenarios.ESCALATE)
+        self.assertIn("stored vector", outcome.detail)
+        self.assertEqual(outcome.values["stored_vector_cosine"], 0.0)
+        self.assertEqual(outcome.values["vectors"]["direct_chunk"], {"dimensions": 2560, "norm": 1.0})
+        self.assertEqual(outcome.values["margin"], 0.9)
+        # A non-finite vector escalates with JSON-safe values.
+        outcome = self.run_canary(unrelated=unit_vector(math.nan))
+        self.assertEqual(outcome.result, scenarios.ESCALATE)
+        self.assertIsNone(outcome.values["vectors"]["unrelated"]["norm"])
+        self.assertIsNone(outcome.values["margin"])
+        json.dumps(outcome.values, allow_nan=False)
+
+
 class ReceiptTests(unittest.TestCase):
     def test_receipt_is_public_safe_and_carries_the_exit_code(self):
         settings = scenarios.settings_from_environ(candidate_env())
@@ -874,6 +943,7 @@ class StubProviderTests(unittest.TestCase):
             )
             values = scenarios.zembed_canary(ctx)
             self.assertEqual(values["dimensions"], 2560)
+            self.assertEqual({record["dimensions"] for record in values["vectors"].values()}, {2560})
             self.assertEqual(values["stored_vector_cosine"], "not-applicable")
             self.assertEqual(lemond.request("POST", "/api/v1/load", payload={}).status, 404)
 

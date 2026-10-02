@@ -283,7 +283,15 @@ class ScenarioFailure(RuntimeError):
 
 
 class Escalation(RuntimeError):
-    """The zembed canary failed; the run stops and escalates to the lead."""
+    """The zembed canary failed; the run stops and escalates to the lead.
+
+    ``values`` carries what the canary computed before it failed, so the
+    lead decides on the measured margin, norms, and stored-vector cosine.
+    """
+
+    def __init__(self, message: str, values: Mapping[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.values: dict[str, Any] = dict(values or {})
 
 
 # ---------------------------------------------------------------------------
@@ -1075,27 +1083,57 @@ def lemond_embed(ctx: Context, text: str) -> list[float]:
     return [float(value) for value in vector]
 
 
+def _finite(value: float | None, places: int) -> float | None:
+    """A rounded value for the record, or None when it is missing or not finite."""
+
+    return round(value, places) if value is not None and math.isfinite(value) else None
+
+
+def _cosine_or_none(left: Sequence[float], right: Sequence[float]) -> float | None:
+    try:
+        return cosine(left, right)
+    except (ValueError, OverflowError):
+        return None
+
+
+def vector_record(vector: Sequence[float]) -> dict[str, Any]:
+    """One canary vector's recorded shape: its dimensions and Euclidean norm."""
+
+    try:
+        norm: float | None = math.sqrt(sum(value * value for value in vector))
+    except OverflowError:
+        norm = None
+    return {"dimensions": len(vector), "norm": _finite(norm, 9)}
+
+
 def zembed_canary(ctx: Context) -> dict[str, Any]:
     query = lemond_embed(ctx, ctx.settings.query_prefix + CANARY_QUERY)
     relevant = lemond_embed(ctx, ctx.settings.content_prefix + CANARY_RELEVANT)
     unrelated = lemond_embed(ctx, ctx.settings.content_prefix + CANARY_UNRELATED)
+    to_relevant, to_unrelated = _cosine_or_none(query, relevant), _cosine_or_none(query, unrelated)
+    vectors = {"query": vector_record(query), "relevant": vector_record(relevant), "unrelated": vector_record(unrelated)}
     values: dict[str, Any] = {
         "texts": {"query": CANARY_QUERY, "relevant": CANARY_RELEVANT, "unrelated": CANARY_UNRELATED},
         "dimensions": len(query),
-        "margin": round(cosine(query, relevant) - cosine(query, unrelated), 6)
-        if len(query) == len(relevant) == len(unrelated)
+        "vectors": vectors,
+        "margin": _finite(to_relevant - to_unrelated, 6)
+        if to_relevant is not None and to_unrelated is not None
         else None,
         "prefix_source": ctx.settings.source,
     }
     if not v1.embedding_canary_passes(query, relevant, unrelated):
-        raise Escalation("ESCALATE: zembed canary")
+        raise Escalation("ESCALATE: zembed canary", values)
     if ctx.stored_chunk is not None:
         chunk, stored = ctx.stored_chunk()
         direct = lemond_embed(ctx, ctx.settings.content_prefix + chunk)
-        similarity = cosine(stored, direct)
-        values["stored_vector_cosine"] = round(similarity, 6)
-        if similarity < STORED_VECTOR_MINIMUM_COSINE:
-            raise Escalation("ESCALATE: zembed canary (stored vector differs from the settings-prefixed embedding)")
+        vectors["stored_chunk"] = vector_record(stored)
+        vectors["direct_chunk"] = vector_record(direct)
+        similarity = _cosine_or_none(stored, direct)
+        values["stored_vector_cosine"] = _finite(similarity, 6)
+        if similarity is None or not similarity >= STORED_VECTOR_MINIMUM_COSINE:
+            raise Escalation(
+                "ESCALATE: zembed canary (stored vector differs from the settings-prefixed embedding)", values
+            )
     else:
         values["stored_vector_cosine"] = "not-applicable"
     return values
@@ -1307,7 +1345,8 @@ def run_scenario(ctx: Context, scenario_id: str) -> ScenarioResult:
         values = SCENARIOS[scenario_id](ctx)
         result, detail = PASS, "ok"
     except Escalation as error:
-        values, result, detail = {}, ESCALATE, str(error)
+        # The lead decides on the values the canary computed, so keep them.
+        values, result, detail = dict(error.values), ESCALATE, str(error)
     except Blocked as error:
         values, result, detail = {}, BLOCKED, str(error)
     except SCENARIO_FAILURES as error:
