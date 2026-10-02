@@ -1573,7 +1573,7 @@ class CredentialTests(unittest.TestCase):
             ["OPENAI_API_KEYS", "web.TAVILY_API_KEY"],
         )
 
-    def no_stored_secret(self, directory, config):
+    def no_stored_secret(self, directory, config, *, rehearsal=False, events=()):
         """Run the stored-secret check on an Open WebUI 0.11 database holding ``config``.
 
         Migration 3ff2c63645b8 renames the old ``config(id, data)`` blob table to
@@ -1581,7 +1581,8 @@ class CredentialTests(unittest.TestCase):
         ``value`` column holding that key's JSON.
         """
 
-        kit = make_kit(directory)
+        kit = make_kit(directory, rehearsal=rehearsal)
+        kit.save_state(staged_at=1000.0)
         if not kit.path("tree").is_dir():
             write_candidate_tree(directory)
         kit.unit_dir.mkdir(parents=True)
@@ -1597,9 +1598,39 @@ class CredentialTests(unittest.TestCase):
                            [(key, json.dumps(value)) for key, value in config.items()])
             db.commit()
         trial = kit_module.Trial(kit)
-        with mock.patch.object(kit_module.Kit, "uds") as uds:
+        with mock.patch.object(kit_module.Kit, "uds") as uds, \
+                mock.patch.object(kit_module, "stub_events", return_value=list(events)) as stub_events:
             uds.return_value.json.return_value = {"status": True}
-            return trial.no_stored_secret()
+            values = trial.no_stored_secret()
+        if rehearsal:
+            # Only this run's stub requests count: the read starts at stage.
+            stub_events.assert_called_once_with(kit, 1000.0)
+        return values
+
+    def test_the_rehearsal_counts_only_credentials_this_run_sent_to_the_stub(self):
+        config = {"openai.api_keys": [""], "rag.external_reranker_api_key": ""}
+        # Open WebUI's reranker always sends "Bearer {key}"; with an empty key
+        # the header is present but carries no credential.
+        empty_bearer = {"event": "stub_request", "path": "/api/v1/rerank",
+                        "authorization_present": True, "authorization_credential": False}
+        plain = {"event": "stub_request", "path": "/api/v1/embeddings",
+                 "authorization_present": False, "authorization_credential": False}
+        with tempfile.TemporaryDirectory() as directory:
+            values = self.no_stored_secret(directory, config, rehearsal=True, events=[empty_bearer, plain])
+        self.assertEqual(values["stub_requests_with_credential"], 0)
+        sent = {**empty_bearer, "authorization_credential": True}
+        with tempfile.TemporaryDirectory() as directory, self.assertRaises(sc.ScenarioFailure) as raised:
+            self.no_stored_secret(directory, config, rehearsal=True, events=[plain, sent])
+        self.assertEqual(json.loads(str(raised.exception))["stub_requests_with_credential"], 1)
+
+    def test_the_run_starts_at_stage_or_else_at_the_first_start(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit = make_kit(directory)
+            kit.raw.mkdir(parents=True)
+            (kit.raw / "first-start.json").write_text(json.dumps({"started_at": 2000.5}))
+            self.assertEqual(kit_module.run_started_at(kit), 2000.5)
+            kit.save_state(staged_at=1500.25)
+            self.assertEqual(kit_module.run_started_at(kit), 1500.25)
 
     def test_stored_secret_check_passes_on_empty_per_key_config_rows(self):
         config = {

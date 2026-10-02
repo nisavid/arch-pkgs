@@ -1004,6 +1004,12 @@ class StubProviderTests(unittest.TestCase):
         assert endpoint.context is not None
         self.assertEqual(endpoint.context.minimum_version, ssl.TLSVersion.TLSv1_2)
 
+    def test_the_stub_logs_whether_a_credential_was_sent_never_its_value(self):
+        for header, sent in ((None, False), ("", False), ("Bearer", False), ("Bearer ", False),
+                             ("Bearer    ", False), ("bearer x", True), ("Bearer tok", True), ("Basic dXNlcg==", True)):
+            with self.subTest(header=header):
+                self.assertEqual(stub.credential_sent(header), sent)
+
     def test_stub_serves_the_lemonade_routes_without_a_key(self):
         with running_stub() as url:
             lemond = scenarios.Endpoint(origin=url)

@@ -256,6 +256,22 @@ def health() -> dict[str, Any]:
     }
 
 
+def credential_sent(header: str | None) -> bool:
+    """Whether an Authorization header carries a credential; the value is never logged.
+
+    An empty bearer is no credential.  Open WebUI's external reranker always
+    sends ``Authorization: Bearer {key}``, even when its key is empty, while
+    every other Open WebUI caller omits the header for an empty key.
+    """
+
+    if header is None:
+        return False
+    scheme, _, token = header.strip().partition(" ")
+    if scheme.casefold() == "bearer":
+        return bool(token.strip())
+    return bool(scheme)
+
+
 def log_event(event: dict[str, Any]) -> None:
     print(json.dumps(event, separators=(",", ":"), ensure_ascii=False), file=sys.stderr, flush=True)
 
@@ -294,6 +310,7 @@ class StubRequestHandler(BaseHTTPRequestHandler):
                 "path": self.path,
                 "status": status,
                 "authorization_present": "Authorization" in self.headers,
+                "authorization_credential": credential_sent(self.headers.get("Authorization")),
                 **(extra or {}),
             }
         )

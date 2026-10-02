@@ -2750,6 +2750,19 @@ def module_origins(kit: Kit) -> dict[str, str | None]:
     return json.loads(out)
 
 
+def run_started_at(kit: Kit) -> float:
+    """When this root's run began: ``stage``'s time, else the first start's.
+
+    Journal reads that judge this run start here, because the user journal
+    keeps earlier runs' entries for the same unit names.
+    """
+
+    staged = kit.state().get("staged_at")
+    if isinstance(staged, (int, float)):
+        return float(staged)
+    return float(json.loads((kit.raw / "first-start.json").read_text())["started_at"])
+
+
 def stub_events(kit: Kit, since: float | None = None, until: float | None = None) -> list[dict[str, Any]]:
     events = []
     for line in journal(UNITS["stub"], since, until).splitlines():
@@ -3122,11 +3135,13 @@ class Trial:
             "nonempty_key_fields": findings,
         }
         if kit.rehearsal:
-            values["stub_requests_with_authorization"] = sum(
-                1 for event in stub_events(kit) if event.get("authorization_present")
-            )
+            # Rehearsal-only extra: this run's stub requests that carried a
+            # credential.  An empty bearer is none (see stub_provider), and
+            # earlier runs' requests in the unit's journal do not count.
+            events = stub_events(kit, run_started_at(kit))
+            values["stub_requests_with_credential"] = sum(1 for event in events if event.get("authorization_credential"))
         expected = sorted(OPEN_WEBUI_SECRETS + ("session-epoch",))
-        if credentials != expected or findings or values.get("stub_requests_with_authorization"):
+        if credentials != expected or findings or values.get("stub_requests_with_credential"):
             raise sc.ScenarioFailure(json.dumps(values, sort_keys=True))
         return values
 
@@ -4089,7 +4104,7 @@ def cmd_stage(kit: Kit, args: argparse.Namespace) -> int:
     supporting = verify_supporting(kit)
     route = "systemd-creds" if probe_systemd_creds(kit.slice) else "plaintext-0400"
     kit.save_state(
-        **staged_pins(kit), credential_route=route, commissioned=False, trial_started=False,
+        **staged_pins(kit), credential_route=route, commissioned=False, trial_started=False, staged_at=time.time(),
         manifest={"sha256": manifest["sha256"], "schema": manifest["schema"]},
         archives=archives + [record for record in supporting if record["source"] == "sync-db"],
         supporting=supporting, kit_commit=kit_commit(),
