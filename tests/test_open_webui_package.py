@@ -215,9 +215,16 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
         self.assertEqual(len({name.casefold().replace("_", "-") for name, _ in entries}), 200)
         self.assertIn(("qdrant-client", "1.18.0"), entries)
         self.assertIn(("portalocker", "3.2.0"), entries)
+        # GHSA-82r6-8w77-94w6: upstream locks the affected anyio 4.14.0 (#118).
+        self.assertIn(
+            "anyio==4.14.2 \\\n"
+            "    --hash=sha256:9f505dda5ac9f0c8309b5e8bd445a8c2bf7246f3ce950121e45ea15bc41d1494 \\\n"
+            "    --hash=sha256:cfa139f3ed1a23ee8f88a145ddb5ac7605b8bbfd8592baacd7ce3d8bb4313c7f\n",
+            lock,
+        )
         self.assertEqual(
             hashlib.sha256(lock_bytes).hexdigest(),
-            "8a3532e0b4e30a0edcbdb8255e915fca70ec583690266e17169ad48dbac6a1f5",
+            "185b40a6792677c8ece3315945de9b2480afa09bada9ce9ccc2d7890d97ae1c3",
         )
         for block in re.split(r"(?m)(?=^[A-Za-z0-9][A-Za-z0-9._-]*==)", lock):
             if re.search(r"(?m)^[A-Za-z0-9][A-Za-z0-9._-]*==", block):
@@ -260,6 +267,27 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
         ).stdout
 
         self.assertIn("pkgrel=2", recipe)
+        self.assertIn(
+            "_npm_closure_release=open-webui-0.11.4-offline-closures-v1", recipe
+        )
+        lock_digest = hashlib.sha256(
+            (OPEN_WEBUI / "open-webui-private-requirements.lock").read_bytes()
+        ).hexdigest()
+        self.assertIn(
+            "_python_closure_release=open-webui-0.11.4-python-closure-"
+            f"{lock_digest[:8]}",
+            recipe,
+        )
+        self.assertIn(
+            "releases/download/${_npm_closure_release}/"
+            "open-webui-npm-offline-closure-${pkgver}.tar.zst",
+            recipe,
+        )
+        self.assertIn(
+            "releases/download/${_python_closure_release}/"
+            "open-webui-python-offline-closure-${pkgver}-cp314-x86_64.tar.zst",
+            recipe,
+        )
         for asset, digest in (
             (
                 "open-webui-npm-offline-closure-0.11.4.tar.zst",
@@ -267,7 +295,7 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
             ),
             (
                 "open-webui-python-offline-closure-0.11.4-cp314-x86_64.tar.zst",
-                "005be1c5605e5291b37ccc789454f8f37ec894302bc064fcfcae5e1b4a9a0f13",
+                "65b62d21888830ae6d25a3077626b9e1a3faca2aaa192ebe2a468a86bc40e704",
             ),
         ):
             self.assertIn(asset, source_info)
@@ -304,6 +332,7 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
         self.assertEqual(providers, sorted(set(providers)))
         self.assertIn("portalocker==3.2.0", constraints)
         self.assertIn("qdrant-client==1.18.0", constraints)
+        self.assertIn("anyio==4.14.2", constraints)
         for binding in (
             "f0c49cfa1936887c3447cb4c33cbbfdd2064aa0937140ec1c0520523efae5392",
             "x86_64-unknown-linux-gnu",
@@ -317,6 +346,7 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
         self.assertIn('/usr/bin/env -i "${clean_environment[@]}"', generator)
         self.assertIn("EXPECTED_EXTERNALIZED", verifier)
         self.assertIn("EXPECTED_QDRANT_CLOSURE", verifier)
+        self.assertIn("EXPECTED_SECURITY_OVERRIDES", verifier)
         self.assertTrue(os.access(OPEN_WEBUI / "generate-open-webui-private-lock.zsh", os.X_OK))
 
         spec = importlib.util.spec_from_file_location(
@@ -393,6 +423,48 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
         swapped["unrelated-locked-package"] = "9.9"
         with self.assertRaisesRegex(verifier.VerificationError, "closure"):
             verifier.verify_exact_closure(closure, swapped)
+
+    def test_private_lock_verifier_binds_security_overrides_to_upstream(self):
+        spec = importlib.util.spec_from_file_location(
+            "verify_open_webui_private_lock_overrides",
+            OPEN_WEBUI / "verify-open-webui-private-lock.py",
+        )
+        self.assertIsNotNone(spec)
+        self.assertIsNotNone(spec.loader)
+        verifier = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(verifier)
+
+        # GHSA-82r6-8w77-94w6 affects anyio <= 4.14.1 (#118).
+        self.assertEqual(
+            verifier.EXPECTED_SECURITY_OVERRIDES, {"anyio": ("4.14.0", "4.14.2")}
+        )
+        overrides = {"anyio": ("4.14.0", "4.14.2")}
+        upstream = {"anyio": "4.14.0", "idna": "3.10"}
+        selected = verifier.apply_security_overrides(upstream, overrides)
+        self.assertEqual(selected, {"anyio": "4.14.2", "idna": "3.10"})
+        self.assertEqual(upstream["anyio"], "4.14.0")
+        verifier.verify_exact_closure(selected, {"anyio": "4.14.2", "idna": "3.10"})
+
+        with self.assertRaisesRegex(verifier.VerificationError, "drifted=\\['anyio'\\]"):
+            verifier.verify_exact_closure(selected, dict(upstream))
+        for stale in ({"anyio": "4.14.1", "idna": "3.10"}, {"idna": "3.10"}):
+            with self.subTest(stale=stale), self.assertRaisesRegex(
+                verifier.VerificationError, "security override for anyio"
+            ):
+                verifier.apply_security_overrides(stale, overrides)
+
+        # The override must flow through verify_upstream_binding, the path main() uses:
+        # only the replacement version satisfies it, never an arbitrary one.
+        target = {"anyio": "4.14.0", "idna": "3.10"}
+        with mock.patch.object(verifier, "target_private_closure", return_value=target):
+            verifier.verify_upstream_binding({}, {"anyio": "4.14.2", "idna": "3.10"})
+            for version in ("4.14.0", "4.14.1", "4.14.3"):
+                with self.subTest(version=version), self.assertRaisesRegex(
+                    verifier.VerificationError, "drifted=\\['anyio'\\]"
+                ):
+                    verifier.verify_upstream_binding(
+                        {}, {"anyio": version, "idna": "3.10"}
+                    )
 
     def test_provider_boundary_rejects_missing_system_file_inventories(self):
         verifier_path = OPEN_WEBUI / "verify-open-webui-provider-boundary.py"
