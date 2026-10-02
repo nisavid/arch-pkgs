@@ -278,6 +278,16 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
             f"{lock_digest[:8]}",
             recipe,
         )
+        self.assertIn(
+            "releases/download/${_npm_closure_release}/"
+            "open-webui-npm-offline-closure-${pkgver}.tar.zst",
+            recipe,
+        )
+        self.assertIn(
+            "releases/download/${_python_closure_release}/"
+            "open-webui-python-offline-closure-${pkgver}-cp314-x86_64.tar.zst",
+            recipe,
+        )
         for asset, digest in (
             (
                 "open-webui-npm-offline-closure-0.11.4.tar.zst",
@@ -442,6 +452,19 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
                 verifier.VerificationError, "security override for anyio"
             ):
                 verifier.apply_security_overrides(stale, overrides)
+
+        # The override must flow through verify_upstream_binding, the path main() uses:
+        # only the replacement version satisfies it, never an arbitrary one.
+        target = {"anyio": "4.14.0", "idna": "3.10"}
+        with mock.patch.object(verifier, "target_private_closure", return_value=target):
+            verifier.verify_upstream_binding({}, {"anyio": "4.14.2", "idna": "3.10"})
+            for version in ("4.14.0", "4.14.1", "4.14.3"):
+                with self.subTest(version=version), self.assertRaisesRegex(
+                    verifier.VerificationError, "drifted=\\['anyio'\\]"
+                ):
+                    verifier.verify_upstream_binding(
+                        {}, {"anyio": version, "idna": "3.10"}
+                    )
 
     def test_provider_boundary_rejects_missing_system_file_inventories(self):
         verifier_path = OPEN_WEBUI / "verify-open-webui-provider-boundary.py"

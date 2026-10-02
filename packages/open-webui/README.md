@@ -585,7 +585,11 @@ affects AnyIO through 4.14.1, and 4.14.2 is the patched release
 ([#118](https://github.com/nisavid/arch-pkgs/issues/118)); PyPI published it
 before the index cutoff. The lock verifier records this in
 `EXPECTED_SECURITY_OVERRIDES` and accepts it only while upstream still locks
-4.14.0, so a release refresh must revisit it.
+4.14.0, so a release refresh must revisit it. The override covers the server
+closure only: the release wheel's browser-side Pyodide files still include
+upstream's `anyio-4.13.0` wheel. They run in the browser, and only when code
+execution or the code interpreter is enabled; the packaged defaults keep
+both off.
 
 Regenerate and verify the lock from an exact downloaded source archive with:
 
@@ -642,8 +646,11 @@ the same way twice and again matched byte for byte. The recipe fetches the
 npm archive from its `open-webui-0.11.4-offline-closures-v1` build-input
 release. The Python archive has a release of its own, named after its lock:
 `open-webui-0.11.4-python-closure-` plus the first 8 hex characters of
-`open-webui-private-requirements.lock`'s sha256, currently `185b40a6`. A new
-lock gets a new release, and an unchanged closure is never republished.
+`open-webui-private-requirements.lock`'s sha256. A new lock gets a new
+release, and an unchanged closure is never republished. If the closure's
+bytes ever change for the same lock, for example after a tooling or format
+change, publish them under a new release with a `-2` suffix rather than
+replacing an asset.
 
 For 0.11.0, these inputs removed the dependency-network blocker. The
 subsequent no-egress 0.11.0 pkgrel-3 build and payload-inspection gate passed
