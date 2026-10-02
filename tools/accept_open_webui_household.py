@@ -3359,7 +3359,7 @@ class Trial:
             systemctl("stop", unit, check=False)
         # The wipe below removes every containment cache, so the end-of-trial
         # inventory alone would miss anything the trial added before it.
-        (kit.raw / PRE_ROLLBACK_INVENTORY).write_text(json.dumps(cache_inventory(kit)))
+        snapshot_pre_rollback_inventory(kit)
         remove_tree(kit.tree)
         remove_tree(kit.path("state"))
         restage_trees(kit, self.anchor["archives"])
@@ -3412,9 +3412,6 @@ class Trial:
         snapshot_resources(kit, "end of trial")
         gates = resource_gates(read_jsonl(kit.raw / "resources.jsonl"))
         qdrant = kit.qdrant()
-        before = json.loads((kit.raw / "cache-inventory.json").read_text())
-        pre_rollback_path = kit.raw / PRE_ROLLBACK_INVENTORY
-        pre_rollback = json.loads(pre_rollback_path.read_text()) if pre_rollback_path.is_file() else None
         values = {
             **gates,
             "qdrant_storage": tree_sizes(kit.path("state", "qdrant", "storage")),
@@ -3422,7 +3419,7 @@ class Trial:
             "anchor": self.anchor.get("sizes"),
             "snapshot_bytes": self.anchor.get("snapshot_bytes"),
             # Record only, never a gate (the lead's ruling on #89).
-            "cache_inventory": cache_inventory_record(before, pre_rollback, cache_inventory(kit)),
+            "cache_inventory": trial_cache_record(kit),
         }
         if not gates["passes"]:
             raise sc.ScenarioFailure(json.dumps({"oom_kills": gates["oom_kills"],
@@ -3625,13 +3622,16 @@ def _rag_unavailable_detail() -> str:
     return detail
 
 
+STAGED_INVENTORY = "cache-inventory.json"
 PRE_ROLLBACK_INVENTORY = "cache-inventory-before-rollback.json"
+PRE_ROLLBACK_INVENTORY_ERROR = "cache-inventory-before-rollback.error"
 # Additions that look like a fetched model or asset: the Hugging Face hub's
 # models--<org>--<name> layout, weight, ONNX, and tokenizer files, and
 # tiktoken's BPE cache.  Everything else is labelled generated.
 MODEL_ASSET_SUFFIXES = (
     ".safetensors", ".bin", ".pt", ".pth", ".ckpt", ".onnx", ".onnx_data", ".ort",
     ".gguf", ".ggml", ".h5", ".msgpack", ".tflite", ".pb", ".model", ".tiktoken",
+    ".pkl", ".npz", ".zip",
 )
 TOKENIZER_FILES = frozenset({
     "tokenizer.json", "tokenizer_config.json", "tokenizer.model", "special_tokens_map.json",
@@ -3656,18 +3656,74 @@ def cache_addition_kind(path: str) -> str:
 
 
 def cache_inventory_record(
-    staged: Iterable[str], pre_rollback: Iterable[str] | None, end: Iterable[str]
+    staged: Iterable[str], pre_rollback: Iterable[str] | None, end: Iterable[str], partial_reason: str | None = None
 ) -> dict[str, Any]:
     """The trial's cache additions: the union of the pre-rollback and end-of-trial
-    inventories, less the inventory ``stage`` took, labelled by kind."""
+    inventories, less the inventory ``stage`` took, labelled by kind.
+
+    ``partial_reason`` says why the record may miss additions, such as a
+    pre-rollback snapshot that failed or cannot be read.
+    """
 
     added = (set(pre_rollback or ()) | set(end)) - set(staged)
     return {
         "pre_rollback_snapshot": pre_rollback is not None,
+        "partial": partial_reason is not None,
+        "partial_reason": partial_reason,
         "new_files": sorted(added),
         "model_or_asset_like": sorted(path for path in added if cache_addition_kind(path) == "model-or-asset"),
         "generated": sorted(path for path in added if cache_addition_kind(path) == "generated"),
     }
+
+
+def _read_inventory(path: Path) -> list[str]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, list) or not all(isinstance(item, str) for item in data):
+        raise ValueError(f"{path.name} is not a list of paths")
+    return data
+
+
+def snapshot_pre_rollback_inventory(kit: Kit) -> None:
+    """Best effort: write the inventory the rollback wipe is about to remove.
+
+    The inventory is record-only, so a failure here never fails the rollback
+    drill; the reason goes to a side file for the resources record.
+    """
+
+    try:
+        (kit.raw / PRE_ROLLBACK_INVENTORY).write_text(json.dumps(cache_inventory(kit)))
+    except (OSError, ValueError) as error:
+        try:
+            (kit.raw / PRE_ROLLBACK_INVENTORY_ERROR).write_text(f"{type(error).__name__}: {error}\n")
+        except OSError:
+            pass
+
+
+def trial_cache_record(kit: Kit) -> dict[str, Any]:
+    """The resources step's cache record; it never raises, so it never costs the gate values."""
+
+    reasons: list[str] = []
+    error_path = kit.raw / PRE_ROLLBACK_INVENTORY_ERROR
+    if error_path.is_file():
+        try:
+            reasons.append("the pre-rollback snapshot failed: " + error_path.read_text(encoding="utf-8").strip())
+        except OSError as error:
+            reasons.append(f"the pre-rollback snapshot failed, and its reason is unreadable ({type(error).__name__})")
+    pre_rollback: list[str] | None = None
+    snapshot = kit.raw / PRE_ROLLBACK_INVENTORY
+    if snapshot.is_file():
+        try:
+            pre_rollback = _read_inventory(snapshot)
+        except (OSError, ValueError) as error:
+            reasons.append(f"the pre-rollback snapshot is unreadable: {type(error).__name__}: {error}")
+    try:
+        staged = _read_inventory(kit.raw / STAGED_INVENTORY)
+        end = cache_inventory(kit)
+    except (OSError, ValueError) as error:
+        reasons.append(f"the staged or end-of-trial inventory is unreadable: {type(error).__name__}: {error}")
+        return {**cache_inventory_record([], None, [], "; ".join(reasons)), "new_files": None,
+                "model_or_asset_like": None, "generated": None}
+    return cache_inventory_record(staged, pre_rollback, end, "; ".join(reasons) or None)
 
 
 def cache_inventory(kit: Kit) -> list[str]:
@@ -4048,7 +4104,7 @@ def cmd_stage(kit: Kit, args: argparse.Namespace) -> int:
     if sha256_file(kit.path("inputs", "jfk.flac")) != sc.JFK_FLAC_SHA256:
         raise sc.Blocked("inputs/jfk.flac does not match its pinned SHA-256")
     (kit.raw / "a-id2.json").write_text(json.dumps(a_id2_rows(kit), indent=2, sort_keys=True) + "\n")
-    (kit.raw / "cache-inventory.json").write_text(json.dumps(cache_inventory(kit)))
+    (kit.raw / STAGED_INVENTORY).write_text(json.dumps(cache_inventory(kit)))
     print(f"staged {kit.mode} root; credentials: {route}")
     return sc.EXIT_PASS
 

@@ -380,8 +380,10 @@ Notes on specific checks:
 - **The cache inventory** is recorded, never gated. Because the rollback wipe
   removes every cache, the resources step adds the inventory taken just before
   it to the end-of-trial one, and labels each file added since `stage` as
-  `model_or_asset_like` (Hugging Face `models--*`, weight, ONNX, tokenizer, or
-  tiktoken files) or `generated`; the expected record has no model or asset.
+  `model_or_asset_like` (Hugging Face `models--*`, weight, ONNX, tokenizer,
+  pickle, NumPy, zip, or tiktoken files) or `generated`; the expected record has
+  no model or asset. A snapshot that fails or cannot be read never fails a
+  step: the record sets `partial` and gives the reason.
 
 ### Gate checks
 

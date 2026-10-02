@@ -2779,6 +2779,106 @@ class ResourceTests(unittest.TestCase):
         self.assertEqual(seen, [(kit.tree, ["tmp/open-webui/fetched.onnx"])])
 
 
+    def test_a_failed_pre_rollback_snapshot_is_recorded_and_the_drill_goes_on(self):
+        # The inventory is record-only: a snapshot failure never fails the
+        # critical rollback drill, and its reason reaches the record.
+        with tempfile.TemporaryDirectory() as directory:
+            kit = make_kit(directory)
+            kit.raw.mkdir(parents=True)
+            kit.anchor.mkdir(parents=True)
+            (kit.anchor / "anchor.json").write_text("{}")
+            trial = kit_module.Trial(kit)
+            trial.anchor = {"archives": [{"name": CANDIDATE_ARCHIVES[0]}]}
+            wiped = []
+
+            def wipe(path):
+                wiped.append(path)
+                raise RuntimeError("stop after the first wipe")
+
+            with mock.patch.object(kit_module, "verify_anchor"), \
+                    mock.patch.object(kit_module, "legacy_service_state", return_value={}), \
+                    mock.patch.object(kit_module, "snapshot_resources"), \
+                    mock.patch.object(kit_module, "systemctl"), \
+                    mock.patch.object(kit_module, "cache_inventory", side_effect=PermissionError("unreadable cache")), \
+                    mock.patch.object(kit_module, "remove_tree", side_effect=wipe), \
+                    self.assertRaisesRegex(RuntimeError, "first wipe"):
+                trial.rollback_drill()
+            self.assertEqual(wiped, [kit.tree])
+            self.assertFalse((kit.raw / kit_module.PRE_ROLLBACK_INVENTORY).exists())
+            (kit.raw / kit_module.STAGED_INVENTORY).write_text("[]")
+            with mock.patch.object(kit_module, "cache_inventory", return_value=["tmp/open-webui/late.onnx"]):
+                record = kit_module.trial_cache_record(kit)
+        self.assertTrue(record["partial"])
+        self.assertIn("PermissionError: unreadable cache", record["partial_reason"])
+        self.assertFalse(record["pre_rollback_snapshot"])
+        self.assertEqual(record["model_or_asset_like"], ["tmp/open-webui/late.onnx"])
+
+    def resources_values(self, directory, *, snapshot, end, records=None,
+                         staged=json.dumps(["state/open-webui/cache/staged.bin"])):
+        """Run Trial.resources with the host reads mocked; ``snapshot`` is the
+        pre-rollback file's text, or None for no file."""
+
+        kit = make_kit(directory)
+        kit.raw.mkdir(parents=True)
+        (kit.raw / kit_module.STAGED_INVENTORY).write_text(staged)
+        if snapshot is not None:
+            (kit.raw / kit_module.PRE_ROLLBACK_INVENTORY).write_text(snapshot)
+        unit = "owui-acc-open-webui.service"
+        calm = records or [{"units": {unit: {"oom_kill": 0, "NRestarts": 0, "memory_peak": 10}}}]
+        qdrant = mock.Mock()
+        qdrant.shapes.return_value = {}
+        with mock.patch.object(kit_module, "snapshot_resources"), \
+                mock.patch.object(kit_module, "read_jsonl", return_value=calm), \
+                mock.patch.object(kit_module.Kit, "qdrant", return_value=qdrant), \
+                mock.patch.object(kit_module, "tree_sizes", return_value={}), \
+                mock.patch.object(kit_module, "cache_inventory", return_value=end):
+            return kit_module.Trial(kit).resources()
+
+    def test_a_corrupt_or_missing_snapshot_never_costs_the_resource_gates(self):
+        end = ["state/open-webui/cache/staged.bin", "tmp/open-webui/scratch"]
+        for snapshot, partial in (("{not json", True), ('{"a": 1}', True), (None, False)):
+            with self.subTest(snapshot=snapshot), tempfile.TemporaryDirectory() as directory:
+                values = self.resources_values(directory, snapshot=snapshot, end=end)
+                self.assertTrue(values["passes"])
+                self.assertIn("oom_kills", values)
+                self.assertIn("unplanned_restarts", values)
+                record = values["cache_inventory"]
+                self.assertEqual(record["partial"], partial)
+                self.assertEqual(record["pre_rollback_snapshot"], False)
+                self.assertEqual(record["new_files"], ["tmp/open-webui/scratch"])
+                if partial:
+                    self.assertIn("pre-rollback snapshot is unreadable", record["partial_reason"])
+                else:
+                    self.assertIsNone(record["partial_reason"])
+        # An unreadable staged inventory still leaves the gates in place.
+        with tempfile.TemporaryDirectory() as directory:
+            values = self.resources_values(directory, snapshot=None, end=end, staged="broken")
+        self.assertTrue(values["passes"])
+        self.assertTrue(values["cache_inventory"]["partial"])
+        self.assertIn("staged or end-of-trial inventory is unreadable", values["cache_inventory"]["partial_reason"])
+        self.assertIsNone(values["cache_inventory"]["new_files"])
+
+    def test_a_model_like_cache_addition_never_fails_the_resources_step(self):
+        model = "state/open-webui/cache/huggingface/hub/models--org--model/snapshots/r/model.safetensors"
+        with tempfile.TemporaryDirectory() as directory:
+            values = self.resources_values(directory, snapshot=json.dumps([model]),
+                                           end=["state/open-webui/cache/staged.bin"])
+        self.assertTrue(values["passes"])
+        self.assertEqual(values["cache_inventory"]["model_or_asset_like"], [model])
+        self.assertTrue(values["cache_inventory"]["pre_rollback_snapshot"])
+        self.assertFalse(values["cache_inventory"]["partial"])
+        # The OOM and restart gates still fail the step.
+        unit = "owui-acc-open-webui.service"
+        with tempfile.TemporaryDirectory() as directory, self.assertRaises(sc.ScenarioFailure):
+            self.resources_values(directory, snapshot=None, end=[],
+                                  records=[{"units": {unit: {"oom_kill": 1, "NRestarts": 0}}}])
+
+    def test_pickled_numpy_and_zip_additions_are_labelled_as_assets(self):
+        for name in ("punkt.pkl", "embeddings.npz", "ocr-models.zip"):
+            self.assertEqual(kit_module.cache_addition_kind(f"state/open-webui/cache/xdg/{name}"), "model-or-asset", name)
+        self.assertEqual(kit_module.cache_addition_kind("state/open-webui/cache/xdg/fontconfig.cache-9"), "generated")
+
+
 class EvidenceTests(unittest.TestCase):
     def test_trial_map_is_one_pass_with_the_frozen_resmoke_ids_in_order(self):
         steps = kit_module.TRIAL_STEPS
