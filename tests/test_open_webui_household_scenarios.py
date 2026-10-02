@@ -785,6 +785,21 @@ class ZembedCanaryTests(unittest.TestCase):
         self.assertEqual(outcome.values["stored_vector_cosine"], 0.0)
         self.assertEqual(outcome.values["vectors"]["direct_chunk"], {"dimensions": 2560, "norm": 1.0})
         self.assertEqual(outcome.values["margin"], 0.9)
+        # A stored vector holding NaN has a NaN cosine, which the old
+        # "similarity < 0.999" comparison let pass; it escalates.
+        outcome = self.run_canary(stored_chunk=lambda: ("chunk", unit_vector(math.nan)), direct=self.QUERY)
+        self.assertEqual(outcome.result, scenarios.ESCALATE)
+        self.assertIn("stored vector", outcome.detail)
+        self.assertIsNone(outcome.values["stored_vector_cosine"])
+        self.assertIsNone(outcome.values["vectors"]["stored_chunk"]["norm"])
+        json.dumps(outcome.values, allow_nan=False)
+        # A stored vector of another length, or a zero stored vector, has no
+        # cosine; both escalate (exit 3) rather than fail.
+        for stored in (unit_vector(1.0, dimensions=1024), unit_vector()):
+            outcome = self.run_canary(stored_chunk=lambda stored=stored: ("chunk", stored), direct=self.QUERY)
+            self.assertEqual(outcome.result, scenarios.ESCALATE)
+            self.assertIsNone(outcome.values["stored_vector_cosine"])
+            self.assertEqual(outcome.values["vectors"]["stored_chunk"]["dimensions"], len(stored))
         # A non-finite vector escalates with JSON-safe values.
         outcome = self.run_canary(unrelated=unit_vector(math.nan))
         self.assertEqual(outcome.result, scenarios.ESCALATE)

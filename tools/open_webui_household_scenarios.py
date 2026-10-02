@@ -1090,19 +1090,19 @@ def _finite(value: float | None, places: int) -> float | None:
 
 
 def _cosine_or_none(left: Sequence[float], right: Sequence[float]) -> float | None:
+    """The cosine, or None for a length mismatch or a zero vector (``cosine`` raises on both)."""
+
     try:
         return cosine(left, right)
-    except (ValueError, OverflowError):
+    except ValueError:
         return None
 
 
 def vector_record(vector: Sequence[float]) -> dict[str, Any]:
     """One canary vector's recorded shape: its dimensions and Euclidean norm."""
 
-    try:
-        norm: float | None = math.sqrt(sum(value * value for value in vector))
-    except OverflowError:
-        norm = None
+    # Float arithmetic overflows to inf and propagates NaN; _finite records either as None.
+    norm = math.sqrt(sum(value * value for value in vector))
     return {"dimensions": len(vector), "norm": _finite(norm, 9)}
 
 
