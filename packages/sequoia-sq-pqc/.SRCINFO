@@ -1,0 +1,31 @@
+pkgbase = sequoia-sq-pqc
+	pkgdesc = Command-line frontends for Sequoia with the OpenSSL PQC backend
+	pkgver = 1.4.0
+	pkgrel = 4
+	url = https://gitlab.com/sequoia-pgp/sequoia-sq
+	arch = x86_64
+	groups = sequoia
+	license = LGPL-2.0-or-later
+	makedepends = capnproto
+	makedepends = cargo
+	makedepends = clang
+	makedepends = git
+	depends = glibc
+	depends = libgcc
+	depends = sqlite
+	depends = openssl>=3.5
+	depends = libcrypto.so=3-64
+	depends = libssl.so=3-64
+	provides = sequoia-sq=1.4.0
+	conflicts = sequoia-sq
+	options = !lto
+	source = git+https://gitlab.com/sequoia-pgp/sequoia-sq.git?signed#tag=v1.4.0
+	source = sequoia-openpgp-2.4.1.patch
+	validpgpkeys = CBCD8F030588653EEDD7E2659B7DD433F254904A
+	validpgpkeys = 8F17777118A33DDA9BA48E62AACB3243630052D9
+	sha512sums = e05d2de72e2954c299ce6c5db379eaa6c815a45b15e43f6bfb3ededb3eaa36cfce4049829d745804aafcf3eb6779b43d971287acdea7da00e8a0baceabcf7f97
+	sha512sums = 7503453ef85d7d0392c5ddacc1cb60916119415f292c89525abfe477e9c527dd92087c8937fa516d908d7845fcfb08afffe0e4d5aa3e68bcd0e5137e108619a5
+	b2sums = cef82d4e4135d3bd0afbbedcead4bdebb480740d73ec5318b64ea8698fcbfb32241669355564c766b52099d2ec11d78b5c64c21d686211bd03518e95f1acb6a7
+	b2sums = 5ac80f6d71445ea3ff7c79d6a5cfc08f3997acc4b3b49c369b6c07a2ec800c2d658503ef6b99a21a2cf0676d509dd2f16ac7ae1bf58128cbb77934b372703672
+
+pkgname = sequoia-sq-pqc
