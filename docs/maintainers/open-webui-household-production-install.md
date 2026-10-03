@@ -953,11 +953,11 @@ sudo sh -c '
 ' sh "$a" && echo recorded
 ```
 
-Then reopen, Valkey first:
+Then reopen, Valkey first. Open WebUI starts only once Valkey is active:
 
 ```bash
-sudo systemctl start valkey.service
-sudo systemctl start open-webui.service
+sudo systemctl start valkey.service && sudo systemctl is-active --quiet valkey.service \
+  && sudo systemctl start open-webui.service
 ```
 
 The acceptance drill receipts and this anchor together record the drills for
@@ -1079,9 +1079,9 @@ The acceptance trial values are the baseline.
   also checks the five collection shapes. Only then reopen, Valkey first:
 
   ```bash
-  sudo systemctl start valkey.service
-  sudo systemctl start open-webui.service
-  sudo timeout 180 sh -c 'until curl -sf --unix-socket /run/open-webui/open-webui.sock http://localhost/ready >/dev/null; do systemctl -q is-failed open-webui.service && exit 1; [ "$(systemctl show -P SubState open-webui.service)" = auto-restart ] && exit 1; sleep 2; done' && echo ready
+  sudo systemctl start valkey.service && sudo systemctl is-active --quiet valkey.service \
+    && sudo systemctl start open-webui.service \
+    && sudo timeout 180 sh -c 'until curl -sf --unix-socket /run/open-webui/open-webui.sock http://localhost/ready >/dev/null; do systemctl -q is-failed open-webui.service && exit 1; [ "$(systemctl show -P SubState open-webui.service)" = auto-restart ] && exit 1; sleep 2; done' && echo ready
   ```
 
   A browser session from before the anchor must be signed out, and a fresh
