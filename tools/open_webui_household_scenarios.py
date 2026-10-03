@@ -503,21 +503,56 @@ def parse_chat_response(body: bytes, content_type: str) -> tuple[str, list[dict[
     return "".join(text_parts), sources
 
 
+def source_file_names(source: Mapping[str, Any]) -> list[str]:
+    """The file names one chat source cites, in first-seen order.
+
+    Open WebUI 0.11.4 builds each source as ``{"source": <the request's file
+    item>, "document": [...], "metadata": [...], "distances": [...]}``
+    (``retrieval/utils.py``, ``get_sources_from_items``).  The ``source``
+    object is the item exactly as the client sent it, so an API client's
+    ``{"type": "file", "id": ...}`` carries no name.  The upload name is on
+    every chunk's metadata, as ``name`` (and ``source``), which
+    ``routers/retrieval.py`` sets to the file's ``filename`` when it indexes
+    the file.  The item's own ``name``, which the web UI sends, is the
+    fallback when no chunk carries one.
+    """
+
+    names: list[str] = []
+    for metadata in source.get("metadata") or []:
+        if isinstance(metadata, dict):
+            name = metadata.get("name") or metadata.get("source")
+            if isinstance(name, str) and name and name not in names:
+                names.append(name)
+    if not names:
+        described = source.get("source")
+        name = described.get("name") if isinstance(described, dict) else None
+        if isinstance(name, str) and name:
+            names.append(name)
+    return names
+
+
 def summarize_sources(sources: Sequence[dict[str, Any]]) -> dict[str, Any]:
-    """Collapse chat sources to distinct documents with their scores."""
+    """Collapse chat sources to distinct documents, the file names they cite, and their scores."""
 
     documents: dict[str, dict[str, Any]] = {}
     for source in sources:
         described = source.get("source")
         if not isinstance(described, dict):
             described = {}
-        key = str(described.get("id") or described.get("name") or "")
-        entry = documents.setdefault(key, {"name": described.get("name"), "scores": []})
+        names = source_file_names(source)
+        key = str(described.get("id") or described.get("name") or (names[0] if names else ""))
+        entry = documents.setdefault(key, {"names": [], "scores": []})
+        entry["names"].extend(name for name in names if name not in entry["names"])
         for score in source.get("distances") or []:
             entry["scores"].append(score)
+    names: list[Any] = []
+    for entry in documents.values():
+        for name in entry["names"] or [None]:
+            if name is None or name not in names:
+                names.append(name)
     return {
         "count": len(documents),
-        "names": [entry["name"] for entry in documents.values()],
+        "names": names,
         "scores": [score for entry in documents.values() for score in entry["scores"]],
     }
 
@@ -1290,8 +1325,9 @@ def cited_answer(ctx: Context) -> dict[str, Any]:
         values = {
             "timings": timings,
             "sources": summary,
-            # Open WebUI names a file source by its upload name, so that is
-            # the one source name the check requires.
+            # Open WebUI 0.11.4 records a file source's upload name on its
+            # chunks' metadata, so that is the one source name the check
+            # requires (filename only, per the #89 ruling).
             "expected_source_name": HANDBOOK_NAME,
             "fact_present": CANONICAL_FACT in text,
         }

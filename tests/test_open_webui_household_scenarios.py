@@ -665,6 +665,42 @@ class CitedAnswerTests(unittest.TestCase):
         text, sources = scenarios.parse_chat_response(plain, "application/json")
         self.assertEqual(scenarios.summarize_sources(sources)["count"], 1)
 
+    def open_webui_0_11_4_source(self, file_id="f1", names=(None,), scores=(0.2778, 0.0556, 0.0)):
+        """A file source as Open WebUI 0.11.4 streams it to an API client.
+
+        ``source`` echoes the request's file item, which carries no name; each
+        chunk's metadata carries the upload name as ``name`` and ``source``.
+        """
+
+        metadata = [{"file_id": file_id, "name": name, "source": name, "created_by": "u1"} if name else {"file_id": file_id}
+                    for name in names]
+        return {"source": {"type": "file", "id": file_id}, "document": ["chunk"] * len(metadata),
+                "metadata": metadata, "distances": list(scores)}
+
+    def test_a_0_11_4_file_source_is_named_by_its_chunks_upload_name(self):
+        handbook = scenarios.HANDBOOK_NAME
+        fact = "The brass key opens the seed cabinet."
+        source = self.open_webui_0_11_4_source(names=(handbook,) * 3)
+        summary = scenarios.summarize_sources([source])
+        self.assertEqual(summary, {"count": 1, "names": [handbook], "scores": [0.2778, 0.0556, 0.0]})
+        self.assertTrue(scenarios.cited_answer_passes(fact, summary, handbook))
+        # A chunk that names its upload only as "source" still counts.
+        only_source = {**source, "metadata": [{"file_id": "f1", "source": handbook}]}
+        self.assertEqual(scenarios.summarize_sources([only_source])["names"], [handbook])
+        # The check stays filename-only: another upload name, or none at all
+        # (the rehearsal's names [null]), fails.
+        for names in (("other.md",), (None,)):
+            summary = scenarios.summarize_sources([self.open_webui_0_11_4_source(names=names)])
+            self.assertFalse(scenarios.cited_answer_passes(fact, summary, handbook), names)
+        self.assertEqual(scenarios.summarize_sources([self.open_webui_0_11_4_source()])["names"], [None])
+        # One source whose chunks cite two files is two names, not the handbook.
+        mixed = scenarios.summarize_sources([self.open_webui_0_11_4_source(names=(handbook, "other.md"))])
+        self.assertEqual(mixed["names"], [handbook, "other.md"])
+        self.assertFalse(scenarios.cited_answer_passes(fact, mixed, handbook))
+        # The web UI's item carries its name; with no chunk name it is the fallback.
+        ui = {"source": {"type": "file", "id": "f1", "name": handbook}, "distances": [0.9]}
+        self.assertEqual(scenarios.summarize_sources([ui])["names"], [handbook])
+
     def cited_context(self, delete_status, chat_status=200):
         events = [
             {"sources": [{"source": {"id": "f1", "name": scenarios.HANDBOOK_NAME}, "distances": [0.9]}]},

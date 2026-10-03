@@ -2176,6 +2176,9 @@ def cited_check(webui: sc.Endpoint, token: str, chat_model: str, file_id: str) -
         "cited": status == 200 and sc.cited_answer_passes(text, summary, sc.HANDBOOK_NAME),
         "status": status,
         "detail": reply_detail(status, detail),
+        # Why a 200 chat did not count: the fact, the cited names, or the scores.
+        "fact_present": sc.CANONICAL_FACT in text,
+        "sources": summary,
     }
 
 
@@ -3340,7 +3343,7 @@ class Trial:
         check = cited_check(kit.caddy(), self.token, self.chat_id(), self.seed_file)
         cited = check["cited"]
         values = {"latched_status": latched, "health_after_resave": health, "cited_fact": cited,
-                  "cited_chat": {"status": check["status"], "detail": check["detail"]}}
+                  "cited_chat": {key: check[key] for key in ("status", "detail", "fact_present", "sources")}}
         if latched != 503 or health != 200 or not cited:
             raise sc.ScenarioFailure(json.dumps(values, sort_keys=True))
         return values
@@ -3440,7 +3443,7 @@ class Trial:
             "ceiling_s": LIMITS["restore_s"],
             "phases_s": clock.phases,
             "cited_fact": cited,
-            "cited_chat": {"status": check["status"], "detail": check["detail"]},
+            "cited_chat": {key: check[key] for key in ("status", "detail", "fact_present", "sources")},
             "reserved_epoch_above_bound": epoch > self.anchor["epoch_bound"],
             "pre_restore_divergence": pre_restore,
             "a_d3": checks,
@@ -3504,7 +3507,7 @@ class Trial:
             "window_s": round(time.monotonic() - window, 3),
             "archives_match_anchor": True,
             "cited_fact": cited,
-            "cited_chat": {"status": check["status"], "detail": check["detail"]},
+            "cited_chat": {key: check[key] for key in ("status", "detail", "fact_present", "sources")},
             "reserved_epoch_above_bound": epoch > self.anchor["epoch_bound"],
             "a_d3": checks,
             "route": route_checks(kit, self.token),

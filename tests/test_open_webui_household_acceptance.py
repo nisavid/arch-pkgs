@@ -1595,7 +1595,33 @@ class FailureDetailTests(unittest.TestCase):
         with mock.patch.object(kit_module, "file_chat", return_value=(400, "", {"count": 0, "names": []},
                                                                       "Model not found")):
             check = kit_module.cited_check(mock.Mock(), "t", "chat", "f1")
-        self.assertEqual(check, {"cited": False, "status": 400, "detail": "Model not found"})
+        self.assertEqual(check, {"cited": False, "status": 400, "detail": "Model not found", "fact_present": False,
+                                 "sources": {"count": 0, "names": []}})
+
+    def test_the_cited_check_reads_the_upload_name_from_0_11_4_chunk_metadata(self):
+        # Open WebUI 0.11.4 echoes the request's {"type": "file", "id"} item as
+        # the source and puts the upload name on each chunk's metadata.
+        source = {"source": {"type": "file", "id": "f1"}, "document": ["c1", "c2"],
+                  "metadata": [{"file_id": "f1", "name": sc.HANDBOOK_NAME, "source": sc.HANDBOOK_NAME}] * 2,
+                  "distances": [0.2778, 0.0556]}
+        body = ("data: " + json.dumps({"sources": [source]}) + "\n\n"
+                "data: " + json.dumps({"choices": [{"delta": {"content": sc.CANONICAL_FACT}}]}) + "\n\n"
+                "data: [DONE]\n\n").encode()
+        webui = mock.Mock()
+        webui.request.return_value = sc.Response(200, "text/event-stream", body)
+        check = kit_module.cited_check(webui, "t", "chat", "f1")
+        self.assertTrue(check["cited"])
+        self.assertEqual(check["sources"]["names"], [sc.HANDBOOK_NAME])
+        self.assertTrue(check["fact_present"])
+        # Without chunk names, as an older reading of the reply saw it, the chat does not count.
+        nameless = {**source, "metadata": [{"file_id": "f1"}] * 2}
+        webui.request.return_value = sc.Response(200, "text/event-stream",
+                                                 body.replace(json.dumps({"sources": [source]}).encode(),
+                                                              json.dumps({"sources": [nameless]}).encode()))
+        check = kit_module.cited_check(webui, "t", "chat", "f1")
+        self.assertFalse(check["cited"])
+        self.assertTrue(check["fact_present"])
+        self.assertEqual(check["sources"]["names"], [None])
 
     def drill_mocks(self, kit, laps):
         """Mocks for one drill run; each timed call advances the fake clock by its ``laps`` seconds."""
@@ -1614,7 +1640,8 @@ class FailureDetailTests(unittest.TestCase):
             "restore_tuple": timed("restore_tuple", {}),
             "start_open_webui": timed("start_open_webui"),
             "admin_token": timed("admin_token", "token"),
-            "cited_check": timed("cited_check", {"cited": True, "status": 200, "detail": None}),
+            "cited_check": timed("cited_check", {"cited": True, "status": 200, "detail": None, "fact_present": True,
+                                                 "sources": {"count": 1, "names": [sc.HANDBOOK_NAME], "scores": [0.9]}}),
             "start_qdrant": timed("start_qdrant", qdrant),
             "start_support_units": timed("start_support_units"),
             "snapshot_resources": timed("x"), "verify_anchor": timed("x"), "valkey_command": timed("x"),
@@ -1654,7 +1681,8 @@ class FailureDetailTests(unittest.TestCase):
             self.assertEqual(restore["phases_s"], {"stop": 1.0, "restore_tuple": 15.0, "open_webui_start": 50.5,
                                                    "sign_in": 0.25, "chat": 0.75})
             self.assertEqual(restore["restore_s"], 67.5)
-            self.assertEqual(restore["cited_chat"], {"status": 200, "detail": None})
+            self.assertEqual(restore["cited_chat"], {"status": 200, "detail": None, "fact_present": True,
+                                                     "sources": {"count": 1, "names": [sc.HANDBOOK_NAME], "scores": [0.9]}})
             # Both runs miss the 40 s ceiling, so each drill fails with its record.
             with self.drill_mocks(kit, laps), self.assertRaises(sc.ScenarioFailure) as raised:
                 trial.rollback_drill()
