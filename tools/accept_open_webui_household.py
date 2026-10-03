@@ -713,27 +713,65 @@ def is_loopback(host: str) -> bool:
     return (mapped or address).is_loopback
 
 
+def normalized_address(host: str) -> str:
+    """One spelling per address: IPv4-mapped IPv6 as IPv4, IPv6 compressed; other text unchanged."""
+
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return host
+    mapped = getattr(address, "ipv4_mapped", None)
+    return str(mapped or address)
+
+
+def remote_provider_peers(host: str, port: int) -> frozenset[tuple[str, int]]:
+    """The (address, port) pairs of a configured provider origin that is not on loopback.
+
+    A loopback origin needs none: loopback peers are checked by port.  A
+    name is resolved here, as the units resolve it.
+    """
+
+    if host == "localhost" or is_loopback(host):
+        return frozenset()
+    try:
+        ipaddress.ip_address(host)
+        return frozenset({(normalized_address(host), port)})
+    except ValueError:
+        pass
+    try:
+        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except OSError:
+        return frozenset()
+    return frozenset((normalized_address(str(info[4][0])), port) for info in infos)
+
+
 def peer_violations(
     samples: Iterable[Mapping[str, Any]],
     *,
     allowed_ports: frozenset[int],
     listen_ports: Mapping[str, frozenset[int]],
+    allowed_remote: Mapping[str, frozenset[tuple[str, int]]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Connections outside the allowed loopback peer set.
+    """Connections outside the allowed peer set.
 
     Inbound connections to a unit's own listening port may come from any
     loopback client; every other connection must reach a loopback peer on an
-    allowed port.  A SYN to an Ollama or hosted endpoint is a violation.
+    allowed port, or, for a unit named in ``allowed_remote``, one of its
+    (address, port) pairs: the configured provider origin when that is not
+    on loopback.  A SYN to an Ollama or hosted endpoint is a violation.
     """
 
     violations = []
+    remote = allowed_remote or {}
     for sample in samples:
         if sample.get("state") in {"LISTEN", "UNCONN"}:
             continue
         _, local_port = split_hostport(str(sample.get("local", "")))
         peer_host, peer_port = split_hostport(str(sample.get("peer", "")))
         if not is_loopback(peer_host):
-            violations.append(dict(sample))
+            pair = (normalized_address(peer_host), peer_port)
+            if pair not in remote.get(str(sample.get("unit")), frozenset()):
+                violations.append(dict(sample))
         elif local_port in listen_ports.get(str(sample.get("unit")), frozenset()):
             continue
         elif peer_port not in allowed_ports:
@@ -3361,7 +3399,11 @@ class Trial:
             UNITS["caddy"]: frozenset({PORTS["caddy"]}),
             UNITS["stub"]: frozenset({PORTS["stub"]}),
         }
-        violations = peer_violations(samples, allowed_ports=allowed, listen_ports=listen)
+        # A provider origin off loopback is reached by Open WebUI itself and
+        # by the reranker relay, and by nothing else.
+        provider = remote_provider_peers(kit.lemond_host, kit.lemond_port)
+        violations = peer_violations(samples, allowed_ports=allowed, listen_ports=listen,
+                                     allowed_remote={UNITS["open-webui"]: provider, UNITS["relay"]: provider})
         pid = sc.open_webui_pid(UNITS["open-webui"])
         maps = Path(f"/proc/{pid}/maps").read_text(errors="replace")
         slice_units = systemctl("list-units", "--all", "--plain", "--no-legend", "owui-acc-*", check=False)
@@ -3377,6 +3419,7 @@ class Trial:
             "ip_address_policy": unit_show(UNITS["open-webui"], "IPAddressDeny", "IPAddressAllow"),
             "ip_address_policy_enforced": False,
             "peer_samples": len(samples),
+            "remote_provider_peers": len(provider),
             "peer_violations": violations,
             "telemetry": telemetry,
             "haystack": haystack,

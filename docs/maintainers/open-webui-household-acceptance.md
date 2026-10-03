@@ -347,10 +347,12 @@ Notes on specific checks:
   host. A host package that is installed but disabled is not a failure; its
   removal is optional and belongs to
   [Release retained rollback anchors and clean target-local state](https://github.com/nisavid/arch-pkgs/issues/62).
-- **Allowed peers (A-P2)** are the Lemonade origin from `--lemond-url`, the
+- **Allowed peers (A-P2)** are the provider origin from `--lemond-url`, the
   reranker relay, acceptance Qdrant, acceptance Valkey, and the service's own
-  Unix socket. Any other peer, including a connection attempt to an Ollama or
-  hosted OpenAI endpoint, fails the check. The reranker relay and the peer
+  Unix socket. When the configured provider origin is not on loopback, its
+  resolved address and port are allowed for Open WebUI and the relay only.
+  Any other peer, including a connection attempt to an Ollama or hosted
+  OpenAI endpoint, fails the check. The reranker relay and the peer
   sampler exist only to evidence A-F1 and A-P2; they are not new gates.
 - **The restore drill (A-D1)** makes a marker change to every tuple member
   after the anchor: it deletes the uploaded file, rewrites the Valkey

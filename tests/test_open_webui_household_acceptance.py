@@ -1716,6 +1716,39 @@ class PeerTests(unittest.TestCase):
         rehearsal = {23305, 13306, 16333, 16379}
         self.assertEqual(len(self.violations(samples, rehearsal)), 1)
 
+    def test_a_remote_provider_origin_is_allowed_only_for_open_webui_and_the_relay(self):
+        owui, relay, qdrant = "owui-acc-open-webui.service", "owui-acc-rerank-relay.service", "owui-acc-qdrant.service"
+        provider = kit_module.remote_provider_peers("198.51.100.7", 13305)
+        self.assertEqual(provider, frozenset({("198.51.100.7", 13305)}))
+        remote = {owui: provider, relay: provider}
+        to_provider = [
+            {"unit": owui, "state": "ESTAB", "local": "192.0.2.10:41000", "peer": "198.51.100.7:13305"},
+            {"unit": relay, "state": "ESTAB", "local": "192.0.2.10:41001", "peer": "[::ffff:198.51.100.7]:13305"},
+        ]
+        allowed = frozenset({13305, 13306, 16333, 16379})
+        self.assertEqual(kit_module.peer_violations(to_provider, allowed_ports=allowed, listen_ports=self.listen,
+                                                    allowed_remote=remote), [])
+        elsewhere = [
+            {"unit": owui, "state": "SYN-SENT", "local": "192.0.2.10:41002", "peer": "198.51.100.7:443"},
+            {"unit": owui, "state": "SYN-SENT", "local": "192.0.2.10:41003", "peer": "203.0.113.5:13305"},
+            {"unit": qdrant, "state": "ESTAB", "local": "192.0.2.10:41004", "peer": "198.51.100.7:13305"},
+        ]
+        self.assertEqual(kit_module.peer_violations(to_provider + elsewhere, allowed_ports=allowed,
+                                                    listen_ports=self.listen, allowed_remote=remote), elsewhere)
+        # Without the remote set, the same connections are violations, as before.
+        self.assertEqual(self.violations(to_provider, allowed), to_provider)
+
+    def test_a_loopback_provider_origin_allows_no_remote_peer(self):
+        for host in ("127.0.0.1", "::1", "localhost", "127.0.0.53"):
+            self.assertEqual(kit_module.remote_provider_peers(host, 13305), frozenset(), host)
+        with mock.patch.object(kit_module.socket, "getaddrinfo", return_value=[
+                (kit_module.socket.AF_INET6, kit_module.socket.SOCK_STREAM, 6, "", ("2001:db8::7", 13305, 0, 0)),
+                (kit_module.socket.AF_INET, kit_module.socket.SOCK_STREAM, 6, "", ("198.51.100.7", 13305))]):
+            self.assertEqual(kit_module.remote_provider_peers("provider.example", 13305),
+                             frozenset({("2001:db8::7", 13305), ("198.51.100.7", 13305)}))
+        with mock.patch.object(kit_module.socket, "getaddrinfo", side_effect=OSError("no such name")):
+            self.assertEqual(kit_module.remote_provider_peers("provider.example", 13305), frozenset())
+
     def test_listener_findings(self):
         lines = [
             'LISTEN 0 4096 127.0.0.1:18443 0.0.0.0:* users:(("caddy",pid=10,fd=3))',
