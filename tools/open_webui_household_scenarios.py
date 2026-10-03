@@ -898,27 +898,63 @@ class Endpoint:
 ERROR_DETAIL_LIMIT = 200
 # A scenario or step result's detail can carry the step's JSON values.
 RESULT_DETAIL_LIMIT = 4000
+# Credential material is redacted value included: from a credential header
+# or assignment to the end of its line, since a header's value runs to the
+# line end.  Header names cover Authorization, Proxy-Authorization, Cookie,
+# Set-Cookie, and X-Api-Key-style names, also as JSON or Python-dict keys.
+_CREDENTIAL_HEADER = re.compile(
+    r"(?i)[\"']?\b(?:proxy-authorization|authorization|set-cookie|cookie"
+    r"|x-[\w-]*(?:api[_-]?key|token|secret|auth[\w-]*)|api[_-]?key|access[_-]?token|auth[_-]?token)"
+    r"\b[\"']?\s*[:=].*"
+)
+_CREDENTIAL_ASSIGNMENT = re.compile(
+    r"(?i)\b(?:password|passwd|secret|client[_-]?secret|token|key|api[_-]?key|access[_-]?key|session(?:id)?|sid)"
+    r"[\"']?\s*[=:].*"
+)
+# An HTTP auth scheme with its credential, wherever it appears in a line.
+_AUTH_SCHEME = re.compile(r"(?i)\b(?:bearer|basic|digest|negotiate|ntlm|hoba|mutual|token)\s+\S+.*")
+_KEY_MATERIAL = re.compile(r"-----BEGIN [A-Z0-9 ]+-----.*?(?:-----END [A-Z0-9 ]+-----|\Z)", re.DOTALL)
 _DETAIL_REDACTIONS = (
     (re.compile(r"\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b"), "<email>"),
     (re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b"), "<address>"),
     # An absolute path, unless it follows an evidence token such as <root> or ~.
     (re.compile(r"(?<![\w.:/>~])/(?:[\w.@+-]+/)+[\w.@+-]*"), "<path>"),
-    (re.compile(r"(?i)\b(?:bearer|token|key|secret|password)[=: ]+\S+"), "<redacted>"),
-    # Whatever the public-safety check itself refuses.
+    # Whatever else the public-safety check itself refuses.
     (v1._PRIVATE_IPV6, "<address>"),
     (v1._PRIVATE_HOSTNAME, "<host>"),
     (v1._ABSOLUTE_PRIVATE_PATH, " <path>"),
-    (v1._SECRET_ASSIGNMENT, "<redacted>"),
-    (v1._AUTHENTICATION_MATERIAL, "<redacted>"),
 )
 
 
-def public_detail(text: str, limit: int = ERROR_DETAIL_LIMIT) -> str:
-    """One line of error text, bounded and redacted for public evidence and receipts."""
+def _redact_credential_lines(text: str) -> str:
+    """Replace credential material, value included, line by line, before lines are joined."""
 
-    line = " ".join(text.split())
+    text = _KEY_MATERIAL.sub("<redacted key material>", text)
+    lines = []
+    for line in text.splitlines():
+        for pattern in (_CREDENTIAL_HEADER, _CREDENTIAL_ASSIGNMENT, _AUTH_SCHEME):
+            line = pattern.sub("<redacted credential>", line)
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def public_detail(text: str, limit: int = ERROR_DETAIL_LIMIT) -> str:
+    """One line of error text, bounded and redacted for public evidence and receipts.
+
+    Credential material goes first and whole: header values, auth-scheme
+    tokens, cookies, and secret assignments, each to the end of its line.
+    Anything the public-safety check would still refuse as credential
+    material cuts the text there, so a marker is never removed while its
+    value stays; ``assert_public_safe`` still checks every receipt after this.
+    """
+
+    line = " ".join(_redact_credential_lines(text).split())
     for pattern, token in _DETAIL_REDACTIONS:
         line = pattern.sub(token, line)
+    for guard in (v1._AUTHENTICATION_MATERIAL, v1._SECRET_ASSIGNMENT):
+        found = guard.search(line)
+        if found:
+            line = line[: found.start()] + "<redacted credential>"
     line = line.strip()
     return line if len(line) <= limit else line[: limit - 1] + "…"
 

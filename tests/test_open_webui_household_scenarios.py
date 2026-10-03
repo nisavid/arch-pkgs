@@ -1017,6 +1017,69 @@ class ReceiptTests(unittest.TestCase):
         self.assert_redacted(str(raised.exception))
 
 
+    TOKEN, SESSION = "eyJhbGciOiJIUzI1NiJ9.tok3n-value", "s3ssion-value-42"
+
+    def test_credentials_in_an_http_error_never_reach_the_receipt(self):
+        # The Greptile reproduction: an upstream 502 whose body echoes the
+        # request's Authorization and Cookie headers.
+        body = (f"Bad Gateway\nAuthorization: Bearer {self.TOKEN}\nCookie: session={self.SESSION}; theme=dark\n"
+                "Via: proxy").encode()
+        endpoint = scenarios.Endpoint(origin="http://127.0.0.1:9")
+
+        def failing(_ctx):
+            with mock.patch.object(endpoint, "request", return_value=scenarios.Response(502, "text/plain", body)):
+                endpoint.json("GET", "/api/v1/retrieval/health")
+            return {}
+
+        with mock.patch.object(scenarios, "SCENARIOS", {"open-webui.resmoke.zerank-qualification": failing}):
+            result = scenarios.run_scenario(object(), "open-webui.resmoke.zerank-qualification")
+        self.assertEqual(result.result, scenarios.FAIL)
+        self.assertIn("HTTP 502", result.detail)
+        receipt = scenarios.build_receipt(target="production", mode="record",
+                                          settings=scenarios.settings_from_environ(candidate_env()),
+                                          chat_model="chat", health=None, results=[result])
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "receipt.json"
+            scenarios.write_receipt(path, receipt)
+            written = path.read_text(encoding="utf-8")
+        for secret in (self.TOKEN, self.SESSION, "tok3n", "s3ssion"):
+            self.assertNotIn(secret, written)
+        self.assertIn("<redacted credential>", written)
+
+    def test_every_credential_form_is_redacted_value_included(self):
+        secret = "V4LUE-9f8e7d"
+        forms = (
+            f"Authorization: Basic {secret}",
+            f"proxy-authorization: Digest username=x, response={secret}",
+            f"Cookie: a=1; sid={secret}",
+            f"Set-Cookie: sid={secret}; Path=/; HttpOnly",
+            f"X-Api-Key: {secret}",
+            f"x-goog-api-key: {secret}",
+            f"X-Auth-Token: {secret}",
+            f'{{"headers": {{"Authorization": "Bearer {secret}", "Accept": "*/*"}}}}',
+            f"{{'cookie': 'session={secret}'}}",
+            f"request failed with token {secret}",
+            f"password = {secret} and more",
+            f"api_key={secret}",
+            f"-----BEGIN PRIVATE KEY-----\n{secret}\n-----END PRIVATE KEY-----",
+        )
+        for form in forms:
+            with self.subTest(form=form):
+                detail = scenarios.public_detail(f"upstream error: {form}", scenarios.RESULT_DETAIL_LIMIT)
+                self.assertNotIn(secret, detail)
+                self.assertTrue(detail.startswith("upstream error:"))
+                scenarios.v1.assert_public_safe({"detail": detail})
+        # Ordinary text is untouched.
+        for plain in ("Model not found", "the key brass opens the seed cabinet", "HTTP 400: taken"):
+            self.assertEqual(scenarios.public_detail(plain), plain)
+
+    def test_the_safety_check_still_refuses_raw_credential_text(self):
+        # public_detail never weakens the receipt's own check.
+        for raw in (f"Authorization: Bearer {self.TOKEN}", f"cookie: session={self.SESSION}", "token=abc"):
+            with self.assertRaises(ValueError):
+                scenarios.v1.assert_public_safe({"detail": raw})
+
+
 class StubProviderTests(unittest.TestCase):
     def test_stub_embeddings_honor_the_zembed_heads(self):
         def embed(head, text):

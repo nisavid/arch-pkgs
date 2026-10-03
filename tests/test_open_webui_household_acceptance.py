@@ -3395,8 +3395,8 @@ class EvidenceTests(unittest.TestCase):
             kit, trial = self.trial(directory, rehearsal=False)
             trial.steps[0] = kit_module.Step(
                 trial.steps[0].id, sc.FAIL,
-                f"OSError: cannot read /home/someone/x from 10.1.2.3 for admin@example.org with api_key=k1; "
-                f"kept {kit.root}/state/open-webui/data", 1.0, {})
+                f"OSError: cannot read /home/someone/x from 10.1.2.3 for admin@example.org; "
+                f"kept {kit.root}/state/open-webui/data; with api_key=k1", 1.0, {})
             evidence = kit_module.build_evidence(kit, trial, sc.EXIT_FAIL, False)
             v1.assert_public_safe(evidence)
             detail = evidence["steps"][0]["detail"]
