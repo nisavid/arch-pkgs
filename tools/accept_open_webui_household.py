@@ -728,7 +728,8 @@ def remote_provider_peers(host: str, port: int) -> frozenset[tuple[str, int]]:
     """The (address, port) pairs of a configured provider origin that is not on loopback.
 
     A loopback origin needs none: loopback peers are checked by port.  A
-    name is resolved here, as the units resolve it.
+    name is resolved now, as the units resolve it; a failed lookup raises
+    ``OSError``, so a caller can fall back to the pairs it recorded earlier.
     """
 
     if host == "localhost" or is_loopback(host):
@@ -738,11 +739,54 @@ def remote_provider_peers(host: str, port: int) -> frozenset[tuple[str, int]]:
         return frozenset({(normalized_address(host), port)})
     except ValueError:
         pass
-    try:
-        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
-    except OSError:
-        return frozenset()
+    infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
     return frozenset((normalized_address(str(info[4][0])), port) for info in infos)
+
+
+def recorded_provider_peers(kit: Kit) -> frozenset[tuple[str, int]]:
+    """The provider pairs this run has recorded in its state."""
+
+    return frozenset((str(address), int(port)) for address, port in kit.state().get("provider_peers", []))
+
+
+def record_provider_peers(kit: Kit) -> None:
+    """Resolve a non-loopback provider origin and add its pairs to the run's state.
+
+    Called whenever the peer sampler (re)starts, so every address the units
+    could have reached since sampling began stays allowed, even after it
+    rotates out of DNS.  A failed lookup is recorded and changes nothing.
+    """
+
+    try:
+        pairs = remote_provider_peers(kit.lemond_host, kit.lemond_port)
+    except OSError as error:
+        kit.save_state(provider_peer_lookup_error=f"{type(error).__name__} when the sampler started")
+        return
+    if pairs:
+        known = recorded_provider_peers(kit) | pairs
+        kit.save_state(provider_peers=sorted([address, port] for address, port in known))
+
+
+def provider_peers_for_check(kit: Kit) -> tuple[frozenset[tuple[str, int]], dict[str, Any]]:
+    """The provider pairs the A-P2 check allows: those recorded since sampling began, with a fresh lookup's.
+
+    A lookup that fails now falls back to the recorded pairs, and the record says so.
+    """
+
+    recorded = recorded_provider_peers(kit)
+    record: dict[str, Any] = {"recorded": len(recorded)}
+    try:
+        fresh = remote_provider_peers(kit.lemond_host, kit.lemond_port)
+    except OSError as error:
+        fresh = frozenset()
+        record["lookup_at_check"] = f"failed ({type(error).__name__}); using the recorded pairs"
+    else:
+        record["lookup_at_check"] = "ok"
+    allowed = recorded | fresh
+    record["allowed"] = len(allowed)
+    if "provider_peer_lookup_error" in kit.state():
+        record["lookup_at_sampler_start"] = kit.state()["provider_peer_lookup_error"]
+    return allowed, record
 
 
 def peer_violations(
@@ -1696,6 +1740,8 @@ def start_support_units(kit: Kit, timeout: float = SUPPORT_WAIT_S) -> None:
     """
 
     names = SUPPORT_UNITS + (("stub",) if kit.provider == "stub" else ())
+    # Before the sampler starts, so its first sample is already covered.
+    record_provider_peers(kit)
     for name in names:
         systemctl("start", UNITS[name])
     waits = [("relay", "the reranker relay")] + ([("stub", "the rehearsal stub")] if kit.provider == "stub" else [])
@@ -3401,7 +3447,7 @@ class Trial:
         }
         # A provider origin off loopback is reached by Open WebUI itself and
         # by the reranker relay, and by nothing else.
-        provider = remote_provider_peers(kit.lemond_host, kit.lemond_port)
+        provider, provider_record = provider_peers_for_check(kit)
         violations = peer_violations(samples, allowed_ports=allowed, listen_ports=listen,
                                      allowed_remote={UNITS["open-webui"]: provider, UNITS["relay"]: provider})
         pid = sc.open_webui_pid(UNITS["open-webui"])
@@ -3419,7 +3465,7 @@ class Trial:
             "ip_address_policy": unit_show(UNITS["open-webui"], "IPAddressDeny", "IPAddressAllow"),
             "ip_address_policy_enforced": False,
             "peer_samples": len(samples),
-            "remote_provider_peers": len(provider),
+            "remote_provider_peers": provider_record,
             "peer_violations": violations,
             "telemetry": telemetry,
             "haystack": haystack,

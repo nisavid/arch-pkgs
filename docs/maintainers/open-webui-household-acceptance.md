@@ -350,7 +350,10 @@ Notes on specific checks:
 - **Allowed peers (A-P2)** are the provider origin from `--lemond-url`, the
   reranker relay, acceptance Qdrant, acceptance Valkey, and the service's own
   Unix socket. When the configured provider origin is not on loopback, its
-  resolved address and port are allowed for Open WebUI and the relay only.
+  resolved addresses and port are allowed for Open WebUI and the relay only.
+  The kit resolves them whenever the peer sampler starts, records them in the
+  run's state, and adds a fresh lookup's at the check; if that lookup fails,
+  the recorded addresses apply and the record says so.
   Any other peer, including a connection attempt to an Ollama or hosted
   OpenAI endpoint, fails the check. The reranker relay and the peer
   sampler exist only to evidence A-F1 and A-P2; they are not new gates.

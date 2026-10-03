@@ -1746,8 +1746,79 @@ class PeerTests(unittest.TestCase):
                 (kit_module.socket.AF_INET, kit_module.socket.SOCK_STREAM, 6, "", ("198.51.100.7", 13305))]):
             self.assertEqual(kit_module.remote_provider_peers("provider.example", 13305),
                              frozenset({("2001:db8::7", 13305), ("198.51.100.7", 13305)}))
-        with mock.patch.object(kit_module.socket, "getaddrinfo", side_effect=OSError("no such name")):
-            self.assertEqual(kit_module.remote_provider_peers("provider.example", 13305), frozenset())
+        # A failed lookup raises, so a caller can fall back to recorded pairs.
+        with mock.patch.object(kit_module.socket, "getaddrinfo", side_effect=OSError("no such name")), \
+                self.assertRaises(OSError):
+            kit_module.remote_provider_peers("provider.example", 13305)
+
+    @staticmethod
+    def resolving(*addresses):
+        return mock.patch.object(kit_module.socket, "getaddrinfo", return_value=[
+            (kit_module.socket.AF_INET, kit_module.socket.SOCK_STREAM, 6, "", (address, 13305)) for address in addresses])
+
+    def remote_kit(self, directory):
+        kit = make_kit(directory)
+        kit.lemond_url = "http://provider.example:13305"
+        return kit
+
+    def check(self, kit, peers):
+        owui = "owui-acc-open-webui.service"
+        allowed, record = kit_module.provider_peers_for_check(kit)
+        samples = [{"unit": owui, "state": "ESTAB", "local": "192.0.2.10:41000", "peer": f"{peer}:13305"}
+                   for peer in peers]
+        remote = {owui: allowed, "owui-acc-rerank-relay.service": allowed}
+        return kit_module.peer_violations(samples, allowed_ports=frozenset({13306}), listen_ports=self.listen,
+                                          allowed_remote=remote), record
+
+    def test_provider_addresses_recorded_when_sampling_starts_stay_allowed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit = self.remote_kit(directory)
+            # up starts the sampler: the provider resolves to A, and the run records it.
+            with self.resolving("198.51.100.7"), mock.patch.object(kit_module, "systemctl"), \
+                    mock.patch.object(kit_module, "port_listening", return_value=True):
+                kit_module.start_support_units(kit)
+            self.assertEqual(kit.state()["provider_peers"], [["198.51.100.7", 13305]])
+            # DNS rotates to B before the check: A, seen only at start, and B both pass.
+            with self.resolving("198.51.100.8"):
+                violations, record = self.check(kit, ["198.51.100.7", "198.51.100.8"])
+            self.assertEqual(violations, [])
+            self.assertEqual(record, {"recorded": 1, "lookup_at_check": "ok", "allowed": 2})
+            # The lookup fails at the check: the recorded pairs still apply, and the record says so.
+            with mock.patch.object(kit_module.socket, "getaddrinfo", side_effect=OSError("temporary failure")):
+                violations, record = self.check(kit, ["198.51.100.7"])
+            self.assertEqual(violations, [])
+            self.assertEqual(record["lookup_at_check"], "failed (OSError); using the recorded pairs")
+            # A genuinely unknown remote peer still fails.
+            with self.resolving("198.51.100.8"):
+                violations, _ = self.check(kit, ["203.0.113.9"])
+            self.assertEqual(len(violations), 1)
+            # A later sampler restart (the rollback drill's) adds its addresses to the record.
+            with self.resolving("198.51.100.9"), mock.patch.object(kit_module, "systemctl"), \
+                    mock.patch.object(kit_module, "port_listening", return_value=True):
+                kit_module.start_support_units(kit)
+            self.assertEqual(kit.state()["provider_peers"], [["198.51.100.7", 13305], ["198.51.100.9", 13305]])
+
+    def test_a_failed_lookup_when_sampling_starts_is_recorded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit = self.remote_kit(directory)
+            with mock.patch.object(kit_module.socket, "getaddrinfo", side_effect=OSError("temporary failure")):
+                kit_module.record_provider_peers(kit)
+            self.assertNotIn("provider_peers", kit.state())
+            with self.resolving("198.51.100.7"):
+                violations, record = self.check(kit, ["198.51.100.7"])
+            self.assertEqual(violations, [])
+            self.assertEqual(record["lookup_at_sampler_start"], "OSError when the sampler started")
+
+    def test_a_loopback_provider_records_nothing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit = make_kit(directory)
+            with mock.patch.object(kit_module.socket, "getaddrinfo") as lookup:
+                kit_module.record_provider_peers(kit)
+                allowed, record = kit_module.provider_peers_for_check(kit)
+            lookup.assert_not_called()
+            self.assertEqual(allowed, frozenset())
+            self.assertNotIn("provider_peers", kit.state())
+            self.assertEqual(record, {"recorded": 0, "lookup_at_check": "ok", "allowed": 0})
 
     def test_listener_findings(self):
         lines = [
