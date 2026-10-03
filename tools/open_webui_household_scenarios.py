@@ -896,21 +896,31 @@ class Endpoint:
 
 
 ERROR_DETAIL_LIMIT = 200
+# A scenario or step result's detail can carry the step's JSON values.
+RESULT_DETAIL_LIMIT = 4000
 _DETAIL_REDACTIONS = (
     (re.compile(r"\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b"), "<email>"),
     (re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b"), "<address>"),
-    (re.compile(r"(?<![\w.:/])/(?:[\w.@+-]+/)+[\w.@+-]*"), "<path>"),
+    # An absolute path, unless it follows an evidence token such as <root> or ~.
+    (re.compile(r"(?<![\w.:/>~])/(?:[\w.@+-]+/)+[\w.@+-]*"), "<path>"),
     (re.compile(r"(?i)\b(?:bearer|token|key|secret|password)[=: ]+\S+"), "<redacted>"),
+    # Whatever the public-safety check itself refuses.
+    (v1._PRIVATE_IPV6, "<address>"),
+    (v1._PRIVATE_HOSTNAME, "<host>"),
+    (v1._ABSOLUTE_PRIVATE_PATH, " <path>"),
+    (v1._SECRET_ASSIGNMENT, "<redacted>"),
+    (v1._AUTHENTICATION_MATERIAL, "<redacted>"),
 )
 
 
-def public_detail(text: str) -> str:
-    """One line of error text, bounded and redacted for public evidence."""
+def public_detail(text: str, limit: int = ERROR_DETAIL_LIMIT) -> str:
+    """One line of error text, bounded and redacted for public evidence and receipts."""
 
     line = " ".join(text.split())
     for pattern, token in _DETAIL_REDACTIONS:
         line = pattern.sub(token, line)
-    return line if len(line) <= ERROR_DETAIL_LIMIT else line[: ERROR_DETAIL_LIMIT - 1] + "…"
+    line = line.strip()
+    return line if len(line) <= limit else line[: limit - 1] + "…"
 
 
 def response_detail(response: Response) -> str | None:
@@ -1270,7 +1280,8 @@ def file_processing_error(webui: Endpoint, token: str, file_id: str) -> str:
         record = None
     data = record.get("data") if isinstance(record, dict) else None
     error = data.get("error") if isinstance(data, dict) else None
-    return str(error)[:500] if error else "no stored error"
+    # The stored error can name server paths or addresses; it reaches receipts.
+    return public_detail(str(error), 500) if error else "no stored error"
 
 
 def _wait_for_file(ctx: Context, file_id: str) -> None:
@@ -1436,6 +1447,10 @@ def run_scenario(ctx: Context, scenario_id: str) -> ScenarioResult:
         values, result, detail = {}, BLOCKED, str(error)
     except SCENARIO_FAILURES as error:
         values, result, detail = {}, FAIL, f"{type(error).__name__}: {error}"
+    # An exception's text can carry whatever a server returned; the detail
+    # goes into receipts and evidence, so it is redacted here, once.
+    if result != PASS:
+        detail = public_detail(detail, RESULT_DETAIL_LIMIT)
     return ScenarioResult(scenario_id, result, detail, round(time.monotonic() - started, 3), values)
 
 
@@ -1736,8 +1751,8 @@ def _resmoke(args: argparse.Namespace) -> int:
                 ) from error
             chat_model = webui_chat_model(webui, token, args.chat_model)
         except Blocked as error:
-            print(f"precondition BLOCKED {error}", flush=True)
-            precondition = str(error)
+            precondition = public_detail(str(error), RESULT_DETAIL_LIMIT)
+            print(f"precondition BLOCKED {precondition}", flush=True)
         else:
             ctx = Context(
                 target=args.target, webui=webui, lemond=lemond, token=token, settings=settings,

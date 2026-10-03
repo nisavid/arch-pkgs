@@ -3357,10 +3357,26 @@ class EvidenceTests(unittest.TestCase):
                 ["a PASS", "b FAIL ScenarioFailure: head mismatch", "c BLOCKED stub unreachable"],
             )
 
+    def test_a_step_detail_is_redacted_so_the_public_record_is_written(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit, trial = self.trial(directory, rehearsal=False)
+            trial.steps[0] = kit_module.Step(
+                trial.steps[0].id, sc.FAIL,
+                f"OSError: cannot read /home/someone/x from 10.1.2.3 for admin@example.org with api_key=k1; "
+                f"kept {kit.root}/state/open-webui/data", 1.0, {})
+            evidence = kit_module.build_evidence(kit, trial, sc.EXIT_FAIL, False)
+            v1.assert_public_safe(evidence)
+            detail = evidence["steps"][0]["detail"]
+            for private in ("/home/someone", "10.1.2.3", "admin@example.org", "k1", str(kit.root)):
+                self.assertNotIn(private, detail)
+            # The kit's own path tokens survive, so the detail still says where.
+            self.assertIn("<root>/state/open-webui/data", detail)
+
     def test_an_unsafe_record_keeps_the_values_privately(self):
         with tempfile.TemporaryDirectory() as directory:
             kit, trial = self.trial(directory, rehearsal=False)
-            trial.steps[0].detail = "OSError: [Errno 2] No such file or directory: '/home/someone/x'"
+            # A step value, not its detail: details are redacted before the check.
+            trial.steps[0].values["observed"] = "/home/someone/x"
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as errors:
                 code = trial.finish()
             self.assertEqual(code, sc.EXIT_FAIL)

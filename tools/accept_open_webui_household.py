@@ -3925,7 +3925,11 @@ def build_evidence(kit: Kit, trial: Trial, exit_code: int, lemond_restarted_: bo
         "credential_route": kit.credential_route(),
         "conditions": trial_conditions(kit) + ([] if lemond_restarted_ is not None else [LEMONADE_RESTART_CONDITION]),
         "production_expectation": production_expectation_for(kit),
-        "steps": [dataclasses.asdict(step) for step in trial.steps],
+        # A step's detail is exception text that can carry whatever a server
+        # returned; redact it like a receipt's, after the path tokens apply.
+        "steps": [{**dataclasses.asdict(step), "detail": sc.public_detail(publicize(step.detail, kit.replacements()),
+                                                                          sc.RESULT_DETAIL_LIMIT)}
+                  for step in trial.steps],
     }
     return publicize(document, kit.replacements())
 

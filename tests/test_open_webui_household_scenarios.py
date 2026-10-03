@@ -970,6 +970,53 @@ class ReceiptTests(unittest.TestCase):
             )
 
 
+    UNSAFE = ("cannot read /home/someone/handbook.md from 192.168.1.20 or fd12:3456::7 for admin@example.org "
+              "with api_key=k1 at nas.lan")
+
+    def assert_redacted(self, text):
+        for private in ("/home/someone", "192.168.1.20", "fd12:3456::7", "admin@example.org", "k1", "nas.lan"):
+            self.assertNotIn(private, text)
+        scenarios.v1.assert_public_safe({"detail": text})
+
+    def test_an_unsafe_failure_still_writes_a_public_safe_receipt(self):
+        settings = scenarios.settings_from_environ(candidate_env())
+
+        def failing(_ctx):
+            raise scenarios.ScenarioFailure(self.UNSAFE)
+
+        def blocked(_ctx):
+            raise scenarios.Blocked("NEEDS OWNER: " + self.UNSAFE)
+
+        table = {"open-webui.resmoke.zembed-canary": failing, "open-webui.resmoke.zerank-qualification": blocked}
+        with mock.patch.object(scenarios, "SCENARIOS", table):
+            results = [scenarios.run_scenario(object(), scenario_id) for scenario_id in table]
+        for result in results:
+            self.assert_redacted(result.detail)
+        self.assertTrue(results[0].detail.startswith("ScenarioFailure: cannot read <path>"))
+        receipt = scenarios.build_receipt(target="production", mode="record", settings=settings, chat_model="chat",
+                                          health=None, results=results)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "receipt.json"
+            scenarios.write_receipt(path, receipt)
+            self.assert_redacted(path.read_text(encoding="utf-8"))
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["exit_code"], 75)
+
+    def test_a_failed_files_stored_error_is_redacted(self):
+        class Webui:
+            def request(self, method, path, **_):
+                if path.endswith("/process/status"):
+                    return scenarios.Response(200, "application/json", b'{"status": "failed"}')
+                record = {"id": "f1", "data": {"error": ReceiptTests.UNSAFE}}
+                return scenarios.Response(200, "application/json", json.dumps(record).encode())
+
+        ctx = scenarios.Context(target="acceptance", webui=Webui(), lemond=Webui(), token="t",
+                                settings=scenarios.settings_from_environ(candidate_env()), chat_model="chat")
+        with self.assertRaises(scenarios.ScenarioFailure) as raised:
+            scenarios._wait_for_file(ctx, "f1")
+        self.assertIn("status failed: cannot read <path>", str(raised.exception))
+        self.assert_redacted(str(raised.exception))
+
+
 class StubProviderTests(unittest.TestCase):
     def test_stub_embeddings_honor_the_zembed_heads(self):
         def embed(head, text):
