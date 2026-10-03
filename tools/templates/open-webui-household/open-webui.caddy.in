@@ -1,0 +1,11 @@
+# Open WebUI acceptance route: Caddy terminates HTTPS and proxies to the
+# Open WebUI UNIX socket. Rendered by tools/open_webui_household_scenarios.py
+# with the global options (admin off, no :80 redirect, no trust-store install,
+# loopback default bind, storage under the root). Production does not use
+# Caddy: its route is the package's open-webui-tailnet.service sidecar.
+@GLOBAL_OPTIONS@
+@SITE_ADDRESS@ {
+	bind @BIND@
+	tls @TLS@
+	reverse_proxy unix/@SOCKET@
+}
