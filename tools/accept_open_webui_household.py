@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import ast
 import base64
+import contextlib
 import dataclasses
 import fnmatch
 import hashlib
@@ -52,7 +53,7 @@ import urllib.parse
 import uuid
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Callable, Iterable, Mapping, Sequence
+from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence
 
 TOOLS = Path(__file__).resolve().parent
 REPO_ROOT = TOOLS.parent
@@ -2645,58 +2646,63 @@ def paging_check(webui: sc.Endpoint, qdrant: Qdrant, token: str, chat_model: str
         "rag_settings": settings,
         "scroll_page": QDRANT_SCROLL_PAGE,
     }
-    started = time.monotonic()
-    file_id = upload_markdown(webui, token, PAGING_CORPUS_NAME, corpus, "paging corpus", PAGING_TIMEOUTS["index_s"])
-    timings = {"index_s": round(time.monotonic() - started, 3)}
-    knowledge_id: str | None = None
-    try:
-        file_points = settled_points(lambda: qdrant.tenant_points(COLLECTIONS[2], f"file-{file_id}"),
-                                     PAGING_SECTIONS, PAGING_TIMEOUTS["settle_s"])
-        created = webui.json("POST", sc.API["knowledge_create"],
-                             {"name": "household-paging-corpus", "description": "Acceptance paging check"}, token=token)
-        knowledge_id = created.get("id") if isinstance(created, dict) else None
-        if not isinstance(knowledge_id, str):
-            raise sc.ScenarioFailure("the knowledge create returned no id")
-        knowledge = knowledge_id
+    # Filled as the check measures, so a failure keeps what it measured before it.
+    with keeping(values):
         started = time.monotonic()
-        webui.json("POST", sc.API["knowledge_file_add"].format(id=knowledge), {"file_id": file_id}, token=token)
-        knowledge_points = settled_points(lambda: qdrant.tenant_points(COLLECTIONS[1], knowledge),
-                                          PAGING_SECTIONS, PAGING_TIMEOUTS["settle_s"])
-        timings["knowledge_add_s"] = round(time.monotonic() - started, 3)
-        started = time.monotonic()
-        response = webui.request(
-            "POST",
-            sc.API["chat"],
-            payload={
-                "model": chat_model,
-                "stream": True,
-                "temperature": 0,
-                "params": {"temperature": 0},
-                "messages": [{"role": "user", "content": PAGING_PROMPT}],
-                "files": [{"type": "collection", "id": knowledge}],
-            },
-            token=token,
-        )
-        timings["chat_s"] = round(time.monotonic() - started, 3)
-        if response.status != 200:
-            raise sc.ScenarioFailure(f"the knowledge-scoped chat returned HTTP {response.status}{sc.error_detail(response)}")
-        _, sources = sc.parse_chat_response(response.body, response.content_type)
-        retrieved = retrieved_chunks(sources)
-        started = time.monotonic()
-        bm25 = bm25_past_first_page(webui, qdrant, token, knowledge)
-        timings["bm25_s"] = round(time.monotonic() - started, 3)
-        values.update(points={"file": file_points, "knowledge": knowledge_points}, retrieved=retrieved,
-                      bm25=bm25, timings=timings)
-        if not (file_points == PAGING_SECTIONS and knowledge_points == PAGING_SECTIONS
-                and retrieved["chunks"] and retrieved["planted"] and bm25["found"]):
-            raise sc.ScenarioFailure(json.dumps(values, sort_keys=True), values)
-    except BaseException:
-        # Clean up on every path, but never let the cleanup hide the failure.
-        _delete_paging_inputs(webui, token, file_id, knowledge_id)
-        raise
-    failures = _delete_paging_inputs(webui, token, file_id, knowledge_id)
-    if failures:
-        raise sc.ScenarioFailure("; ".join(failures), values)
+        file_id = upload_markdown(webui, token, PAGING_CORPUS_NAME, corpus, "paging corpus", PAGING_TIMEOUTS["index_s"])
+        timings = {"index_s": round(time.monotonic() - started, 3)}
+        values["timings"] = timings
+        knowledge_id: str | None = None
+        try:
+            file_points = settled_points(lambda: qdrant.tenant_points(COLLECTIONS[2], f"file-{file_id}"),
+                                         PAGING_SECTIONS, PAGING_TIMEOUTS["settle_s"])
+            values["points"] = {"file": file_points}
+            created = webui.json("POST", sc.API["knowledge_create"],
+                                 {"name": "household-paging-corpus", "description": "Acceptance paging check"}, token=token)
+            knowledge_id = created.get("id") if isinstance(created, dict) else None
+            if not isinstance(knowledge_id, str):
+                raise sc.ScenarioFailure("the knowledge create returned no id")
+            knowledge = knowledge_id
+            started = time.monotonic()
+            webui.json("POST", sc.API["knowledge_file_add"].format(id=knowledge), {"file_id": file_id}, token=token)
+            knowledge_points = settled_points(lambda: qdrant.tenant_points(COLLECTIONS[1], knowledge),
+                                              PAGING_SECTIONS, PAGING_TIMEOUTS["settle_s"])
+            timings["knowledge_add_s"] = round(time.monotonic() - started, 3)
+            values["points"] = {"file": file_points, "knowledge": knowledge_points}
+            started = time.monotonic()
+            response = webui.request(
+                "POST",
+                sc.API["chat"],
+                payload={
+                    "model": chat_model,
+                    "stream": True,
+                    "temperature": 0,
+                    "params": {"temperature": 0},
+                    "messages": [{"role": "user", "content": PAGING_PROMPT}],
+                    "files": [{"type": "collection", "id": knowledge}],
+                },
+                token=token,
+            )
+            timings["chat_s"] = round(time.monotonic() - started, 3)
+            if response.status != 200:
+                raise sc.ScenarioFailure(f"the knowledge-scoped chat returned HTTP {response.status}{sc.error_detail(response)}")
+            _, sources = sc.parse_chat_response(response.body, response.content_type)
+            retrieved = retrieved_chunks(sources)
+            started = time.monotonic()
+            bm25 = bm25_past_first_page(webui, qdrant, token, knowledge)
+            timings["bm25_s"] = round(time.monotonic() - started, 3)
+            values.update(points={"file": file_points, "knowledge": knowledge_points}, retrieved=retrieved,
+                          bm25=bm25, timings=timings)
+            if not (file_points == PAGING_SECTIONS and knowledge_points == PAGING_SECTIONS
+                    and retrieved["chunks"] and retrieved["planted"] and bm25["found"]):
+                raise sc.ScenarioFailure(json.dumps(values, sort_keys=True), values)
+        except BaseException:
+            # Clean up on every path, but never let the cleanup hide the failure.
+            _delete_paging_inputs(webui, token, file_id, knowledge_id)
+            raise
+        failures = _delete_paging_inputs(webui, token, file_id, knowledge_id)
+        if failures:
+            raise sc.ScenarioFailure("; ".join(failures), values)
     return Passed(f"file tenant {file_points} points; knowledge tenant {knowledge_points} points", values)
 
 
@@ -2783,81 +2789,84 @@ def hybrid_error_check(webui: sc.Endpoint, qdrant: Qdrant, token: str, chat_mode
     if hybrid is not True or health != 200:
         before = {"hybrid_search": hybrid, "health_before": health}
         raise sc.ScenarioFailure(json.dumps(before, sort_keys=True), before)
-    values: dict[str, Any] = {"health_before": health}
     timings: dict[str, float] = {}
+    # Filled as the check measures, so a failure keeps what it measured before it.
+    values: dict[str, Any] = {"health_before": health, "timings": timings}
     knowledge_id: str | None = None
     planted = False
-    try:
-        file_points = qdrant.tenant_points(COLLECTIONS[2], f"file-{file_id}")
-        created = webui.json("POST", sc.API["knowledge_create"],
-                             {"name": HYBRID_FAULT_KNOWLEDGE, "description": "Acceptance hybrid-search fault check"},
-                             token=token)
-        knowledge_id = created.get("id") if isinstance(created, dict) else None
-        if not isinstance(knowledge_id, str):
-            raise sc.ScenarioFailure("the knowledge create returned no id")
-        knowledge = knowledge_id
-        started = time.monotonic()
-        webui.json("POST", sc.API["knowledge_file_add"].format(id=knowledge), {"file_id": file_id}, token=token)
-        knowledge_points = settled_points(lambda: qdrant.tenant_points(COLLECTIONS[1], knowledge), file_points,
-                                          HYBRID_SETTLE_S)
-        timings["knowledge_add_s"] = round(time.monotonic() - started, 3)
-        values.update(points={"file": file_points, "knowledge": knowledge_points}, timings=timings)
-        if not file_points or knowledge_points != file_points:
-            raise sc.ScenarioFailure(json.dumps(values, sort_keys=True), values)
-        qdrant.call("PUT", f"/collections/{COLLECTIONS[1]}/points?wait=true", {"points": [{
-            "id": HYBRID_FAULT_POINT,
-            "vector": [1.0] + [0.0] * (QDRANT_DIMENSIONS - 1),
-            "payload": {"tenant_id": knowledge, "text": HYBRID_FAULT_SENTINEL, "metadata": None},
-        }]})
-        planted = True
-        stored = qdrant.point_payload(COLLECTIONS[1], HYBRID_FAULT_POINT)
-        values["fault_point"] = {
-            "id": HYBRID_FAULT_POINT,
-            "in_knowledge_tenant": stored is not None and stored.get("tenant_id") == knowledge,
-            "metadata_null": stored is not None and "metadata" in stored and stored["metadata"] is None,
-            "tenant_points_with_fault": qdrant.tenant_points(COLLECTIONS[1], knowledge),
-        }
-        fault_point = values["fault_point"]
-        if not (fault_point["in_knowledge_tenant"] and fault_point["metadata_null"]
-                and fault_point["tenant_points_with_fault"] == knowledge_points + 1):
-            # A 503 would prove nothing: hybrid search would not read this point.
-            raise sc.ScenarioFailure(json.dumps(values, sort_keys=True), values)
-        files = [{"type": "collection", "id": knowledge}]
-        fault_started = time.time()
-        started = time.monotonic()
-        fault = post_chat(webui, token, chat_model, files)
-        timings["fault_chat_s"] = round(time.monotonic() - started, 3)
-        values["fault"] = {**refusal_record(fault),
-                           "sentinel": HYBRID_FAULT_SENTINEL in fault.body.decode("utf-8", "replace")}
-        values["health_after_fault"] = webui.request("GET", sc.API["rag_health"], token=token).status
-        values["fallback_refusal_logged"] = HYBRID_FALLBACK_REFUSAL in journal_since(fault_started)
-        qdrant.call("POST", f"/collections/{COLLECTIONS[1]}/points/delete?wait=true",
-                    {"points": [HYBRID_FAULT_POINT]})
-        planted = False
-        values["tenant_points_after_fault_delete"] = qdrant.tenant_points(COLLECTIONS[1], knowledge)
-        started = time.monotonic()
-        recovered = post_chat(webui, token, chat_model, files)
-        timings["recovery_chat_s"] = round(time.monotonic() - started, 3)
-        scores = sc.summarize_sources(recovered.sources)["scores"]
-        values["recovery"] = {"status": recovered.status, "sources": len(recovered.sources),
-                              "fact_in_sources": recovered.holds(sc.CANONICAL_FACT),
-                              "finite_scores": finite_scores(scores)}
-        values["health_after_recovery"] = webui.request("GET", sc.API["rag_health"], token=token).status
-        recovery = values["recovery"]
-        if not (refused(values["fault"]) and values["fault"]["sentinel"] is False
-                and values["health_after_fault"] == 200
-                and values["tenant_points_after_fault_delete"] == knowledge_points
-                and recovery["status"] == 200 and recovery["sources"] and recovery["fact_in_sources"]
-                and recovery["finite_scores"] and values["health_after_recovery"] == 200):
-            raise sc.ScenarioFailure(json.dumps(values, sort_keys=True), values)
-    except BaseException:
-        # Clean up on every path, but never let the cleanup hide the failure.
-        _delete_hybrid_fault(webui, qdrant, token, knowledge_id, planted)
-        raise
-    failures, cleanup = _delete_hybrid_fault(webui, qdrant, token, knowledge_id, planted)
-    values["cleanup"] = cleanup
-    if failures:
-        raise sc.ScenarioFailure("; ".join(failures), values)
+    with keeping(values):
+        try:
+            file_points = qdrant.tenant_points(COLLECTIONS[2], f"file-{file_id}")
+            values["points"] = {"file": file_points}
+            created = webui.json("POST", sc.API["knowledge_create"],
+                                 {"name": HYBRID_FAULT_KNOWLEDGE, "description": "Acceptance hybrid-search fault check"},
+                                 token=token)
+            knowledge_id = created.get("id") if isinstance(created, dict) else None
+            if not isinstance(knowledge_id, str):
+                raise sc.ScenarioFailure("the knowledge create returned no id")
+            knowledge = knowledge_id
+            started = time.monotonic()
+            webui.json("POST", sc.API["knowledge_file_add"].format(id=knowledge), {"file_id": file_id}, token=token)
+            knowledge_points = settled_points(lambda: qdrant.tenant_points(COLLECTIONS[1], knowledge), file_points,
+                                              HYBRID_SETTLE_S)
+            timings["knowledge_add_s"] = round(time.monotonic() - started, 3)
+            values.update(points={"file": file_points, "knowledge": knowledge_points}, timings=timings)
+            if not file_points or knowledge_points != file_points:
+                raise sc.ScenarioFailure(json.dumps(values, sort_keys=True), values)
+            qdrant.call("PUT", f"/collections/{COLLECTIONS[1]}/points?wait=true", {"points": [{
+                "id": HYBRID_FAULT_POINT,
+                "vector": [1.0] + [0.0] * (QDRANT_DIMENSIONS - 1),
+                "payload": {"tenant_id": knowledge, "text": HYBRID_FAULT_SENTINEL, "metadata": None},
+            }]})
+            planted = True
+            stored = qdrant.point_payload(COLLECTIONS[1], HYBRID_FAULT_POINT)
+            values["fault_point"] = {
+                "id": HYBRID_FAULT_POINT,
+                "in_knowledge_tenant": stored is not None and stored.get("tenant_id") == knowledge,
+                "metadata_null": stored is not None and "metadata" in stored and stored["metadata"] is None,
+                "tenant_points_with_fault": qdrant.tenant_points(COLLECTIONS[1], knowledge),
+            }
+            fault_point = values["fault_point"]
+            if not (fault_point["in_knowledge_tenant"] and fault_point["metadata_null"]
+                    and fault_point["tenant_points_with_fault"] == knowledge_points + 1):
+                # A 503 would prove nothing: hybrid search would not read this point.
+                raise sc.ScenarioFailure(json.dumps(values, sort_keys=True), values)
+            files = [{"type": "collection", "id": knowledge}]
+            fault_started = time.time()
+            started = time.monotonic()
+            fault = post_chat(webui, token, chat_model, files)
+            timings["fault_chat_s"] = round(time.monotonic() - started, 3)
+            values["fault"] = {**refusal_record(fault),
+                               "sentinel": HYBRID_FAULT_SENTINEL in fault.body.decode("utf-8", "replace")}
+            values["health_after_fault"] = webui.request("GET", sc.API["rag_health"], token=token).status
+            values["fallback_refusal_logged"] = HYBRID_FALLBACK_REFUSAL in journal_since(fault_started)
+            qdrant.call("POST", f"/collections/{COLLECTIONS[1]}/points/delete?wait=true",
+                        {"points": [HYBRID_FAULT_POINT]})
+            planted = False
+            values["tenant_points_after_fault_delete"] = qdrant.tenant_points(COLLECTIONS[1], knowledge)
+            started = time.monotonic()
+            recovered = post_chat(webui, token, chat_model, files)
+            timings["recovery_chat_s"] = round(time.monotonic() - started, 3)
+            scores = sc.summarize_sources(recovered.sources)["scores"]
+            values["recovery"] = {"status": recovered.status, "sources": len(recovered.sources),
+                                  "fact_in_sources": recovered.holds(sc.CANONICAL_FACT),
+                                  "finite_scores": finite_scores(scores)}
+            values["health_after_recovery"] = webui.request("GET", sc.API["rag_health"], token=token).status
+            recovery = values["recovery"]
+            if not (refused(values["fault"]) and values["fault"]["sentinel"] is False
+                    and values["health_after_fault"] == 200
+                    and values["tenant_points_after_fault_delete"] == knowledge_points
+                    and recovery["status"] == 200 and recovery["sources"] and recovery["fact_in_sources"]
+                    and recovery["finite_scores"] and values["health_after_recovery"] == 200):
+                raise sc.ScenarioFailure(json.dumps(values, sort_keys=True), values)
+        except BaseException:
+            # Clean up on every path, but never let the cleanup hide the failure.
+            _delete_hybrid_fault(webui, qdrant, token, knowledge_id, planted)
+            raise
+        failures, cleanup = _delete_hybrid_fault(webui, qdrant, token, knowledge_id, planted)
+        values["cleanup"] = cleanup
+        if failures:
+            raise sc.ScenarioFailure("; ".join(failures), values)
     return values
 
 
@@ -2906,18 +2915,58 @@ def route_checks(kit: Kit, token: str) -> dict[str, Any]:
     return values
 
 
+class MeasuredFailure(sc.ScenarioFailure):
+    """A step failure other than a check's, raised after the step measured values.
+
+    Its message is the detail ``Trial.step`` records for the original error,
+    ``<type>: <text>``, so the detail reads as it would without the values;
+    the original error is its ``__cause__``.
+    """
+
+
+def failure_text(error: BaseException) -> str:
+    """A step failure's detail as ``Trial.step`` records it."""
+
+    return str(error) if isinstance(error, MeasuredFailure) else f"{type(error).__name__}: {error}"
+
+
+@contextlib.contextmanager
+def keeping(values: dict[str, Any]) -> Iterator[None]:
+    """Any step failure inside carries ``values``, what the step measured so far.
+
+    A ``ScenarioFailure`` keeps its type and message, with its own values
+    merged over these; any other step failure becomes a ``MeasuredFailure``.
+    The caller fills ``values`` as it measures, so a failure keeps every
+    measurement taken before it.
+    """
+
+    try:
+        yield
+    except sc.ScenarioFailure as error:
+        merged = {**values, **error.values}
+        if merged == error.values:
+            raise
+        raise type(error)(str(error), merged) from error
+    except STEP_FAILURES as error:
+        raise MeasuredFailure(failure_text(error), values) from error
+
+
 def record_check(values: dict[str, Any], key: str, check: Callable[[], dict[str, Any]]) -> None:
     """Record a nested check's values under ``key`` in a step's values.
 
-    A failing check re-raises with its message unchanged, its own values
-    under ``key``, and every measurement the step took before it kept.
+    Any step failure from the check re-raises as a ``ScenarioFailure`` that
+    keeps every measurement the step took before it: a failing check keeps
+    its message and its own values under ``key``, and any other error (a
+    timeout, a transport or client error) becomes a ``MeasuredFailure``.
     """
 
     try:
         values[key] = check()
     except sc.ScenarioFailure as error:
         values[key] = error.values
-        raise sc.ScenarioFailure(str(error), values) from error
+        raise type(error)(str(error), values) from error
+    except STEP_FAILURES as error:
+        raise MeasuredFailure(failure_text(error), values) from error
 
 
 def module_origins(kit: Kit) -> dict[str, str | None]:
@@ -3129,7 +3178,7 @@ class Trial:
         except STEP_FAILURES as error:
             # The one trial promises every value: a failed step keeps what it
             # measured, not only the redacted, truncated detail.
-            values, result, detail = self.failure_values(error), sc.FAIL, f"{type(error).__name__}: {error}"
+            values, result, detail = self.failure_values(error), sc.FAIL, failure_text(error)
         self.record(Step(step_id, result, detail, round(time.monotonic() - started, 3), values))
         if result in {sc.ESCALATE, sc.BLOCKED} or (critical and result == sc.FAIL):
             raise Stop()
@@ -3543,39 +3592,41 @@ class Trial:
         epoch = ledger(kit, "reserve")
         started = time.monotonic()
         clock = PhaseClock()
-        systemctl("stop", UNITS["open-webui"])
-        systemctl("stop", UNITS["valkey"])
-        clock.lap("stop")
-        restored = restore_tuple(kit, qdrant)
-        clock.lap("restore_tuple")
-        systemctl("start", UNITS["valkey"])
-        start_open_webui(kit)
-        clock.lap("open_webui_start")
-        self.token = admin_token(kit)
-        clock.lap("sign_in")
-        check = cited_check(kit.uds(), self.token, self.chat_id(), self.seed_file)
-        cited = check["cited"]
-        clock.lap("chat")
-        elapsed = round(time.monotonic() - started, 3)
-        checks = a_d3_checks(kit, self.anchor, restored, qdrant, self.pre_backup_session)
-        start_caddy(kit)
+        # Filled as the drill measures, so a failure at any point keeps the
+        # phases and everything measured before it.
         values: dict[str, Any] = {
-            "restore_s": elapsed,
             "ceiling_s": LIMITS["restore_s"],
             "phases_s": clock.phases,
-            "cited_fact": cited,
-            "cited_chat": {key: check[key] for key in ("status", "detail", "fact_present", "sources")},
             "reserved_epoch_above_bound": epoch > self.anchor["epoch_bound"],
             "pre_restore_divergence": pre_restore,
-            "a_d3": checks,
         }
-        record_check(values, "route", lambda: route_checks(kit, self.token))
-        record_check(values, "one_admin", lambda: one_admin(kit.caddy(), self.token))
-        # A ceiling overrun is recorded as this drill's FAIL; the trial still
-        # runs the rollback drill (the step is not critical).
-        if (not cited or elapsed > LIMITS["restore_s"] or not checks["passes"]
-                or not all(pre_restore.values())):
-            raise sc.ScenarioFailure(json.dumps(values, sort_keys=True), values)
+        with keeping(values):
+            systemctl("stop", UNITS["open-webui"])
+            systemctl("stop", UNITS["valkey"])
+            clock.lap("stop")
+            restored = restore_tuple(kit, qdrant)
+            clock.lap("restore_tuple")
+            systemctl("start", UNITS["valkey"])
+            start_open_webui(kit)
+            clock.lap("open_webui_start")
+            self.token = admin_token(kit)
+            clock.lap("sign_in")
+            check = cited_check(kit.uds(), self.token, self.chat_id(), self.seed_file)
+            cited = check["cited"]
+            clock.lap("chat")
+            elapsed = round(time.monotonic() - started, 3)
+            values.update(restore_s=elapsed, cited_fact=cited,
+                          cited_chat={key: check[key] for key in ("status", "detail", "fact_present", "sources")})
+            checks = a_d3_checks(kit, self.anchor, restored, qdrant, self.pre_backup_session)
+            values["a_d3"] = checks
+            start_caddy(kit)
+            record_check(values, "route", lambda: route_checks(kit, self.token))
+            record_check(values, "one_admin", lambda: one_admin(kit.caddy(), self.token))
+            # A ceiling overrun is recorded as this drill's FAIL; the trial still
+            # runs the rollback drill (the step is not critical).
+            if (not cited or elapsed > LIMITS["restore_s"] or not checks["passes"]
+                    or not all(pre_restore.values())):
+                raise sc.ScenarioFailure(json.dumps(values, sort_keys=True), values)
         return values
 
     def rollback_drill(self) -> dict[str, Any]:
@@ -3602,44 +3653,47 @@ class Trial:
         epoch = ledger(kit, "reserve")
         started = time.monotonic()
         clock = PhaseClock()
-        qdrant = start_qdrant(kit)
-        clock.lap("qdrant_start")
-        restored = restore_tuple(kit, qdrant)
-        clock.lap("restore_tuple")
-        start_support_units(kit)
-        clock.lap("support_units")
-        start_open_webui(kit)
-        clock.lap("open_webui_start")
-        self.token = admin_token(kit)
-        clock.lap("sign_in")
-        check = cited_check(kit.uds(), self.token, self.chat_id(), self.seed_file)
-        cited = check["cited"]
-        clock.lap("chat")
-        state_elapsed = round(time.monotonic() - started, 3)
-        checks = a_d3_checks(kit, self.anchor, restored, qdrant, pre_backup_session)
-        start_caddy(kit)
-        legacy_after = legacy_service_state()
-        port_8080 = acceptance_listeners_on(8080, kit)
+        # Filled as the drill measures, so a failure at any point keeps the
+        # phases and everything measured before it.
         values: dict[str, Any] = {
-            "state_restore_s": state_elapsed,
             "ceiling_s": LIMITS["rollback_state_s"],
             "phases_s": clock.phases,
             "before_clock_s": round(started - window, 3),
-            "window_s": round(time.monotonic() - window, 3),
             "archives_match_anchor": True,
-            "cited_fact": cited,
-            "cited_chat": {key: check[key] for key in ("status", "detail", "fact_present", "sources")},
             "reserved_epoch_above_bound": epoch > self.anchor["epoch_bound"],
-            "a_d3": checks,
-            "legacy_service": {"before": legacy_before, "after": legacy_after},
-            "legacy_service_touched": legacy_before != legacy_after,
-            "acceptance_listener_on_8080": port_8080,
+            "legacy_service": {"before": legacy_before},
         }
-        record_check(values, "route", lambda: route_checks(kit, self.token))
-        record_check(values, "one_admin", lambda: one_admin(kit.caddy(), self.token))
-        if (not cited or state_elapsed > LIMITS["rollback_state_s"] or not checks["passes"]
-                or values["legacy_service_touched"] or port_8080):
-            raise sc.ScenarioFailure(json.dumps(values, sort_keys=True), values)
+        with keeping(values):
+            qdrant = start_qdrant(kit)
+            clock.lap("qdrant_start")
+            restored = restore_tuple(kit, qdrant)
+            clock.lap("restore_tuple")
+            start_support_units(kit)
+            clock.lap("support_units")
+            start_open_webui(kit)
+            clock.lap("open_webui_start")
+            self.token = admin_token(kit)
+            clock.lap("sign_in")
+            check = cited_check(kit.uds(), self.token, self.chat_id(), self.seed_file)
+            cited = check["cited"]
+            clock.lap("chat")
+            state_elapsed = round(time.monotonic() - started, 3)
+            values.update(state_restore_s=state_elapsed, cited_fact=cited,
+                          cited_chat={key: check[key] for key in ("status", "detail", "fact_present", "sources")})
+            checks = a_d3_checks(kit, self.anchor, restored, qdrant, pre_backup_session)
+            values["a_d3"] = checks
+            start_caddy(kit)
+            legacy_after = legacy_service_state()
+            values["legacy_service"] = {"before": legacy_before, "after": legacy_after}
+            values["legacy_service_touched"] = legacy_before != legacy_after
+            port_8080 = acceptance_listeners_on(8080, kit)
+            values["acceptance_listener_on_8080"] = port_8080
+            values["window_s"] = round(time.monotonic() - window, 3)
+            record_check(values, "route", lambda: route_checks(kit, self.token))
+            record_check(values, "one_admin", lambda: one_admin(kit.caddy(), self.token))
+            if (not cited or state_elapsed > LIMITS["rollback_state_s"] or not checks["passes"]
+                    or values["legacy_service_touched"] or port_8080):
+                raise sc.ScenarioFailure(json.dumps(values, sort_keys=True), values)
         return values
 
     def qdrant_paging(self) -> Passed:
@@ -3655,21 +3709,22 @@ class Trial:
         kit = self.kit
         snapshot_resources(kit, "end of trial")
         gates = resource_gates(read_jsonl(kit.raw / "resources.jsonl"))
-        qdrant = kit.qdrant()
-        values = {
-            **gates,
-            "qdrant_storage": tree_sizes(kit.path("state", "qdrant", "storage")),
-            "points": {name: shape.get("points") for name, shape in qdrant.shapes().items()},
-            "anchor": self.anchor.get("sizes"),
-            "snapshot_bytes": self.anchor.get("snapshot_bytes"),
+        # The gates are measured; a storage or Qdrant read that fails after
+        # them keeps them (and anything read before it).
+        values: dict[str, Any] = {**gates}
+        with keeping(values):
+            qdrant = kit.qdrant()
+            values["qdrant_storage"] = tree_sizes(kit.path("state", "qdrant", "storage"))
+            values["points"] = {name: shape.get("points") for name, shape in qdrant.shapes().items()}
+            values["anchor"] = self.anchor.get("sizes")
+            values["snapshot_bytes"] = self.anchor.get("snapshot_bytes")
             # Record only, never a gate (the lead's ruling on #89).
-            "cache_inventory": trial_cache_record(kit),
-        }
-        if not gates["passes"]:
-            # The message names the gates; the values keep every measurement,
-            # the cache inventory included.
-            raise sc.ScenarioFailure(json.dumps({"oom_kills": gates["oom_kills"],
-                                                 "unplanned_restarts": gates["unplanned_restarts"]}), values)
+            values["cache_inventory"] = trial_cache_record(kit)
+            if not gates["passes"]:
+                # The message names the gates; the values keep every measurement,
+                # the cache inventory included.
+                raise sc.ScenarioFailure(json.dumps({"oom_kills": gates["oom_kills"],
+                                                     "unplanned_restarts": gates["unplanned_restarts"]}), values)
         return values
 
     # The run -------------------------------------------------------------------

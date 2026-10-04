@@ -1,4 +1,5 @@
 import contextlib
+import http.client
 import importlib.util
 import io
 import json
@@ -1872,6 +1873,105 @@ class FailedStepValuesTests(unittest.TestCase):
             step = self.run_step(trial, "a", failing)
             self.assertEqual((step.result, step.values), (sc.FAIL, {}))
 
+    # Errors other than a check's failure that escape after a drill measured
+    # its timing: the drill, the patched kit function, and its error.
+    POST_MEASUREMENT_ERRORS = (
+        (kit_module.RESTORE_DRILL, "route_checks", TimeoutError("timed out")),
+        (kit_module.RESTORE_DRILL, "one_admin", http.client.RemoteDisconnected("Remote end closed connection")),
+        (kit_module.RESTORE_DRILL, "a_d3_checks", sqlite3.OperationalError("database is locked")),
+        (kit_module.RESTORE_DRILL, "start_caddy", subprocess.CalledProcessError(1, ["systemctl", "start"])),
+        (kit_module.ROLLBACK_DRILL, "route_checks", TimeoutError("timed out")),
+        (kit_module.ROLLBACK_DRILL, "one_admin", OSError("connection refused")),
+        (kit_module.ROLLBACK_DRILL, "a_d3_checks", KeyError("epoch")),
+        (kit_module.ROLLBACK_DRILL, "acceptance_listeners_on", OSError("ss failed")),
+    )
+
+    NOT_REACHED = {"route_checks": "route", "one_admin": "one_admin", "a_d3_checks": "a_d3", "start_caddy": "route",
+                   "acceptance_listeners_on": "acceptance_listener_on_8080"}
+
+    def test_an_error_after_a_drills_timing_keeps_the_drills_measurements(self):
+        for drill, target, error in self.POST_MEASUREMENT_ERRORS:
+            with self.subTest(drill=drill, target=target), tempfile.TemporaryDirectory() as directory:
+                kit, trial = self.drill_trial(directory)
+                action = trial.restore_drill if drill == kit_module.RESTORE_DRILL else trial.rollback_drill
+                with self.drill_mocks(kit, self.LAPS), mock.patch.object(kit_module, target, side_effect=error):
+                    step = self.run_step(trial, drill, action)
+                self.assertEqual(step.result, sc.FAIL)
+                # The detail reads as it did before the values were kept.
+                self.assertEqual(step.detail, f"{type(error).__name__}: {error}")
+                timing = "restore_s" if drill == kit_module.RESTORE_DRILL else "state_restore_s"
+                self.assertEqual(step.values[timing], 67.5 if drill == kit_module.RESTORE_DRILL else 69.0)
+                self.assertEqual(set(step.values["phases_s"]), (
+                    {"stop", "restore_tuple", "open_webui_start", "sign_in", "chat"}
+                    if drill == kit_module.RESTORE_DRILL
+                    else {"qdrant_start", "restore_tuple", "support_units", "open_webui_start", "sign_in", "chat"}))
+                self.assertIn("cited_chat", step.values)
+                if target == "one_admin":
+                    self.assertIn("route", step.values)
+                # Nothing past the failure is recorded.
+                self.assertNotIn(self.NOT_REACHED[target], step.values)
+                self.assert_public_values(kit, trial, step)
+
+    def test_a_rollback_whose_second_legacy_read_fails_keeps_the_first(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit, trial = self.drill_trial(directory)
+            failing = subprocess.CalledProcessError(1, ["systemctl", "is-active"])
+            with self.drill_mocks(kit, self.LAPS), \
+                    mock.patch.object(kit_module, "legacy_service_state", side_effect=[{"state": "inactive"}, failing]):
+                step = self.run_step(trial, kit_module.ROLLBACK_DRILL, trial.rollback_drill)
+            self.assertEqual((step.result, step.detail), (sc.FAIL, f"CalledProcessError: {failing}"))
+            self.assertEqual(step.values["legacy_service"], {"before": {"state": "inactive"}})
+            self.assertEqual(step.values["state_restore_s"], 69.0)
+            self.assert_public_values(kit, trial, step)
+
+    def test_a_drill_that_fails_mid_restore_keeps_the_phases_it_measured(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit, trial = self.drill_trial(directory)
+            with self.drill_mocks(kit, self.LAPS), \
+                    mock.patch.object(kit_module, "start_open_webui", side_effect=[None, OSError("no socket")]):
+                step = self.run_step(trial, kit_module.RESTORE_DRILL, trial.restore_drill)
+            self.assertEqual((step.result, step.detail), (sc.FAIL, "OSError: no socket"))
+            self.assertEqual(step.values["phases_s"], {"stop": 1.0, "restore_tuple": 15.0})
+            self.assertEqual(step.values["pre_restore_divergence"], {"sentinel": True})
+            self.assertNotIn("restore_s", step.values)
+            self.assert_public_values(kit, trial, step)
+
+    def test_a_resources_read_that_fails_after_the_gates_keeps_them(self):
+        unit = "owui-acc-open-webui.service"
+        calm = [{"units": {unit: {"oom_kill": 0, "NRestarts": 0, "memory_peak": 10}}}]
+        with tempfile.TemporaryDirectory() as directory:
+            kit = make_kit(directory)
+            trial = kit_module.Trial(kit)
+            with mock.patch.object(kit_module, "snapshot_resources"), \
+                    mock.patch.object(kit_module, "read_jsonl", return_value=calm), \
+                    mock.patch.object(kit_module.Kit, "qdrant"), \
+                    mock.patch.object(kit_module, "tree_sizes", side_effect=OSError("storage unreadable")):
+                step = self.run_step(trial, "open-webui.acceptance.resources", trial.resources)
+            self.assertEqual((step.result, step.detail), (sc.FAIL, "OSError: storage unreadable"))
+            self.assertTrue(step.values["passes"])
+            self.assertEqual(step.values["memory_peak_max_bytes"][unit], 10)
+            self.assert_public_values(kit, trial, step)
+
+    def test_record_check_keeps_the_steps_values_for_any_step_failure(self):
+        values: dict[str, Any] = {"restore_s": 12.5}
+        for error in (TimeoutError("timed out"), OSError("refused"), KeyError("x")):
+            with self.subTest(error=type(error).__name__):
+                def nested(error=error):
+                    raise error
+
+                with self.assertRaises(kit_module.MeasuredFailure) as raised:
+                    kit_module.record_check(values, "route", nested)
+                self.assertIsInstance(raised.exception, sc.ScenarioFailure)
+                self.assertEqual(str(raised.exception), f"{type(error).__name__}: {error}")
+                self.assertIs(raised.exception.__cause__, error)
+                self.assertEqual(raised.exception.values, {"restore_s": 12.5})
+        # Anything outside the step failures passes through untouched.
+        def blocked():
+            raise sc.Blocked("NEEDS OWNER: x")
+
+        with self.assertRaises(sc.Blocked):
+            kit_module.record_check(values, "route", blocked)
+
     def test_an_escalation_keeps_its_values_unchanged(self):
         values = {"margin": 0.1, "vectors": {"query": {"dimensions": 2560, "norm": None}}, "prefix_source": "x"}
         with tempfile.TemporaryDirectory() as directory:
@@ -2895,6 +2995,23 @@ class QdrantPagingTests(unittest.TestCase):
             self.check(self.FakeOpenWebUI(delete_status=500))
         self.assertIn("knowledge", str(raised.exception))
 
+    def test_a_transport_error_after_the_counts_keeps_them_and_still_cleans_up(self):
+        webui = self.FakeOpenWebUI()
+        request = webui.request
+
+        def failing(method, path, **kwargs):
+            if (method, path) == ("POST", sc.API["retrieval_query_collection"]):
+                raise http.client.RemoteDisconnected("Remote end closed connection")
+            return request(method, path, **kwargs)
+
+        webui.request = failing
+        with self.assertRaises(kit_module.MeasuredFailure) as raised:
+            self.check(webui)
+        self.assertEqual(str(raised.exception), "RemoteDisconnected: Remote end closed connection")
+        self.assertEqual(raised.exception.values["points"], {"file": 1100, "knowledge": 1100})
+        self.assertEqual(set(raised.exception.values["timings"]), {"index_s", "knowledge_add_s", "chat_s"})
+        self.assertEqual(webui.deleted, ["knowledge k1", "file f1"])
+
 
 class HybridErrorTests(unittest.TestCase):
     """open-webui.acceptance.failclosed.hybrid-error against fake Open WebUI and Qdrant."""
@@ -3140,6 +3257,21 @@ class HybridErrorTests(unittest.TestCase):
                 with self.assertRaises(sc.ScenarioFailure):
                     self.check(fakes)
                 self.assertEqual((fakes.chats, fakes.deleted, fakes.qdrant_calls), ([], [], []))
+
+    def test_a_transport_error_after_the_fault_chat_keeps_its_record_and_still_cleans_up(self):
+        fakes = self.Fakes()
+        journal = mock.Mock(side_effect=OSError("journalctl failed"))
+        with mock.patch.object(kit_module, "PAGING_POLL_S", 0), mock.patch.object(kit_module, "HYBRID_SETTLE_S", 0.0), \
+                self.assertRaises(kit_module.MeasuredFailure) as raised:
+            kit_module.hybrid_error_check(fakes, fakes.qdrant(), "t", "chat", "f1", journal)
+        values = raised.exception.values
+        self.assertEqual(str(raised.exception), "OSError: journalctl failed")
+        self.assertEqual(values["points"], {"file": 4, "knowledge": 4})
+        self.assertEqual(values["fault"]["status"], 503)
+        self.assertEqual(values["health_after_fault"], 200)
+        self.assertEqual(set(values["timings"]), {"knowledge_add_s", "fault_chat_s"})
+        self.assertEqual(fakes.deleted, ["knowledge k1"])
+        self.assertIsNone(fakes.planted)
 
     def test_a_failed_plant_still_deletes_the_knowledge_base(self):
         fakes = self.Fakes(plant_status=500)
