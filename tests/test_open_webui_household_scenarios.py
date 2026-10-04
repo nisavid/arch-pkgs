@@ -1080,6 +1080,81 @@ class ReceiptTests(unittest.TestCase):
                 scenarios.v1.assert_public_safe({"detail": raw})
 
 
+class FailureValuesTests(unittest.TestCase):
+    """A failed scenario keeps what it measured, JSON-safe and redacted."""
+
+    def run_one(self, error, scenario_id="open-webui.resmoke.cited-answer"):
+        def failing(_ctx):
+            raise error
+
+        with mock.patch.object(scenarios, "SCENARIOS", {scenario_id: failing}):
+            return scenarios.run_scenario(object(), scenario_id)
+
+    def test_the_failure_message_stays_backward_compatible(self):
+        self.assertEqual(scenarios.ScenarioFailure("no").values, {})
+        self.assertEqual(str(scenarios.ScenarioFailure("no", {"a": 1})), "no")
+        self.assertEqual(scenarios.ScenarioFailure("no", {"a": 1}).values, {"a": 1})
+
+    def test_a_failed_scenario_records_its_values(self):
+        values = {"timings": {"upload_s": 0.5, "chat_s": 2.0}, "sources": {"count": 0, "names": [], "scores": []},
+                  "expected_source_name": scenarios.HANDBOOK_NAME, "fact_present": False}
+        result = self.run_one(scenarios.ScenarioFailure(json.dumps(values, sort_keys=True), values))
+        self.assertEqual(result.result, scenarios.FAIL)
+        self.assertEqual(result.values, values)
+
+    def test_failure_values_are_json_safe_and_public_safe(self):
+        unsafe = {
+            "detail": ReceiptTests.UNSAFE,
+            "scores": [0.9, float("nan"), float("-inf")],
+            "pair": ("Authorization: Bearer s3cret", 1),
+            "margin": float("inf"),
+        }
+        result = self.run_one(scenarios.ScenarioFailure("measured", unsafe))
+        self.assertEqual(result.result, scenarios.FAIL)
+        text = json.dumps(result.values, allow_nan=False)
+        for private in ("/home/someone", "192.168.1.20", "fd12:3456::7", "admin@example.org", "k1", "nas.lan",
+                        "s3cret"):
+            self.assertNotIn(private, text)
+        self.assertEqual(result.values["scores"], [0.9, None, None])
+        self.assertIsNone(result.values["margin"])
+        receipt = scenarios.build_receipt(target="production", mode="record",
+                                          settings=scenarios.settings_from_environ(candidate_env()),
+                                          chat_model="chat", health=None, results=[result])
+        json.dumps(receipt, allow_nan=False)
+        self.assertEqual(receipt["scenarios"][0]["values"], result.values)
+
+    def test_other_failures_and_blocks_record_no_values(self):
+        for error, expected in ((KeyError("id"), scenarios.FAIL), (scenarios.Blocked("NEEDS OWNER: x"), scenarios.BLOCKED)):
+            with self.subTest(error=error):
+                result = self.run_one(error)
+                self.assertEqual((result.result, result.values), (expected, {}))
+
+    def test_an_escalation_keeps_its_values_unchanged(self):
+        values = {"margin": 0.1, "vectors": {"query": {"dimensions": 2560, "norm": None}},
+                  "texts": {"query": scenarios.CANARY_QUERY}}
+        result = self.run_one(scenarios.Escalation("ESCALATE: zembed canary", values),
+                              "open-webui.resmoke.zembed-canary")
+        self.assertEqual((result.result, result.values, result.detail),
+                         (scenarios.ESCALATE, values, "ESCALATE: zembed canary"))
+
+    def test_zerank_keeps_its_scores_when_the_relevant_document_is_not_first(self):
+        class Webui:
+            def request(self, *_args, **_kwargs):
+                return scenarios.Response(200, "application/json", b'{"status": "qualified"}')
+
+        class Lemond:
+            def json(self, *_args, **_kwargs):
+                return {"results": [{"index": 0, "relevance_score": 0.1}, {"index": 1, "relevance_score": 0.8}]}
+
+        ctx = scenarios.Context(target="acceptance", webui=Webui(), lemond=Lemond(), token="t",
+                                settings=scenarios.settings_from_environ(candidate_env()), chat_model="chat")
+        with mock.patch.object(scenarios, "rag_gate_constants", return_value=("q", ("relevant", "other"))):
+            result = scenarios.run_scenario(ctx, "open-webui.resmoke.zerank-qualification")
+        self.assertEqual(result.result, scenarios.FAIL)
+        self.assertIn("not ranked first", result.detail)
+        self.assertEqual(result.values, {"health": "qualified", "scores": [0.1, 0.8]})
+
+
 class StubProviderTests(unittest.TestCase):
     def test_stub_embeddings_honor_the_zembed_heads(self):
         def embed(head, text):

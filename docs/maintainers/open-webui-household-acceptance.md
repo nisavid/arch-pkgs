@@ -797,6 +797,8 @@ instead.
   pre- and post-trial model snapshots, the M4 receipt ids, the canary texts,
   every trial value, the A-ID2 table, the trial `conditions` (such as the
   0400-file credential fallback), and the disposition.
+- A failed step keeps its measured values in its `values`, as a passing step
+  does, with every string redacted like the step's detail.
 - The kit's public-safety check runs on it before it is written. Ports appear
   only as `loopback:<port>` tokens, loopback ranges as `loopback/<prefix>`, and
   a non-default Lemonade origin as `<lemond>`; the root path, hostnames, and

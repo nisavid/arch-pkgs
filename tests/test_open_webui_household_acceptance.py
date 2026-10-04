@@ -1694,6 +1694,198 @@ class FailureDetailTests(unittest.TestCase):
         self.assertIn("before_clock_s", rollback)
 
 
+class FailedStepValuesTests(unittest.TestCase):
+    """A failed step keeps its measured values; the trial runs once and promises every value."""
+
+    drill_mocks = FailureDetailTests.drill_mocks
+    LAPS = {"systemctl": 0.5, "restore_tuple": 15.0, "start_open_webui": 50.0, "admin_token": 0.25,
+            "cited_check": 0.75, "start_qdrant": 2.0, "start_support_units": 1.0}
+
+    def drill_trial(self, directory):
+        kit = make_kit(directory, rehearsal=True)
+        kit.raw.mkdir(parents=True)
+        kit.anchor.mkdir(parents=True)
+        (kit.anchor / "anchor.json").write_text("{}")
+        trial = kit_module.Trial(kit)
+        trial.listed_chat_model = "chat"
+        trial.seed_file = "f1"
+        trial.anchor = {"epoch_bound": 0, "archives": [{}]}
+        return kit, trial
+
+    def run_step(self, trial, step_id, action):
+        with contextlib.redirect_stdout(io.StringIO()):
+            trial.step(step_id, action)
+        return trial.steps[-1]
+
+    def assert_public_values(self, kit, trial, step):
+        # JSON-safe (no NaN or inf) and public-safe once in the evidence.
+        json.dumps(step.values, allow_nan=False)
+        evidence = kit_module.build_evidence(kit, trial, sc.EXIT_FAIL, False)
+        json.dumps(evidence, allow_nan=False)
+        v1.assert_public_safe(evidence)
+        recorded = next(item for item in evidence["steps"] if item["id"] == step.id)
+        self.assertEqual(recorded["values"], step.values)
+
+    def test_a_failed_restore_drill_records_its_measurements(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit, trial = self.drill_trial(directory)
+            with self.drill_mocks(kit, self.LAPS):
+                step = self.run_step(trial, kit_module.RESTORE_DRILL, trial.restore_drill)
+            self.assertEqual(step.result, sc.FAIL)
+            # The ceiling overrun's measurements, not only the redacted detail.
+            self.assertEqual(step.values["restore_s"], 67.5)
+            self.assertEqual(step.values["ceiling_s"], kit_module.LIMITS["restore_s"])
+            self.assertEqual(step.values["phases_s"], {"stop": 1.0, "restore_tuple": 15.0, "open_webui_start": 50.5,
+                                                       "sign_in": 0.25, "chat": 0.75})
+            self.assertTrue(step.values["cited_fact"])
+            self.assertEqual(step.values["a_d3"], {"passes": True})
+            self.assertEqual(step.values["pre_restore_divergence"], {"sentinel": True})
+            self.assertIn("route", step.values)
+            self.assertIn("one_admin", step.values)
+            self.assert_public_values(kit, trial, step)
+
+    def test_a_failed_rollback_drill_records_its_measurements(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit, trial = self.drill_trial(directory)
+            with self.drill_mocks(kit, self.LAPS):
+                step = self.run_step(trial, kit_module.ROLLBACK_DRILL, trial.rollback_drill)
+            self.assertEqual(step.result, sc.FAIL)
+            self.assertEqual(step.values["state_restore_s"], 69.0)
+            self.assertEqual(step.values["ceiling_s"], kit_module.LIMITS["rollback_state_s"])
+            self.assertEqual(step.values["phases_s"], {"qdrant_start": 2.0, "restore_tuple": 15.0,
+                                                       "support_units": 1.0, "open_webui_start": 50.0,
+                                                       "sign_in": 0.25, "chat": 0.75})
+            self.assertIn("before_clock_s", step.values)
+            self.assertEqual(step.values["legacy_service"], {"before": {}, "after": {}})
+            self.assertFalse(step.values["acceptance_listener_on_8080"])
+            self.assert_public_values(kit, trial, step)
+
+    def test_a_drill_whose_route_check_fails_keeps_the_drills_measurements(self):
+        route = {"https_status": 502, "websocket_status": 101, "listener_findings": []}
+
+        def failing_route(*_args, **_kwargs):
+            raise sc.ScenarioFailure(json.dumps(route, sort_keys=True), route)
+
+        with tempfile.TemporaryDirectory() as directory:
+            kit, trial = self.drill_trial(directory)
+            with self.drill_mocks(kit, self.LAPS), mock.patch.object(kit_module, "route_checks", failing_route), \
+                    mock.patch.object(kit_module, "one_admin") as one_admin:
+                step = self.run_step(trial, kit_module.RESTORE_DRILL, trial.restore_drill)
+            one_admin.assert_not_called()
+            self.assertEqual(step.result, sc.FAIL)
+            self.assertEqual(step.detail, f"ScenarioFailure: {json.dumps(route, sort_keys=True)}")
+            self.assertEqual(step.values["route"], route)
+            self.assertEqual(step.values["restore_s"], 67.5)
+            self.assertNotIn("one_admin", step.values)
+            self.assert_public_values(kit, trial, step)
+
+    def test_a_failed_restart_records_its_measurements(self):
+        # The step's own start, then the restart's start and end.
+        clock = iter([0.0, 100.0, 100.0 + kit_module.LIMITS["restart_s"] + 5.0])
+        with tempfile.TemporaryDirectory() as directory:
+            kit = make_kit(directory)
+            trial = kit_module.Trial(kit)
+            with mock.patch.multiple(kit_module, snapshot_resources=mock.DEFAULT, require_lemond_ready=mock.DEFAULT,
+                                     systemctl=mock.DEFAULT, wait_open_webui=mock.DEFAULT, wait_until=mock.DEFAULT), \
+                    mock.patch.object(kit_module.time, "monotonic", side_effect=lambda: next(clock, 200.0)):
+                step = self.run_step(trial, "open-webui.acceptance.ready.restart", trial.restart)
+            self.assertEqual(step.result, sc.FAIL)
+            self.assertEqual(step.values, {"restart_to_ready_s": kit_module.LIMITS["restart_s"] + 5.0,
+                                           "ceiling_s": kit_module.LIMITS["restart_s"]})
+            self.assert_public_values(kit, trial, step)
+
+    def test_a_failed_resources_step_records_every_value_with_the_cache_inventory(self):
+        unit = "owui-acc-open-webui.service"
+        oom = [{"units": {unit: {"oom_kill": 1, "NRestarts": 0, "memory_peak": 10}}}]
+        end = ["state/open-webui/cache/staged.bin", "tmp/open-webui/scratch"]
+        qdrant = mock.Mock()
+        qdrant.shapes.return_value = {"open-webui_files": {"points": 7}}
+        with tempfile.TemporaryDirectory() as directory:
+            kit = make_kit(directory)
+            kit.raw.mkdir(parents=True)
+            (kit.raw / kit_module.STAGED_INVENTORY).write_text(json.dumps(end[:1]))
+            trial = kit_module.Trial(kit)
+            trial.anchor = {"sizes": {"open-webui": 3}, "snapshot_bytes": 9}
+            with mock.patch.object(kit_module, "snapshot_resources"), \
+                    mock.patch.object(kit_module, "read_jsonl", return_value=oom), \
+                    mock.patch.object(kit_module.Kit, "qdrant", return_value=qdrant), \
+                    mock.patch.object(kit_module, "tree_sizes", return_value={"apparent_bytes": 5}), \
+                    mock.patch.object(kit_module, "cache_inventory", return_value=end):
+                step = self.run_step(trial, "open-webui.acceptance.resources", trial.resources)
+            self.assertEqual(step.result, sc.FAIL)
+            # The detail still names only the gates; the values keep everything.
+            self.assertIn("oom_kills", step.detail)
+            self.assertFalse(step.values["passes"])
+            self.assertEqual(step.values["oom_kills"][unit], 1)
+            self.assertIn("unplanned_restarts", step.values)
+            self.assertEqual(step.values["qdrant_storage"], {"apparent_bytes": 5})
+            self.assertEqual(step.values["points"], {"open-webui_files": 7})
+            self.assertEqual((step.values["anchor"], step.values["snapshot_bytes"]), ({"open-webui": 3}, 9))
+            self.assertEqual(step.values["cache_inventory"]["new_files"], ["tmp/open-webui/scratch"])
+            self.assert_public_values(kit, trial, step)
+
+    def test_failure_values_are_json_safe_and_redacted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit = make_kit(directory)
+            trial = kit_module.Trial(kit)
+            unsafe = {
+                "reason": "cannot read /home/someone/x from 192.168.1.20 with api_key=k1 at nas.lan",
+                "kit_path": f"{kit.root}/state/open-webui/cache/x",
+                "nested": [{"Authorization: Bearer s3cret": "Bearer s3cret"}, ("a", float("nan"))],
+                "inf": float("inf"), "ratio": 0.5, "count": 3, "ok": True, "none": None,
+            }
+
+            def failing():
+                raise sc.ScenarioFailure("measured", unsafe)
+
+            step = self.run_step(trial, "open-webui.acceptance.privacy", failing)
+            text = json.dumps(step.values, allow_nan=False)
+            for private in ("/home/someone", "192.168.1.20", "k1", "nas.lan", "s3cret", directory):
+                self.assertNotIn(private, text)
+            self.assertEqual(step.values["kit_path"], "<root>/state/open-webui/cache/x")
+            self.assertEqual(step.values["nested"][1], ["a", None])
+            self.assertIsNone(step.values["inf"])
+            self.assertEqual((step.values["ratio"], step.values["count"], step.values["ok"], step.values["none"]),
+                             (0.5, 3, True, None))
+            self.assert_public_values(kit, trial, step)
+
+    def test_a_blocked_step_keeps_values_only_when_its_exception_carries_them(self):
+        with tempfile.TemporaryDirectory() as directory:
+            trial = kit_module.Trial(make_kit(directory))
+            carrying = sc.Blocked("NEEDS OWNER: x")
+            carrying.values = {"health": 503}  # type: ignore[attr-defined]
+            for error, expected in ((carrying, {"health": 503}), (sc.Blocked("NEEDS OWNER: y"), {})):
+                def blocked(error=error):
+                    raise error
+
+                with self.subTest(expected=expected), self.assertRaises(kit_module.Stop):
+                    self.run_step(trial, "b", blocked)
+                self.assertEqual((trial.steps[-1].result, trial.steps[-1].values), (sc.BLOCKED, expected))
+
+    def test_other_step_failures_record_no_values(self):
+        with tempfile.TemporaryDirectory() as directory:
+            trial = kit_module.Trial(make_kit(directory))
+
+            def failing():
+                raise OSError("no such file")
+
+            step = self.run_step(trial, "a", failing)
+            self.assertEqual((step.result, step.values), (sc.FAIL, {}))
+
+    def test_an_escalation_keeps_its_values_unchanged(self):
+        values = {"margin": 0.1, "vectors": {"query": {"dimensions": 2560, "norm": None}}, "prefix_source": "x"}
+        with tempfile.TemporaryDirectory() as directory:
+            trial = kit_module.Trial(make_kit(directory))
+
+            def escalate():
+                raise sc.Escalation("ESCALATE: zembed canary", values)
+
+            with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(kit_module.Stop):
+                trial.step("c", escalate)
+            self.assertEqual((trial.steps[-1].result, trial.steps[-1].values), (sc.ESCALATE, values))
+            self.assertEqual(trial.steps[-1].detail, "ESCALATE: zembed canary")
+
+
 class PeerTests(unittest.TestCase):
     listen = {"owui-acc-qdrant.service": frozenset({16333, 16334})}
 

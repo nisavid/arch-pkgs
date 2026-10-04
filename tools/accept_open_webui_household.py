@@ -2636,7 +2636,8 @@ def paging_check(webui: sc.Endpoint, qdrant: Qdrant, token: str, chat_model: str
     config = webui.json("GET", sc.API["rag_config"], token=token)
     settings = {key: (config or {}).get(key) for key in PAGING_RAG_SETTINGS}
     if settings["ENABLE_RAG_HYBRID_SEARCH"] is not True:
-        raise sc.ScenarioFailure(f"hybrid search is not enabled: {json.dumps(settings, sort_keys=True)}")
+        raise sc.ScenarioFailure(f"hybrid search is not enabled: {json.dumps(settings, sort_keys=True)}",
+                                 {"rag_settings": settings})
     corpus = paging_corpus()
     values: dict[str, Any] = {
         "corpus": {"name": PAGING_CORPUS_NAME, "bytes": len(corpus), "sha256": hashlib.sha256(corpus).hexdigest(),
@@ -2688,14 +2689,14 @@ def paging_check(webui: sc.Endpoint, qdrant: Qdrant, token: str, chat_model: str
                       bm25=bm25, timings=timings)
         if not (file_points == PAGING_SECTIONS and knowledge_points == PAGING_SECTIONS
                 and retrieved["chunks"] and retrieved["planted"] and bm25["found"]):
-            raise sc.ScenarioFailure(json.dumps(values, sort_keys=True))
+            raise sc.ScenarioFailure(json.dumps(values, sort_keys=True), values)
     except BaseException:
         # Clean up on every path, but never let the cleanup hide the failure.
         _delete_paging_inputs(webui, token, file_id, knowledge_id)
         raise
     failures = _delete_paging_inputs(webui, token, file_id, knowledge_id)
     if failures:
-        raise sc.ScenarioFailure("; ".join(failures))
+        raise sc.ScenarioFailure("; ".join(failures), values)
     return Passed(f"file tenant {file_points} points; knowledge tenant {knowledge_points} points", values)
 
 
@@ -2780,7 +2781,8 @@ def hybrid_error_check(webui: sc.Endpoint, qdrant: Qdrant, token: str, chat_mode
     hybrid = (config or {}).get("ENABLE_RAG_HYBRID_SEARCH")
     health = webui.request("GET", sc.API["rag_health"], token=token).status
     if hybrid is not True or health != 200:
-        raise sc.ScenarioFailure(json.dumps({"hybrid_search": hybrid, "health_before": health}, sort_keys=True))
+        before = {"hybrid_search": hybrid, "health_before": health}
+        raise sc.ScenarioFailure(json.dumps(before, sort_keys=True), before)
     values: dict[str, Any] = {"health_before": health}
     timings: dict[str, float] = {}
     knowledge_id: str | None = None
@@ -2801,7 +2803,7 @@ def hybrid_error_check(webui: sc.Endpoint, qdrant: Qdrant, token: str, chat_mode
         timings["knowledge_add_s"] = round(time.monotonic() - started, 3)
         values.update(points={"file": file_points, "knowledge": knowledge_points}, timings=timings)
         if not file_points or knowledge_points != file_points:
-            raise sc.ScenarioFailure(json.dumps(values, sort_keys=True))
+            raise sc.ScenarioFailure(json.dumps(values, sort_keys=True), values)
         qdrant.call("PUT", f"/collections/{COLLECTIONS[1]}/points?wait=true", {"points": [{
             "id": HYBRID_FAULT_POINT,
             "vector": [1.0] + [0.0] * (QDRANT_DIMENSIONS - 1),
@@ -2819,7 +2821,7 @@ def hybrid_error_check(webui: sc.Endpoint, qdrant: Qdrant, token: str, chat_mode
         if not (fault_point["in_knowledge_tenant"] and fault_point["metadata_null"]
                 and fault_point["tenant_points_with_fault"] == knowledge_points + 1):
             # A 503 would prove nothing: hybrid search would not read this point.
-            raise sc.ScenarioFailure(json.dumps(values, sort_keys=True))
+            raise sc.ScenarioFailure(json.dumps(values, sort_keys=True), values)
         files = [{"type": "collection", "id": knowledge}]
         fault_started = time.time()
         started = time.monotonic()
@@ -2847,7 +2849,7 @@ def hybrid_error_check(webui: sc.Endpoint, qdrant: Qdrant, token: str, chat_mode
                 and values["tenant_points_after_fault_delete"] == knowledge_points
                 and recovery["status"] == 200 and recovery["sources"] and recovery["fact_in_sources"]
                 and recovery["finite_scores"] and values["health_after_recovery"] == 200):
-            raise sc.ScenarioFailure(json.dumps(values, sort_keys=True))
+            raise sc.ScenarioFailure(json.dumps(values, sort_keys=True), values)
     except BaseException:
         # Clean up on every path, but never let the cleanup hide the failure.
         _delete_hybrid_fault(webui, qdrant, token, knowledge_id, planted)
@@ -2855,7 +2857,7 @@ def hybrid_error_check(webui: sc.Endpoint, qdrant: Qdrant, token: str, chat_mode
     failures, cleanup = _delete_hybrid_fault(webui, qdrant, token, knowledge_id, planted)
     values["cleanup"] = cleanup
     if failures:
-        raise sc.ScenarioFailure("; ".join(failures))
+        raise sc.ScenarioFailure("; ".join(failures), values)
     return values
 
 
@@ -2870,7 +2872,7 @@ def one_admin(webui: sc.Endpoint, token: str) -> dict[str, Any]:
         "user_count": users.get("total") if isinstance(users, dict) else None,
     }
     if values["enable_signup"] is not False or values["admin_count"] != 1:
-        raise sc.ScenarioFailure(json.dumps(values, sort_keys=True))
+        raise sc.ScenarioFailure(json.dumps(values, sort_keys=True), values)
     return values
 
 
@@ -2900,8 +2902,22 @@ def route_checks(kit: Kit, token: str) -> dict[str, Any]:
     findings = listener_findings(listeners, unit_pids(UNITS["open-webui"]), PORTS["caddy"])
     values = {"https_status": https, "websocket_status": upgrade, "listener_findings": findings}
     if https != 200 or upgrade != 101 or findings:
-        raise sc.ScenarioFailure(json.dumps(values, sort_keys=True))
+        raise sc.ScenarioFailure(json.dumps(values, sort_keys=True), values)
     return values
+
+
+def record_check(values: dict[str, Any], key: str, check: Callable[[], dict[str, Any]]) -> None:
+    """Record a nested check's values under ``key`` in a step's values.
+
+    A failing check re-raises with its message unchanged, its own values
+    under ``key``, and every measurement the step took before it kept.
+    """
+
+    try:
+        values[key] = check()
+    except sc.ScenarioFailure as error:
+        values[key] = error.values
+        raise sc.ScenarioFailure(str(error), values) from error
 
 
 def module_origins(kit: Kit) -> dict[str, str | None]:
@@ -3109,12 +3125,27 @@ class Trial:
         except sc.Escalation as error:
             values, result, detail = dict(error.values), sc.ESCALATE, str(error)
         except sc.Blocked as error:
-            values, result, detail = {}, sc.BLOCKED, str(error)
+            values, result, detail = self.failure_values(error), sc.BLOCKED, str(error)
         except STEP_FAILURES as error:
-            values, result, detail = {}, sc.FAIL, f"{type(error).__name__}: {error}"
+            # The one trial promises every value: a failed step keeps what it
+            # measured, not only the redacted, truncated detail.
+            values, result, detail = self.failure_values(error), sc.FAIL, f"{type(error).__name__}: {error}"
         self.record(Step(step_id, result, detail, round(time.monotonic() - started, 3), values))
         if result in {sc.ESCALATE, sc.BLOCKED} or (critical and result == sc.FAIL):
             raise Stop()
+
+    def failure_values(self, error: BaseException) -> dict[str, Any]:
+        """The values a failed step's exception carries, public-safe.
+
+        The path tokens apply first, as they do to a step's detail, so a kit
+        path reads ``<root>/...`` rather than ``<path>``; then every string is
+        redacted like the detail (``sc.public_values``).
+        """
+
+        values = getattr(error, "values", None)
+        if not isinstance(values, Mapping):
+            return {}
+        return sc.public_values(publicize(dict(values), self.kit.replacements()))
 
     def scenario(self, scenario_id: str, ctx: sc.Context) -> None:
         try:
@@ -3186,7 +3217,7 @@ class Trial:
         values = {"ready_s": first["ready_s"], "alembic_head": head, "migration_errors": len(errors),
                   "qdrant_fresh": first["qdrant_fresh"]}
         if head != ALEMBIC_HEAD or errors:
-            raise sc.ScenarioFailure(json.dumps(values, sort_keys=True))
+            raise sc.ScenarioFailure(json.dumps(values, sort_keys=True), values)
         return values
 
     def profile_persisted(self) -> dict[str, Any]:
@@ -3203,7 +3234,7 @@ class Trial:
         overlay = sc.parse_env_file(kit.path("etc", "acceptance.env").read_text(encoding="utf-8"))
         values = profile_persistence(profile, overlay, config_rows(kit))
         if values["absent"] or values["mismatched"] or values["unclassified"]:
-            raise sc.ScenarioFailure(json.dumps(values, sort_keys=True))
+            raise sc.ScenarioFailure(json.dumps(values, sort_keys=True), values)
         return values
 
     def commission(self) -> dict[str, Any]:
@@ -3242,7 +3273,7 @@ class Trial:
         elapsed = round(time.monotonic() - started, 3)
         values = {"restart_to_ready_s": elapsed, "ceiling_s": LIMITS["restart_s"]}
         if elapsed > LIMITS["restart_s"]:
-            raise sc.ScenarioFailure(json.dumps(values, sort_keys=True))
+            raise sc.ScenarioFailure(json.dumps(values, sort_keys=True), values)
         return values
 
     def g4(self) -> dict[str, Any]:
@@ -3283,7 +3314,7 @@ class Trial:
             values["version"] == QDRANT_VERSION and values["fresh_state"] and good_shape and roles == ["prw"]
             and not holds_admin and set(probes.values()) == {403}
         ):
-            raise sc.ScenarioFailure(json.dumps(values, sort_keys=True))
+            raise sc.ScenarioFailure(json.dumps(values, sort_keys=True), values)
         return values
 
     def no_stored_secret(self) -> dict[str, Any]:
@@ -3310,7 +3341,7 @@ class Trial:
             values["stub_requests_with_credential"] = sum(1 for event in events if event.get("authorization_credential"))
         expected = sorted(OPEN_WEBUI_SECRETS + ("session-epoch",))
         if credentials != expected or findings or values.get("stub_requests_with_credential"):
-            raise sc.ScenarioFailure(json.dumps(values, sort_keys=True))
+            raise sc.ScenarioFailure(json.dumps(values, sort_keys=True), values)
         return values
 
     def reranker_down(self) -> dict[str, Any]:
@@ -3339,7 +3370,7 @@ class Trial:
         }
         if not (chat_status == 200 and retrieval.status == 503 and file_status == 503 and health == 503
                 and values["fixed_detail"] and sources["count"] == 0):
-            raise sc.ScenarioFailure(json.dumps(values, sort_keys=True))
+            raise sc.ScenarioFailure(json.dumps(values, sort_keys=True), values)
         return values
 
     def rag_health(self) -> int:
@@ -3350,14 +3381,14 @@ class Trial:
 
         before = self.rag_health()
         if before != 503:
-            raise sc.ScenarioFailure(json.dumps({"health_before": before}))
+            raise sc.ScenarioFailure(json.dumps({"health_before": before}), {"health_before": before})
         uds = self.kit.uds()
         chats = {name: refusal_record(post_chat(uds, self.token, self.chat_id(), files))
                  for name, files in full_context_files(self.seed_file).items()}
         after = self.rag_health()
         values = {"health_before": before, "health_after": after, "chats": chats}
         if after != 503 or not all(refused(record) for record in chats.values()):
-            raise sc.ScenarioFailure(json.dumps(values, sort_keys=True))
+            raise sc.ScenarioFailure(json.dumps(values, sort_keys=True), values)
         return values
 
     def native_tools(self) -> dict[str, Any]:
@@ -3365,7 +3396,7 @@ class Trial:
 
         before = self.rag_health()
         if before != 503:
-            raise sc.ScenarioFailure(json.dumps({"health_before": before}))
+            raise sc.ScenarioFailure(json.dumps({"health_before": before}), {"health_before": before})
         chat = native_knowledge_chat(self.kit.uds(), self.token, self.chat_id(), self.seed_file,
                                      NATIVE_KNOWLEDGE_TOOLS)
         after = self.rag_health()
@@ -3382,9 +3413,9 @@ class Trial:
                                  for attempt in chat["attempts"]),
         }
         if not knowledge:
-            raise sc.ScenarioFailure("no knowledge tool call observed: " + json.dumps(values, sort_keys=True))
+            raise sc.ScenarioFailure("no knowledge tool call observed: " + json.dumps(values, sort_keys=True), values)
         if after != 503 or not all(gate_tool_error(text) for text in knowledge) or values["handbook_text"]:
-            raise sc.ScenarioFailure(json.dumps(values, sort_keys=True))
+            raise sc.ScenarioFailure(json.dumps(values, sort_keys=True), values)
         return values
 
     def explicit_reads(self) -> dict[str, Any]:
@@ -3392,7 +3423,7 @@ class Trial:
 
         health = self.rag_health()
         if health != 200:
-            raise sc.ScenarioFailure(json.dumps({"health": health}))
+            raise sc.ScenarioFailure(json.dumps({"health": health}), {"health": health})
         uds = self.kit.uds()
         replies = {name: post_chat(uds, self.token, self.chat_id(), files)
                    for name, files in full_context_files(self.seed_file).items()}
@@ -3412,10 +3443,11 @@ class Trial:
             "view_knowledge_file_holds_fact": any(sc.CANONICAL_FACT in text for text in views),
         }
         if not views:
-            raise sc.ScenarioFailure("no view_knowledge_file call observed: " + json.dumps(values, sort_keys=True))
+            raise sc.ScenarioFailure("no view_knowledge_file call observed: " + json.dumps(values, sort_keys=True),
+                                     values)
         if not (all(item["status"] == 200 and item["fact_in_sources"] for item in values["chats"].values())
                 and values["view_knowledge_file_holds_fact"]):
-            raise sc.ScenarioFailure(json.dumps(values, sort_keys=True))
+            raise sc.ScenarioFailure(json.dumps(values, sort_keys=True), values)
         return values
 
     def recovery(self) -> dict[str, Any]:
@@ -3429,7 +3461,7 @@ class Trial:
         values = {"latched_status": latched, "health_after_resave": health, "cited_fact": cited,
                   "cited_chat": {key: check[key] for key in ("status", "detail", "fact_present", "sources")}}
         if latched != 503 or health != 200 or not cited:
-            raise sc.ScenarioFailure(json.dumps(values, sort_keys=True))
+            raise sc.ScenarioFailure(json.dumps(values, sort_keys=True), values)
         return values
 
     def privacy(self) -> dict[str, Any]:
@@ -3472,7 +3504,7 @@ class Trial:
         }
         if (violations or telemetry != dict(sc.TELEMETRY_EXPECTED) or not samples
                 or any(value for value in haystack.values())):
-            raise sc.ScenarioFailure(json.dumps(values, sort_keys=True))
+            raise sc.ScenarioFailure(json.dumps(values, sort_keys=True), values)
         return values
 
     def restore_drill(self) -> dict[str, Any]:
@@ -3527,7 +3559,7 @@ class Trial:
         elapsed = round(time.monotonic() - started, 3)
         checks = a_d3_checks(kit, self.anchor, restored, qdrant, self.pre_backup_session)
         start_caddy(kit)
-        values = {
+        values: dict[str, Any] = {
             "restore_s": elapsed,
             "ceiling_s": LIMITS["restore_s"],
             "phases_s": clock.phases,
@@ -3536,14 +3568,14 @@ class Trial:
             "reserved_epoch_above_bound": epoch > self.anchor["epoch_bound"],
             "pre_restore_divergence": pre_restore,
             "a_d3": checks,
-            "route": route_checks(kit, self.token),
-            "one_admin": one_admin(kit.caddy(), self.token),
         }
+        record_check(values, "route", lambda: route_checks(kit, self.token))
+        record_check(values, "one_admin", lambda: one_admin(kit.caddy(), self.token))
         # A ceiling overrun is recorded as this drill's FAIL; the trial still
         # runs the rollback drill (the step is not critical).
         if (not cited or elapsed > LIMITS["restore_s"] or not checks["passes"]
                 or not all(pre_restore.values())):
-            raise sc.ScenarioFailure(json.dumps(values, sort_keys=True))
+            raise sc.ScenarioFailure(json.dumps(values, sort_keys=True), values)
         return values
 
     def rollback_drill(self) -> dict[str, Any]:
@@ -3588,7 +3620,7 @@ class Trial:
         start_caddy(kit)
         legacy_after = legacy_service_state()
         port_8080 = acceptance_listeners_on(8080, kit)
-        values = {
+        values: dict[str, Any] = {
             "state_restore_s": state_elapsed,
             "ceiling_s": LIMITS["rollback_state_s"],
             "phases_s": clock.phases,
@@ -3599,15 +3631,15 @@ class Trial:
             "cited_chat": {key: check[key] for key in ("status", "detail", "fact_present", "sources")},
             "reserved_epoch_above_bound": epoch > self.anchor["epoch_bound"],
             "a_d3": checks,
-            "route": route_checks(kit, self.token),
-            "one_admin": one_admin(kit.caddy(), self.token),
             "legacy_service": {"before": legacy_before, "after": legacy_after},
             "legacy_service_touched": legacy_before != legacy_after,
             "acceptance_listener_on_8080": port_8080,
         }
+        record_check(values, "route", lambda: route_checks(kit, self.token))
+        record_check(values, "one_admin", lambda: one_admin(kit.caddy(), self.token))
         if (not cited or state_elapsed > LIMITS["rollback_state_s"] or not checks["passes"]
                 or values["legacy_service_touched"] or port_8080):
-            raise sc.ScenarioFailure(json.dumps(values, sort_keys=True))
+            raise sc.ScenarioFailure(json.dumps(values, sort_keys=True), values)
         return values
 
     def qdrant_paging(self) -> Passed:
@@ -3634,8 +3666,10 @@ class Trial:
             "cache_inventory": trial_cache_record(kit),
         }
         if not gates["passes"]:
+            # The message names the gates; the values keep every measurement,
+            # the cache inventory included.
             raise sc.ScenarioFailure(json.dumps({"oom_kills": gates["oom_kills"],
-                                                 "unplanned_restarts": gates["unplanned_restarts"]}))
+                                                 "unplanned_restarts": gates["unplanned_restarts"]}), values)
         return values
 
     # The run -------------------------------------------------------------------

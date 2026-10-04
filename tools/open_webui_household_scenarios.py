@@ -281,7 +281,16 @@ class Blocked(RuntimeError):
 
 
 class ScenarioFailure(RuntimeError):
-    """The scenario ran and its pass condition does not hold."""
+    """The scenario ran and its pass condition does not hold.
+
+    ``values`` carries what the check measured before it failed, so the
+    failed row keeps its structured values; the message alone is redacted
+    and truncated on its way to receipts and evidence.
+    """
+
+    def __init__(self, message: str, values: Mapping[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.values: dict[str, Any] = dict(values or {})
 
 
 class Escalation(RuntimeError):
@@ -959,6 +968,42 @@ def public_detail(text: str, limit: int = ERROR_DETAIL_LIMIT) -> str:
     return line if len(line) <= limit else line[: limit - 1] + "…"
 
 
+def public_values(value: Any, limit: int = RESULT_DETAIL_LIMIT) -> Any:
+    """A failure's measured values, JSON-safe and public-safe for receipts and evidence.
+
+    Every string goes through ``public_detail``, dict keys included (a
+    non-string key as its text); a non-finite float is recorded as None, as
+    ``_finite`` records one; tuples and sets become lists, and any other
+    object its redacted text.  ``assert_public_safe`` still checks every
+    receipt after this.
+    """
+
+    if value is None or isinstance(value, (bool, int)):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, str):
+        return public_detail(value, limit)
+    if isinstance(value, Mapping):
+        return {
+            # JSON keys are strings, so any other key is recorded as its text.
+            public_detail(key if isinstance(key, str) else str(key), limit): public_values(item, limit)
+            for key, item in value.items()
+        }
+    if isinstance(value, (list, tuple)):
+        return [public_values(item, limit) for item in value]
+    if isinstance(value, (set, frozenset)):
+        return sorted((public_values(item, limit) for item in value), key=repr)
+    return public_detail(str(value), limit)
+
+
+def failure_values(error: BaseException) -> dict[str, Any]:
+    """The structured values a failure carries (``ScenarioFailure.values``), public-safe; else empty."""
+
+    values = getattr(error, "values", None)
+    return public_values(dict(values)) if isinstance(values, Mapping) else {}
+
+
 def response_detail(response: Response) -> str | None:
     """The error detail a response carries: its JSON ``detail`` (or ``error``), else its text, public-safe."""
 
@@ -1297,9 +1342,10 @@ def zerank_qualification(ctx: Context) -> dict[str, Any]:
     scores = validate_rerank_results(
         response.get("results") if isinstance(response, dict) else None, len(documents)
     )
+    values = {"health": "qualified", "scores": [round(score, 6) for score in scores]}
     if scores[0] <= max(scores[1:]):
-        raise ScenarioFailure("the relevant document was not ranked first")
-    return {"health": "qualified", "scores": [round(score, 6) for score in scores]}
+        raise ScenarioFailure("the relevant document was not ranked first", values)
+    return values
 
 
 def file_processing_error(webui: Endpoint, token: str, file_id: str) -> str:
@@ -1379,14 +1425,14 @@ def cited_answer(ctx: Context) -> dict[str, Any]:
             "fact_present": CANONICAL_FACT in text,
         }
         if not cited_answer_passes(text, summary, HANDBOOK_NAME):
-            raise ScenarioFailure(json.dumps(values, sort_keys=True, ensure_ascii=False))
+            raise ScenarioFailure(json.dumps(values, sort_keys=True, ensure_ascii=False), values)
     except BaseException:
         # Clean up on every path, but never let the cleanup hide the failure.
         _delete_file(ctx, file_id)
         raise
     deleted = _delete_file(ctx, file_id)
     if deleted != 200:
-        raise ScenarioFailure(f"the handbook delete returned {deleted}; the uploaded file remains")
+        raise ScenarioFailure(f"the handbook delete returned {deleted}; the uploaded file remains", values)
     return values
 
 
@@ -1447,9 +1493,9 @@ def stt(ctx: Context) -> dict[str, Any]:
         "whisper": {"model": ctx.whisper_model, **whisper_pin_record(ctx.whisper_model)},
     }
     if not transcription_passes(text, language):
-        raise ScenarioFailure(f"transcription did not match: {normalize_words(text)[:120]}")
+        raise ScenarioFailure(f"transcription did not match: {normalize_words(text)[:120]}", values)
     if ctx.journal is not None and "WhisperModel initialization failed" in ctx.journal():
-        raise ScenarioFailure("the journal shows a Whisper model load failure")
+        raise ScenarioFailure("the journal shows a Whisper model load failure", values)
     return values
 
 
@@ -1480,9 +1526,10 @@ def run_scenario(ctx: Context, scenario_id: str) -> ScenarioResult:
         # The lead decides on the values the canary computed, so keep them.
         values, result, detail = dict(error.values), ESCALATE, str(error)
     except Blocked as error:
-        values, result, detail = {}, BLOCKED, str(error)
+        values, result, detail = failure_values(error), BLOCKED, str(error)
     except SCENARIO_FAILURES as error:
-        values, result, detail = {}, FAIL, f"{type(error).__name__}: {error}"
+        # A failed check keeps what it measured; the detail alone is redacted text.
+        values, result, detail = failure_values(error), FAIL, f"{type(error).__name__}: {error}"
     # An exception's text can carry whatever a server returned; the detail
     # goes into receipts and evidence, so it is redacted here, once.
     if result != PASS:
