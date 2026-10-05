@@ -955,9 +955,10 @@ _CREDENTIAL_HEADER = re.compile(
     r"\b[\"']?\s*[:=].*"
 )
 _CREDENTIAL_ASSIGNMENT = re.compile(
-    r"(?i)\b(?:password|passwd|secret|client[_-]?secret|token|key|api[_-]?key|access[_-]?key|session(?:id)?|sid)"
-    r"[\"']?\s*[=:].*"
+    r"(?i)\b(?P<word>password|passwd|secret|client[_-]?secret|token|key|api[_-]?key|access[_-]?key|session(?:id)?|sid)"
+    r"[\"']?\s*[=:]"
 )
+_NAME_PREFIX = re.compile(r"[\w.\-]*$")
 # An HTTP auth scheme with its credential, wherever it appears in a line.
 _AUTH_SCHEME = re.compile(r"(?i)\b(?:bearer|basic|digest|negotiate|ntlm|hoba|mutual|token)\s+\S+.*")
 _KEY_MATERIAL = re.compile(r"-----BEGIN [A-Z0-9 ]+-----.*?(?:-----END [A-Z0-9 ]+-----|\Z)", re.DOTALL)
@@ -979,82 +980,153 @@ def _redact_credential_lines(text: str) -> str:
     text = _KEY_MATERIAL.sub("<redacted key material>", text)
     lines = []
     for line in text.splitlines():
-        for pattern in (_CREDENTIAL_HEADER, _CREDENTIAL_ASSIGNMENT, _AUTH_SCHEME):
-            line = pattern.sub("<redacted credential>", line)
-        lines.append(line)
+        line = _CREDENTIAL_HEADER.sub("<redacted credential>", line)
+        line = _redact_assignment(line)
+        lines.append(_AUTH_SCHEME.sub("<redacted credential>", line))
     return "\n".join(lines)
+
+
+def _redact_assignment(line: str) -> str:
+    """The line up to its first credential assignment, then a marker; an exempt name is kept."""
+
+    for match in _CREDENTIAL_ASSIGNMENT.finditer(line):
+        prefix = _NAME_PREFIX.search(line[: match.start()])
+        name = (prefix.group(0) if prefix else "") + match.group("word")
+        if exempt_field(name):
+            continue
+        if _FLAG_VALUE.match(line, match.end()) and not v1._contains_secret_field({name: None}):
+            continue  # a flag, not a credential (see ``credential_entry``)
+        return line[: match.start()] + "<redacted credential>"
+    return line
 
 
 def public_detail(text: str, limit: int = ERROR_DETAIL_LIMIT) -> str:
     """One line of error text, bounded and redacted for public evidence and receipts.
 
-    Credential material goes first and whole: header values, auth-scheme
-    tokens, cookies, and secret assignments, each to the end of its line.
-    Anything the public-safety check would still refuse as credential
-    material cuts the text there, so a marker is never removed while its
-    value stays; ``assert_public_safe`` still checks every receipt after this.
+    Text that is wholly one JSON object or list, as ``response_detail``
+    serializes a structured upstream error, is redacted structurally first
+    (``public_values``: credential-named fields renamed, their values
+    redacted).  Then credential material goes first and whole: header
+    values, auth-scheme tokens, cookies, and secret assignments, each to the
+    end of its line.  Anything the kit backstop would still refuse as
+    credential material (v1's guards and the quote-tolerant credential
+    assignment, ``first_secret_assignment``) cuts the text there, so a
+    marker is never removed while its value stays; ``assert_kit_public_safe``
+    still checks every receipt after this.
     """
 
-    line = " ".join(_redact_credential_lines(text).split())
+    line = " ".join(_redact_credential_lines(_redact_json_text(text)).split())
     for pattern, token in _DETAIL_REDACTIONS:
         line = pattern.sub(token, line)
-    for guard in (v1._AUTHENTICATION_MATERIAL, v1._SECRET_ASSIGNMENT, _PLURAL_SECRET_ASSIGNMENT):
+    for guard in (v1._AUTHENTICATION_MATERIAL, v1._SECRET_ASSIGNMENT):
         found = guard.search(line)
         if found:
             line = line[: found.start()] + "<redacted credential>"
+    start = first_secret_assignment(line)
+    if start is not None:
+        line = line[:start] + "<redacted credential>"
     line = line.strip()
     return line if len(line) <= limit else line[: limit - 1] + "…"
+
+
+def _redact_json_text(text: str) -> str:
+    """Text that is wholly one JSON object or list, with its credential fields redacted; else unchanged.
+
+    Only whole-text JSON is parsed: embedded JSON in prose is left to the
+    quote-tolerant text rule, which needs no parse to cut at a credential.
+    """
+
+    stripped = text.strip()
+    if stripped[:1] not in ("{", "["):
+        return text
+    try:
+        parsed = json.loads(stripped)
+    except ValueError:
+        return text
+    if not isinstance(parsed, (dict, list)):
+        return text
+    return json.dumps(public_values(parsed), sort_keys=True, ensure_ascii=False)
 
 
 # The kit's one widened public-safety rule.  ``v1.assert_public_safe``
 # stays the measurement tool's own check, byte-identical because dated
 # envelope evidence binds that file by digest; the kit's receipts and
 # evidence go through ``assert_kit_public_safe``, which runs it first and
-# then these rules, and the failure-value redaction (``public_values``)
-# uses the same field rule, so the redaction and the backstop agree.
+# then these rules.  The failure-value redaction (``public_values``), the
+# detail redaction (``public_detail``), and the backstop share them.
 #
-# A credential field name, normalized to lower case with ``-`` and spaces
-# as ``_``: the v1 rule (``_contains_secret_field``: api_key,
-# authorization, bearer, cookie, password, secret, set_cookie, token, and
-# the *_password, *_secret, *_api_key, and *_token suffixes, except
-# selected_token) plus the names below, each whole or after any
-# ``<prefix>_``:
-# - the other names this module's credential-line redaction treats as
-#   secrets: passwd, apikey, access_key, private_key, client_secret,
-#   proxy_authorization, session, session_id, sid;
-# - plural forms, such as Open WebUI's OPENAI_API_KEYS-style lists:
-#   api_keys, apikeys, access_keys, private_keys, secret_keys, tokens,
-#   secrets, passwords, cookies, and keys as a whole name;
-# - common credential names: access_key_id (aws_access_key_id),
-#   auth_config (docker_auth_config), auth_sock (ssh_auth_sock), and
-#   credentials, plus credential as a whole name.
-# A bare ``*_keys`` suffix and a ``*_credential`` suffix are not matched:
-# the kit records environment key names under ``env_keys`` and a request
-# count under ``stub_requests_with_credential``.
-_SECRET_FIELD_PATTERN = re.compile(
-    r"(?:\w+_)?(?:passwd|apikeys?|access_keys?|private_keys?|client_secret|proxy_authorization|session|session_?id"
-    r"|sid|api_keys|secret_keys|tokens|secrets|passwords|cookies|access_key_id|auth_config|auth_sock"
-    r"|credentials)"
-    r"|keys|credential"
+# Field names.  ``field_segments`` normalizes a name the same way for
+# every spelling: camelCase boundaries split, lower-cased, and split on
+# every non-alphanumeric separator (``.``, ``-``, ``_``, space, ``/``,
+# ``:``), so ``openai.api_keys``, ``OPENAI_API_KEYS``, ``openai-api-keys``,
+# and ``openaiApiKeys`` all end in the segments ``api``, ``keys``.  A name
+# is credential-valued when the last one, two, or three segments, joined
+# with ``_``, are one of ``_SECRET_TERMS``, or when the whole name is one
+# of ``_WHOLE_NAME_TERMS`` (``keys`` and ``credential`` alone: as suffixes
+# they name the kit's measurements, ``env_keys`` and
+# ``stub_requests_with_credential``); v1's own field rule is kept as well.
+_SECRET_TERMS = frozenset({
+    # v1's names and suffixes.
+    "api_key", "authorization", "bearer", "cookie", "password", "secret", "token",
+    # Plural forms, such as Open WebUI's OPENAI_API_KEYS lists.
+    "api_keys", "cookies", "passwords", "secrets", "tokens",
+    # The other names this module's credential-line redaction treats as secrets.
+    "passwd", "apikey", "apikeys", "access_key", "access_keys", "private_key", "private_keys",
+    "secret_key", "secret_keys", "session", "session_id", "sessionid", "sid",
+    # Common credential names.
+    "access_key_id", "auth_config", "auth_sock", "credentials",
+})
+_WHOLE_NAME_TERMS = frozenset({"keys", "credential"})
+# Measurement names that only look credential-named, exempt under every
+# spelling and after any prefix.
+_NOT_SECRET_FIELDS = (
+    "env_keys", "stub_requests_with_credential", "runtime_credentials", "selected_token", "token_count",
+    "nonempty_key_fields", "credential_route", "redacted_credential_field",
+    # OpenAI-style token counts and limits, as chat usage and requests carry them.
+    "max_tokens", "prompt_tokens", "completion_tokens", "total_tokens", "input_tokens", "output_tokens",
 )
-# Measurement keys that only look credential-named: ``runtime_credentials``
-# lists the names of the credentials a unit loads, never their values.
-_NOT_SECRET_FIELDS = frozenset({"selected_token", "runtime_credentials"})
-# The plural assignments v1's ``_SECRET_ASSIGNMENT`` (singular only) misses,
-# such as ``tokens=…`` or ``api_keys: …`` in text.
-_PLURAL_SECRET_ASSIGNMENT = re.compile(r"(?i)\b(?:tokens|passwords|secrets|api[_-]?keys)\s*[=:]\s*[^\s,;]+")
-REDACTED_FIELD = "redacted_credential_field"
-REDACTED_VALUE = "<redacted credential>"
+# Terms that also read as plain nouns: a bare ``credentials: …`` in prose,
+# as the kit's own trial condition reads, is not an assignment.  Quoted
+# (``"credentials": …``) or with ``=``, they still are.
+_DESCRIPTIVE_TERMS = frozenset({"credential", "credentials", "keys", "session", "sid"})
+_CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
+_FIELD_SEPARATOR = re.compile(r"[^0-9a-z]+")
+
+
+def field_segments(name: str) -> tuple[str, ...]:
+    """A field name's lower-case segments, split at separators and camelCase boundaries."""
+
+    return tuple(part for part in _FIELD_SEPARATOR.split(_CAMEL_BOUNDARY.sub("_", name).lower()) if part)
+
+
+_EXEMPT_SEGMENTS = tuple(field_segments(name) for name in _NOT_SECRET_FIELDS)
+
+
+def exempt_field(name: str) -> bool:
+    """Whether a field name ends in an exempt measurement name, under any spelling."""
+
+    segments = field_segments(name)
+    return any(len(segments) >= len(exempt) and segments[-len(exempt):] == exempt for exempt in _EXEMPT_SEGMENTS)
+
+
+def credential_term(name: str) -> str | None:
+    """The credential term a field name ends in, or None (exempt names included)."""
+
+    segments = field_segments(name)
+    if not segments or exempt_field(name):
+        return None
+    for size in (3, 2, 1):
+        if len(segments) >= size and "_".join(segments[-size:]) in _SECRET_TERMS:
+            return "_".join(segments[-size:])
+    whole = "_".join(segments)
+    return whole if whole in _WHOLE_NAME_TERMS else None
 
 
 def secret_field_name(key: Any) -> bool:
     """Whether a mapping key names a credential-valued field (the kit's widened rule)."""
 
     text = key if isinstance(key, str) else str(key)
-    normalized = text.strip().lower().replace("-", "_").replace(" ", "_")
-    if normalized in _NOT_SECRET_FIELDS:
-        return False
-    return v1._contains_secret_field({text: None}) or bool(_SECRET_FIELD_PATTERN.fullmatch(normalized))
+    return credential_term(text) is not None or v1._contains_secret_field({text: None})
 
 
 def credential_field(key: Any) -> bool:
@@ -1063,26 +1135,96 @@ def credential_field(key: Any) -> bool:
     return isinstance(key, str) and secret_field_name(key)
 
 
-def _contains_widened_secret_field(value: Any) -> bool:
+def credential_entry(key: Any, value: Any) -> bool:
+    """Whether a mapping entry holds credential material.
+
+    v1's own field rule rejects a name whatever its value, so it always
+    counts.  The widened rule counts a credential-named field unless its
+    value is a boolean or null: a flag such as Qdrant browser evidence's
+    ``browserCredential.adminSecret: false`` records whether a credential
+    exists and cannot hold one.
+    """
+
+    text = key if isinstance(key, str) else str(key)
+    if v1._contains_secret_field({text: None}):
+        return True
+    return credential_term(text) is not None and not isinstance(value, (bool, type(None)))
+
+
+# Text.  One quote-tolerant assignment: an optional opening quote (JSON
+# escaped or not), a name that may be dotted or dashed, an optional closing
+# quote, optional whitespace, ``:`` or ``=``, then optional whitespace and
+# a value: a quoted string, a bare token, or the start of a JSON list or
+# object.  The value is a lookahead, so a non-credential name never
+# consumes a credential assignment that follows it.  It is a credential
+# assignment when the name is a credential field name, except a bare
+# ``<descriptive noun>: …`` (see ``_DESCRIPTIVE_TERMS``).
+_ASSIGNMENT = re.compile(
+    r"""(?<![\w.\-])(?P<open>\\?["'])?(?P<name>[A-Za-z][\w.\-]*?)(?P<close>\\?["'])?\s*(?P<sep>[:=])"""
+    r"""(?=\s*(?:\\?["']|[\[{]|[^\s,;]))"""
+)
+
+
+# A boolean or null after the separator: a flag, not a credential (see
+# ``credential_entry``).
+_FLAG_VALUE = re.compile(r"""\s*(?P<quote>\\?["']?)(?i:true|false|null|none)(?P=quote)(?=\s*(?:[,;}\])]|$))""")
+
+
+def first_secret_assignment(text: str) -> int | None:
+    """Where the first credential assignment in ``text`` starts, or None."""
+
+    for match in _ASSIGNMENT.finditer(text):
+        name = match.group("name")
+        term = credential_term(name)
+        if term is None and not v1._contains_secret_field({name: None}):
+            continue
+        if term is not None and not v1._contains_secret_field({name: None}) \
+                and _FLAG_VALUE.match(text, match.end()):
+            continue
+        bare_colon = match.group("sep") == ":" and not (match.group("open") or match.group("close"))
+        if bare_colon and term in _DESCRIPTIVE_TERMS:
+            continue
+        return match.start()
+    return None
+
+
+REDACTED_FIELD = "redacted_credential_field"
+REDACTED_VALUE = "<redacted credential>"
+
+
+def _first_secret(value: Any) -> str | None:
+    """The first reason ``value`` holds credential material by the widened rules, or None."""
+
+    if isinstance(value, str):
+        return "public evidence contains secret-like material" if first_secret_assignment(value) is not None else None
     if isinstance(value, Mapping):
-        return any(secret_field_name(key) or _contains_widened_secret_field(item) for key, item in value.items())
-    if isinstance(value, (list, tuple)):
-        return any(_contains_widened_secret_field(item) for item in value)
-    return False
+        for key, item in value.items():
+            if credential_entry(key, item):
+                return "public evidence contains a secret-valued field"
+            found = _first_secret(key) if isinstance(key, str) else None
+            found = found or _first_secret(item)
+            if found:
+                return found
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            found = _first_secret(item)
+            if found:
+                return found
+    return None
 
 
 def assert_kit_public_safe(value: Any) -> None:
     """The kit's receipt and evidence backstop: ``v1.assert_public_safe``, then the widened rules.
 
-    Raises ``ValueError`` for a credential-named field, plural and compound
-    forms included, and for a plural secret assignment in any text.
+    Raises ``ValueError`` for a credential-named field under any spelling,
+    and for a credential assignment in any string, quoted or JSON-serialized
+    names included.
     """
 
     v1.assert_public_safe(value)
-    if _contains_widened_secret_field(value):
-        raise ValueError("public evidence contains a secret-valued field")
-    if _PLURAL_SECRET_ASSIGNMENT.search(json.dumps(value, sort_keys=True)):
-        raise ValueError("public evidence contains secret-like material")
+    found = _first_secret(value)
+    if found:
+        raise ValueError(found)
 
 
 def redacted_value(value: Any) -> Any:
@@ -1121,7 +1263,7 @@ def public_values(value: Any, limit: int = RESULT_DETAIL_LIMIT) -> Any:
         for key, item in value.items():
             # JSON keys are strings, so any other key is recorded as its text.
             name = public_detail(key if isinstance(key, str) else str(key), limit)
-            if credential_field(key) or credential_field(name):
+            if credential_entry(key, item) or credential_entry(name, item):
                 redacted += 1
                 name = REDACTED_FIELD if redacted == 1 else f"{REDACTED_FIELD}_{redacted}"
                 while name in value or name in public:

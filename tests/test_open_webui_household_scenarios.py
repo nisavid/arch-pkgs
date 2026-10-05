@@ -1432,6 +1432,189 @@ class KitBackstopTests(unittest.TestCase):
             scenarios.write_receipt(Path(directory) / "receipt.json", {"tokens": [self.SECRET]})
 
 
+def spellings(*segments):
+    """One field name in each separator style: snake, dotted, dashed, camelCase, and upper case."""
+
+    words = list(segments)
+    return {
+        "snake": "_".join(words),
+        "dotted": ".".join(words),
+        "dashed": "-".join(words),
+        "camel": words[0] + "".join(word.capitalize() for word in words[1:]),
+        "upper": "_".join(words).upper(),
+    }
+
+
+def nestings(document):
+    """``document`` at the top level, in a list, in a list-held dict, and in a dict-held dict."""
+
+    return {
+        "top": document,
+        "list": [document],
+        "list-held dict": {"outer": [document]},
+        "dict-held dict": {"outer": {"inner": document}},
+    }
+
+
+class CredentialSpellingGridTests(unittest.TestCase):
+    """Every credential spelling is redacted and rejected; every exemption spelling passes."""
+
+    SECRET = "s3cretV4LUE"
+    # Singular and plural credential names, each with and without a prefix.
+    CREDENTIALS = (
+        ("api", "key"), ("api", "keys"), ("openai", "api", "keys"), ("rag", "openai", "api", "key"),
+        ("token",), ("tokens",), ("session", "tokens"), ("password",), ("passwords",), ("admin", "password"),
+        ("secret",), ("secrets",), ("client", "secret"), ("aws", "access", "key", "id"), ("docker", "auth", "config"),
+        ("cookies",), ("private", "keys"),
+    )
+    EXEMPT = {
+        ("env", "keys"): ["HAYSTACK_TELEMETRY_ENABLED"], ("stub", "requests", "with", "credential"): 0,
+        ("runtime", "credentials"): ["openai-api-key"], ("selected", "token"): 3, ("token", "count"): 512,
+        ("nonempty", "key", "fields"): [], ("credential", "route"): "systemd-creds",
+        ("redacted", "credential", "field"): ["<redacted credential>"], ("total", "tokens"): 9,
+    }
+    TEXT_FORMS = {
+        "bare =": "{name}={value}",
+        "bare = spaced": "{name} = {value}",
+        "bare :": "{name}:{value}",
+        "bare : spaced": "{name}: {value}",
+        "JSON string": '"{name}": "{value}"',
+        "JSON string tight": '"{name}":"{value}"',
+        "JSON list": '"{name}": ["{value}"]',
+        "JSON object": '"{name}": {{"v": "{value}"}}',
+        "single-quoted": "'{name}': '{value}'",
+    }
+
+    def assert_redacted_and_rejected(self, document):
+        with self.assertRaises(ValueError):
+            scenarios.assert_kit_public_safe(document)
+        public = scenarios.public_values(document)
+        self.assertNotIn(self.SECRET, json.dumps(public))
+        scenarios.assert_kit_public_safe(public)
+
+    def test_codex_examples(self):
+        # r4181135457: a dotted plural field name.
+        secret = self.SECRET
+        with self.assertRaises(ValueError):
+            scenarios.assert_kit_public_safe({"openai.api_keys": [secret]})
+        self.assertEqual(scenarios.public_values({"openai.api_keys": [secret]}),
+                         {"redacted_credential_field": ["<redacted credential>"]})
+        # r4181135461: a structured upstream error serialized before redaction.
+        for body in ({"detail": {"api_keys": ["s3cret"]}}, {"error": {"tokens": ["s3cret"]}}):
+            with self.subTest(body=body):
+                detail = scenarios.response_detail(
+                    scenarios.Response(400, "application/json", json.dumps(body).encode()))
+                self.assertNotIn("s3cret", detail)
+                scenarios.assert_kit_public_safe({"detail": detail})
+        for text in ('upstream 400: {"api_keys": ["s3cret"]}', 'upstream 400: {"tokens": ["s3cret", "t2"]}'):
+            with self.subTest(text=text):
+                with self.assertRaises(ValueError):
+                    scenarios.assert_kit_public_safe({"detail": text})
+                detail = scenarios.public_detail(text)
+                self.assertNotIn("s3cret", detail)
+                scenarios.assert_kit_public_safe({"detail": detail})
+
+    def test_every_credential_field_spelling_and_nesting_is_redacted_and_rejected(self):
+        for segments in self.CREDENTIALS:
+            for style, name in spellings(*segments).items():
+                for value in ([self.SECRET], self.SECRET):
+                    for where, document in nestings({name: value, "kept": 1}).items():
+                        with self.subTest(name=name, style=style, value=value, where=where):
+                            self.assert_redacted_and_rejected(document)
+
+    def test_every_credential_text_form_is_redacted_and_rejected(self):
+        for segments in self.CREDENTIALS:
+            for style, name in spellings(*segments).items():
+                for form, template in self.TEXT_FORMS.items():
+                    text = "upstream error: " + template.format(name=name, value=self.SECRET)
+                    with self.subTest(name=name, style=style, form=form):
+                        detail = scenarios.public_detail(text, scenarios.RESULT_DETAIL_LIMIT)
+                        self.assertNotIn(self.SECRET, detail)
+                        self.assertTrue(detail.startswith("upstream error:"))
+                        scenarios.assert_kit_public_safe({"detail": detail})
+                        for where, document in nestings({"detail": text}).items():
+                            with self.subTest(where=where), self.assertRaises(ValueError):
+                                scenarios.assert_kit_public_safe(document)
+
+    def test_whole_json_text_is_redacted_structurally(self):
+        for segments in self.CREDENTIALS:
+            for style, name in spellings(*segments).items():
+                text = json.dumps({"status": 400, "outer": [{name: [self.SECRET]}]})
+                with self.subTest(name=name, style=style):
+                    detail = scenarios.public_detail(text, scenarios.RESULT_DETAIL_LIMIT)
+                    self.assertEqual(json.loads(detail), {
+                        "outer": [{"redacted_credential_field": ["<redacted credential>"]}], "status": 400})
+                    scenarios.assert_kit_public_safe({"detail": detail})
+
+    def test_every_exemption_spelling_passes(self):
+        for segments, value in self.EXEMPT.items():
+            for style, name in spellings(*segments).items():
+                with self.subTest(name=name, style=style):
+                    for where, document in nestings({name: value}).items():
+                        with self.subTest(where=where):
+                            scenarios.assert_kit_public_safe(document)
+                            self.assertEqual(scenarios.public_values(document), document)
+                    for form in ("bare =", "bare : spaced", "JSON string", "JSON list"):
+                        text = "measured " + self.TEXT_FORMS[form].format(name=name, value="3")
+                        with self.subTest(form=form):
+                            if segments == ("selected", "token") and style in ("dotted", "dashed") \
+                                    and form.startswith("bare"):
+                                # v1's unchanged singular assignment rule, which the
+                                # backstop runs first, matches a bare ``token=`` or
+                                # ``token:`` after a ``.`` or ``-``: an over-rejection,
+                                # never a leak.
+                                with self.assertRaises(ValueError):
+                                    scenarios.v1.assert_public_safe({"detail": text})
+                                continue
+                            self.assertEqual(scenarios.public_detail(text, scenarios.RESULT_DETAIL_LIMIT), text)
+                            scenarios.assert_kit_public_safe({"detail": text})
+
+    def test_boolean_and_null_flags_are_not_credentials(self):
+        # Committed Qdrant browser evidence records whether a credential exists.
+        flags = {"authentication": {"browserCredential": {"adminSecret": False}}}
+        scenarios.assert_kit_public_safe(flags)
+        self.assertEqual(scenarios.public_values(flags), flags)
+        for segments in (("admin", "secret"), ("openai", "api", "keys"), ("session", "tokens")):
+            for style, name in spellings(*segments).items():
+                if scenarios.v1._contains_secret_field({name: None}):
+                    continue  # v1's own rule rejects the name whatever its value
+                for flag in (True, False, None):
+                    with self.subTest(name=name, style=style, flag=flag):
+                        for where, document in nestings({name: flag}).items():
+                            with self.subTest(where=where):
+                                scenarios.assert_kit_public_safe(document)
+                        bare = f"{name}={json.dumps(flag)}"
+                        if scenarios.v1._SECRET_ASSIGNMENT.search(bare):
+                            # v1's unchanged singular assignment rule matches a bare
+                            # ``secret=`` after a ``.`` or ``-``: over-rejected, never leaked.
+                            with self.assertRaises(ValueError):
+                                scenarios.assert_kit_public_safe({"detail": bare})
+                            bare = ""
+                        text = f'checked "{name}": {json.dumps(flag)}' + (f", {bare}" if bare else "")
+                        self.assertEqual(scenarios.public_detail(text), text)
+                        scenarios.assert_kit_public_safe({"detail": text})
+                with self.subTest(name=name, style=style, value="false-ish"):
+                    with self.assertRaises(ValueError):
+                        scenarios.assert_kit_public_safe({name: "false-ish"})
+                    with self.assertRaises(ValueError):
+                        scenarios.assert_kit_public_safe({"detail": f'"{name}": "false-ish"'})
+        # A name v1 itself rejects stays rejected, and redacted, whatever its value.
+        with self.assertRaises(ValueError):
+            scenarios.assert_kit_public_safe({"secret": False})
+        self.assertEqual(scenarios.public_values({"secret": False}),
+                         {"redacted_credential_field": "<redacted credential>"})
+
+    def test_descriptive_nouns_in_prose_pass_but_not_as_assignments(self):
+        condition = "credentials: 0400-file fallback; systemd-creds --user unavailable"
+        self.assertEqual(scenarios.public_detail(condition), condition)
+        scenarios.assert_kit_public_safe({"conditions": [condition]})
+        for text in ('"credentials": "x1"', "credentials=x1", "session=x1", '"keys": ["x1"]'):
+            with self.subTest(text=text), self.assertRaises(ValueError):
+                scenarios.assert_kit_public_safe({"detail": text})
+        self.assertEqual(scenarios.public_detail("plain ratio: 3 of 4; http://h:8080/x"),
+                         "plain ratio: 3 of 4; http://h:8080/x")
+
+
 class StubProviderTests(unittest.TestCase):
     def test_stub_embeddings_honor_the_zembed_heads(self):
         def embed(head, text):
