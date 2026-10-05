@@ -9,9 +9,8 @@ It replaces the Faster Whisper part of the
 [speech providers G0-G2 evidence](../speech-providers-4.8.2-1.2.1/). The
 CTranslate2 4.8.2-1 evidence there carries over unchanged.
 
-Lifecycle state: **candidate**. G0 and G1 passed against the archive below.
-G2 is pending: it runs under the heavy-work lease, and its result goes into
-`g0-g2.json`. Binding the archive into the
+Lifecycle state: **candidate**. G0-G2 passed against the archive below; G2
+ran on 2026-10-05 on the host's PyAV 19.0.1. Binding the archive into the
 [household candidate set](../../open-webui-household-candidate-set.md)
 accepts nothing. The sublane stays deferred and publication-ineligible until
 [Promote or defer the Open WebUI household stack](https://github.com/nisavid/arch-pkgs/issues/90)
@@ -30,8 +29,7 @@ The archive was built from merged `main` at
 ## Files
 
 - `g0-g2.json`: the sources, recipe digests, build toolchain, archive and
-  payload identity, and the G2 fixture with its inputs and, once run, its
-  results.
+  payload identity, and the G2 fixture, inputs, and results.
 - `g2_fixture.py`: the offline G2 harness.
 
 ## What G1 checked
@@ -83,6 +81,30 @@ env -i HOME="$HOME" PATH=/usr/bin LANG=C.UTF-8 \
 
 For the baseline control, extract the 1.2.1-1 archive in place of 1.2.1-2
 and pass `baseline-control` as the first argument.
+
+## G2 Results
+
+Every check passed on Python 3.14.6 with PyAV 19.0.1 (`python-av`
+19.0.1-1.1), CTranslate2 4.8.2, and Faster Whisper 1.2.1 from the overlay:
+
+- `decode_audio()` returned 176000 `float32` samples, 11.0 seconds at
+  16 kHz.
+- The `av.open()` keyword gate is `{}` on PyAV 19, and the Silero VAD asset
+  keeps SHA-256 `4cbf549b…`.
+- `int8` transcription, with and without VAD, detected `en` and produced 22
+  ordered words: "And so my fellow Americans, ask not what your country can do
+  for you, ask what you can do for your country."
+- The baseline control passed: 1.2.1-1's `decode_audio()` raised
+  `TypeError: open() got an unexpected keyword argument 'metadata_errors'`.
+- Ownership: every file loaded from the overlay belongs to a candidate
+  archive's manifest (1, 6, and 8 files). `pacman -Qo` owns 611 of the 613
+  loaded host files under `/usr`. The two unowned ones are the generated
+  `gconv-modules.cache` and `locale-archive`. Of the other mapped paths, one
+  is a package library outside `/usr`: `libOpenCL.so.1.0.0` from the `cuda`
+  package. The rest are the harness, the dynamic linker cache, and anonymous
+  shared memory.
+
+`provider_profile` in `g0-g2.json` lists the host package versions.
 
 ## Known Boundaries
 

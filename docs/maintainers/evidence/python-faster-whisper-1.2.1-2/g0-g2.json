@@ -111,8 +111,8 @@
       }
     },
     "G2": {
-      "pass": null,
-      "status": "pending: the fixture runs under the heavy-work lease; its output replaces this status with checks, baseline_control, ownership, and provider_profile",
+      "pass": true,
+      "run_date": "2026-10-05",
       "fixture": {
         "kind": "declared Python 3.14 CPU provider fixture, as in the speech-providers-4.8.2-1.2.1 G2: the candidate archives extracted into one overlay root that leads PYTHONPATH and LD_LIBRARY_PATH over the host's installed system providers, run inside an unprivileged network namespace that has only loopback. PyAV is the host's, so the run exercises decode_audio() against the installed PyAV 19.",
         "environment": "env -i; HF_HUB_OFFLINE=1; CUDA_VISIBLE_DEVICES, HIP_VISIBLE_DEVICES, and ROCR_VISIBLE_DEVICES empty; PYTHONNOUSERSITE=1; PYTHONDONTWRITEBYTECODE=1",
@@ -152,6 +152,157 @@
             "sha256": "63a4b1e4c1dc655ac70961ffbf518acd249df237e5a0152faae9a4a836949715"
           }
         }
+      },
+      "versions": {
+        "python": "3.14.6",
+        "av": "19.0.1",
+        "ctranslate2": "4.8.2",
+        "faster_whisper": "1.2.1"
+      },
+      "checks": {
+        "identity": {
+          "pass": true
+        },
+        "pyav_from_host": {
+          "pass": true,
+          "version": "19.0.1"
+        },
+        "libctranslate2_from_candidate": {
+          "pass": true,
+          "mapped": [
+            "usr/lib/libctranslate2.so.4.8.2"
+          ]
+        },
+        "cpu_only": {
+          "pass": true,
+          "cuda_device_count": 0,
+          "cpu_compute_types": [
+            "float32",
+            "int8",
+            "int8_float32"
+          ]
+        },
+        "av_open_gate_passes_no_keywords_on_pyav19": {
+          "pass": true,
+          "av_open_kwargs": {}
+        },
+        "silero_vad_v6_asset": {
+          "pass": true,
+          "sha256": "4cbf549b8326f60f80f2536d9eefeb450a9abe83365a098031c89719f1be17d2"
+        },
+        "decode_audio_jfk": {
+          "pass": true,
+          "dtype": "float32",
+          "samples": 176000,
+          "seconds": 11.0
+        },
+        "fw_int8_transcription_word_timestamps": {
+          "pass": true,
+          "language": "en",
+          "duration": 11.0,
+          "text": "And so my fellow Americans, ask not what your country can do for you, ask what you can do for your country.",
+          "word_count": 22,
+          "first_word": [
+            "And",
+            0.0,
+            0.52
+          ],
+          "last_word": [
+            "country.",
+            10.36
+          ]
+        },
+        "fw_int8_with_onnxruntime_cpu_vad": {
+          "pass": true,
+          "language": "en",
+          "word_count": 22,
+          "text": "And so my fellow Americans, ask not what your country can do for you, ask what you can do for your country."
+        }
+      },
+      "baseline_control": {
+        "pass": true,
+        "versions": {
+          "python": "3.14.6",
+          "av": "19.0.1",
+          "ctranslate2": "4.8.2",
+          "faster_whisper": "1.2.1"
+        },
+        "checks": {
+          "identity": {
+            "pass": true
+          },
+          "pyav_from_host": {
+            "pass": true,
+            "version": "19.0.1"
+          },
+          "baseline_has_no_av_open_gate": {
+            "pass": true
+          },
+          "baseline_decode_audio_raises_pyav19_typeerror": {
+            "pass": true,
+            "raised": "TypeError",
+            "message": "open() got an unexpected keyword argument 'metadata_errors'"
+          }
+        },
+        "note": "The unpatched 1.2.1-1 archive over the same CTranslate2 overlay and host PyAV. The control passes only when decode_audio() raises the PyAV 19 TypeError, so the fixture is shown to detect the defect that 1.2.1-2 fixes."
+      },
+      "ownership": {
+        "candidate": {
+          "candidate_files_loaded": {
+            "ctranslate2-4.8.2-1-x86_64.pkg.tar.zst": 1,
+            "python-ctranslate2-4.8.2-1-x86_64.pkg.tar.zst": 6,
+            "python-faster-whisper-1.2.1-2-any.pkg.tar.zst": 8
+          },
+          "candidate_files_outside_archive_manifests": 0,
+          "host_files_loaded": 613,
+          "host_files_owned_by_pacman": 611,
+          "host_files_unowned": [
+            "/usr/lib/gconv/gconv-modules.cache",
+            "/usr/lib/locale/locale-archive"
+          ],
+          "owning_package_count": 135,
+          "other_mapped_paths": [
+            "/dev/shm/<anonymous>",
+            "<other>/ld.so.cache",
+            "<other>/libOpenCL.so.1.0.0",
+            "<scratch>/g2_fixture.py"
+          ]
+        },
+        "baseline_control": {
+          "candidate_files_loaded": {
+            "ctranslate2-4.8.2-1-x86_64.pkg.tar.zst": 1,
+            "python-ctranslate2-4.8.2-1-x86_64.pkg.tar.zst": 6,
+            "python-faster-whisper-1.2.1-1-any.pkg.tar.zst": 8
+          },
+          "candidate_files_outside_archive_manifests": 0,
+          "host_files_loaded": 528,
+          "host_files_owned_by_pacman": 526,
+          "host_files_unowned": [
+            "/usr/lib/gconv/gconv-modules.cache",
+            "/usr/lib/locale/locale-archive"
+          ],
+          "owning_package_count": 131,
+          "other_mapped_paths": [
+            "<other>/ld.so.cache",
+            "<other>/libOpenCL.so.1.0.0",
+            "<scratch>/g2_fixture.py"
+          ]
+        },
+        "unowned_note": "Host files are the loaded files under /usr; pacman -Qo owns every one not listed as unowned. Other mapped paths (the harness, the model and audio inputs, the dynamic linker cache, anonymous shared memory) are not package payload and are shown as placeholders."
+      },
+      "provider_profile": {
+        "python-gfx1151": "3.14.6-1",
+        "python-av": "19.0.1-1.1",
+        "ffmpeg": "2:9.0.2-2.1",
+        "python-numpy-gfx1151": "2.4.6-1",
+        "python-huggingface-hub": "1:2.1.1-1",
+        "python-onnxruntime-opt-rocm": "1.29.0-3",
+        "python-tokenizers-gfx1151": "0.22.2-1",
+        "python-tqdm": "4.70.1-1",
+        "python-setuptools": "1:84.0.0-1",
+        "openblas": "0.3.34-1",
+        "python-pyyaml-gfx1151": "6.0.3-1",
+        "python-ctranslate2-gfx1151": "4.7.2-1"
       }
     }
   },

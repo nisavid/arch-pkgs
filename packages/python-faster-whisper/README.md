@@ -38,9 +38,9 @@ onto the `1.2.1` tag tarball, byte for byte. It changes only
     [candidate evidence](../../docs/maintainers/evidence/speech-providers-4.8.2-1.2.1/).
   - `1.2.1-2` carries `0001-support-pyav-19.patch`, a backport of upstream
     `2ce7f9d` for PyAV 19; see [PyAV 19 Compatibility](#pyav-19-compatibility).
-    That gate evidence covers `1.2.1-1`, not `1.2.1-2`. The `1.2.1-2`
-    [candidate evidence](../../docs/maintainers/evidence/python-faster-whisper-1.2.1-2/)
-    records G0 and G1 and the PyAV 19 G2 fixture.
+    That gate evidence covers `1.2.1-1`, not `1.2.1-2`. `1.2.1-2` passed
+    G0-G2 on PyAV 19; see its
+    [candidate evidence](../../docs/maintainers/evidence/python-faster-whisper-1.2.1-2/).
   - Preserve the AUR source-build shape and generic `python-ctranslate2` and
     `python-onnxruntime` provider dependencies. The accepted set must compose
     with CTranslate2 `4.8.2` and the exact Python 3.14/system-provider profile.
@@ -56,8 +56,13 @@ onto the `1.2.1` tag tarball, byte for byte. It changes only
   - G1 must clean-build and inspect the package and dependency payload without
     undeclared runtime acquisition or a bundled provider stack.
   - G2 must run offline CPU `int8` transcription and word timestamps against
-    the pinned tiny model and JFK audio fixture after the required CTranslate2
-    CPU/OpenBLAS model, malformed-model, and ownership checks pass.
+    the pinned JFK audio fixture with a pinned Whisper model, over the
+    CTranslate2 `4.8.2` candidate archives, plus the ownership checks. The
+    CTranslate2 CPU/OpenBLAS model and malformed-model checks belong to the
+    CTranslate2 evidence; a Faster Whisper-only rebuild carries them over.
+    `1.2.1-1` used the tiny model. `1.2.1-2` used the `faster-whisper-base`
+    snapshot that the acceptance kit pins, and also checks `decode_audio()`
+    on the host PyAV and a baseline control that must fail on PyAV 19.
   - On each upstream release, check whether it contains `2ce7f9d`; if it
     does, drop `0001-support-pyav-19.patch` and `prepare()`.
 

@@ -327,7 +327,15 @@ class OpenWebUIHouseholdCandidateSetTests(unittest.TestCase):
         fixture = evidence["gates"]["G2"]["fixture"]
         harness = (FASTER_WHISPER_DIR / fixture["harness"]).read_bytes()
         self.assertEqual(hashlib.sha256(harness).hexdigest(), fixture["harness_sha256"])
-        self.assertIn(evidence["gates"]["G2"]["pass"], (None, True))
+        g2 = evidence["gates"]["G2"]
+        self.assertIs(g2["pass"], True)
+        self.assertNotIn("status", g2)
+        self.assertEqual(g2["versions"]["av"], "19.0.1")
+        self.assertTrue(all(check["pass"] for check in g2["checks"].values()))
+        self.assertTrue(g2["baseline_control"]["pass"])
+        transcript = g2["checks"]["fw_int8_transcription_word_timestamps"]
+        self.assertEqual(transcript["language"], "en")
+        self.assertGreaterEqual(transcript["word_count"], 20)
         if not has_commit(source["source_commit"]):
             self.skipTest("source commit not present in this clone")
         for path, digest in source["files"].items():
