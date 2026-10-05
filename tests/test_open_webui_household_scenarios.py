@@ -1,10 +1,12 @@
 import contextlib
+import hashlib
 import importlib.util
 import io
 import json
 import math
 import os
 import re
+import shutil
 import sys
 import tempfile
 import threading
@@ -38,6 +40,25 @@ def load(name, path):
 
 scenarios = load("open_webui_household_scenarios", SCENARIOS)
 stub = load("open_webui_household_stub_provider", STUB)
+
+# The gitleaks gate runs a stub by default, so the tests need no gitleaks and
+# stay fast; OWUI_GITLEAKS_STUB_EXIT sets its exit code.  The integration test
+# runs the real gitleaks when the host has it.
+GITLEAKS_STUB = "#!/bin/sh\ncat >/dev/null\nexit \"${OWUI_GITLEAKS_STUB_EXIT:-0}\"\n"
+_gitleaks_stub = tempfile.TemporaryDirectory(prefix="owui-gitleaks-stub-")
+_gitleaks_patch = mock.patch.object(scenarios, "GITLEAKS", str(Path(_gitleaks_stub.name) / "gitleaks"))
+
+
+def setUpModule():
+    path = Path(_gitleaks_stub.name) / "gitleaks"
+    path.write_text(GITLEAKS_STUB)
+    path.chmod(0o755)
+    _gitleaks_patch.start()
+
+
+def tearDownModule():
+    _gitleaks_patch.stop()
+    _gitleaks_stub.cleanup()
 
 
 @contextlib.contextmanager
@@ -164,9 +185,9 @@ class ExitCodeTests(unittest.TestCase):
                 mock.patch.object(scenarios, "signin") as signin:
             code = scenarios.main(["resmoke", "--target", "production", "--origin", "http://household.invalid",
                                    "--chat-model", "m", "--receipt", f"{tmp}/r.json"])
-            receipt = json.loads(Path(f"{tmp}/r.json").read_text())
+            private = json.loads(Path(f"{tmp}/r.private.json").read_text())
         self.assertEqual(code, 75)
-        self.assertIn("https", receipt["precondition"])
+        self.assertIn("https", private["precondition"])
         signin.assert_not_called()
 
     def test_an_unreachable_lemonade_is_a_precondition_with_a_receipt(self):
@@ -174,9 +195,16 @@ class ExitCodeTests(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             code = scenarios.main(self.resmoke_args(tmp, "--lemond-url", "http://127.0.0.1:9"))
             receipt = json.loads(Path(f"{tmp}/r.json").read_text())
+            private_path = Path(f"{tmp}/r.private.json")
+            private = json.loads(private_path.read_text())
+            mode = private_path.stat().st_mode & 0o777
         self.assertEqual(code, 75)
         self.assertEqual(receipt["exit_code"], 75)
-        self.assertIn("Lemonade is unreachable", receipt["precondition"])
+        # The public receipt names only a summary; the private one keeps the text.
+        self.assertTrue(receipt["precondition"].startswith("Blocked; "))
+        self.assertNotIn("Lemonade", receipt["precondition"])
+        self.assertIn("Lemonade is unreachable", private["precondition"])
+        self.assertEqual(mode, 0o600)
 
     def test_an_unreachable_open_webui_is_a_precondition_with_a_receipt(self):
         env = candidate_env()
@@ -190,9 +218,9 @@ class ExitCodeTests(unittest.TestCase):
             (Path(tmp) / "resmoke-email").write_text("smoke@household.invalid")
             (Path(tmp) / "resmoke-password").write_text("pw")
             code = scenarios.main(self.resmoke_args(tmp))
-            receipt = json.loads(Path(f"{tmp}/r.json").read_text())
+            private = json.loads(Path(f"{tmp}/r.private.json").read_text())
         self.assertEqual(code, 75)
-        self.assertIn("Open WebUI is unreachable", receipt["precondition"])
+        self.assertIn("Open WebUI is unreachable", private["precondition"])
 
     def test_a_rehearsal_resmoke_writes_no_receipt(self):
         with tempfile.TemporaryDirectory() as tmp, self.acceptance_process(), \
@@ -920,15 +948,9 @@ class ErrorDetailTests(unittest.TestCase):
         self.assertEqual(scenarios.error_detail(self.response(500, b"")), "")
         self.assertEqual(scenarios.error_detail(self.response(400, b'{"detail":"Model not found"}')), ": Model not found")
 
-    def test_the_detail_is_bounded_and_redacted(self):
-        text = ("failed reading /var/lib/example/data/webui.db for admin@example.org "
-                "from 203.0.113.7 with Bearer abc123 token=xyz")
-        detail = scenarios.public_detail(text)
-        for private in ("/var/lib/example", "admin@example.org", "203.0.113.7", "abc123", "xyz"):
-            self.assertNotIn(private, detail)
-        self.assertIn("<path>", detail)
-        self.assertLessEqual(len(scenarios.public_detail("x" * 1000)), scenarios.ERROR_DETAIL_LIMIT)
-        scenarios.v1.assert_public_safe({"detail": detail})
+    def test_the_private_detail_is_bounded(self):
+        long = scenarios.response_detail(self.response(500, b"x" * 10000, "text/plain"))
+        self.assertEqual(long, "x" * scenarios.RESULT_DETAIL_LIMIT)
 
     def test_a_failed_json_call_names_the_status_and_the_detail(self):
         endpoint = scenarios.Endpoint(origin="http://127.0.0.1:9")
@@ -939,69 +961,78 @@ class ErrorDetailTests(unittest.TestCase):
 
 
 class ReceiptTests(unittest.TestCase):
-    def test_receipt_is_public_safe_and_carries_the_exit_code(self):
-        settings = scenarios.settings_from_environ(candidate_env())
-        results = [
-            scenarios.ScenarioResult("open-webui.resmoke.zembed-canary", "PASS", "ok", 1.0, {"margin": 0.3}),
-            scenarios.ScenarioResult("open-webui.resmoke.zerank-qualification", "FAIL", "HTTP 500", 0.1),
-        ]
-        receipt = scenarios.build_receipt(
-            target="production",
-            mode="record",
-            settings=settings,
-            chat_model="chat",
-            health={"version": "10.0.0", "all_models_loaded": []},
-            results=results,
-        )
-        self.assertEqual(receipt["schema"], "open-webui-household-resmoke/v1")
-        self.assertEqual(receipt["exit_code"], 1)
-        self.assertEqual(receipt["lemonade"], {"version": "10.0.0"})
-        self.assertIsNone(receipt["open_webui_archive_sha256"])
-        self.assertIsNone(receipt["open_webui_archive_binding"])
-        blocked = scenarios.build_receipt(
-            target="acceptance", mode="rehearsal", settings=None, chat_model="chat",
-            health=None, results=[], precondition="NEEDS LEAD: Lemonade has not loaded chat",
-        )
-        self.assertEqual(blocked["exit_code"], 75)
-        with self.assertRaises(ValueError):
-            scenarios.build_receipt(
-                target="production", mode="record", settings=settings, chat_model="chat",
-                health=None, results=[scenarios.ScenarioResult("x", "FAIL", "token=abc", 0.0)],
-            )
-
-
     UNSAFE = ("cannot read /home/someone/handbook.md from 192.168.1.20 or fd12:3456::7 for admin@example.org "
               "with api_key=k1 at nas.lan")
+    PRIVATE_PARTS = ("/home/someone", "192.168.1.20", "fd12:3456::7", "admin@example.org", "k1", "nas.lan")
 
-    def assert_redacted(self, text):
-        for private in ("/home/someone", "192.168.1.20", "fd12:3456::7", "admin@example.org", "k1", "nas.lan"):
-            self.assertNotIn(private, text)
-        scenarios.v1.assert_public_safe({"detail": text})
+    def results(self):
+        return [
+            scenarios.ScenarioResult("open-webui.resmoke.zembed-canary", "PASS", "ok", 1.0, {"margin": 0.3}),
+            scenarios.ScenarioResult("open-webui.resmoke.zerank-qualification", "FAIL",
+                                     f"ScenarioFailure: GET /x returned HTTP 502: {self.UNSAFE}", 0.1,
+                                     error_type="ScenarioFailure"),
+        ]
 
-    def test_an_unsafe_failure_still_writes_a_public_safe_receipt(self):
+    def test_the_public_receipt_summarizes_and_the_private_one_keeps_the_detail(self):
         settings = scenarios.settings_from_environ(candidate_env())
+        public = scenarios.build_receipt(target="production", mode="record", settings=settings, chat_model="chat",
+                                         health={"version": "10.0.0", "all_models_loaded": []}, results=self.results())
+        private = scenarios.build_receipt(target="production", mode="record", settings=settings, chat_model="chat",
+                                          health={"version": "10.0.0", "all_models_loaded": []}, results=self.results(),
+                                          public=False)
+        self.assertEqual(public["schema"], "open-webui-household-resmoke/v1")
+        self.assertEqual((public["exit_code"], private["exit_code"]), (1, 1))
+        self.assertEqual(public["lemonade"], {"version": "10.0.0"})
+        self.assertIsNone(public["open_webui_archive_sha256"])
+        self.assertEqual(public["scenarios"][0]["detail"], "ok")
+        summary = public["scenarios"][1]["detail"]
+        self.assertTrue(summary.startswith("ScenarioFailure; HTTP 502; "), summary)
+        self.assertIn(scenarios.PRIVATE_DETAIL_NOTE, summary)
+        for part in self.PRIVATE_PARTS:
+            self.assertNotIn(part, json.dumps(public))
+        self.assertIn(self.UNSAFE, private["scenarios"][1]["detail"])
+        scenarios.v1.assert_public_safe(public)
+        blocked = scenarios.build_receipt(target="acceptance", mode="rehearsal", settings=None, chat_model="chat",
+                                          health=None, results=[], precondition="NEEDS LEAD: " + self.UNSAFE)
+        self.assertEqual(blocked["exit_code"], 75)
+        self.assertTrue(blocked["precondition"].startswith("Blocked; "))
 
-        def failing(_ctx):
-            raise scenarios.ScenarioFailure(self.UNSAFE)
-
-        def blocked(_ctx):
-            raise scenarios.Blocked("NEEDS OWNER: " + self.UNSAFE)
-
-        table = {"open-webui.resmoke.zembed-canary": failing, "open-webui.resmoke.zerank-qualification": blocked}
-        with mock.patch.object(scenarios, "SCENARIOS", table):
-            results = [scenarios.run_scenario(object(), scenario_id) for scenario_id in table]
-        for result in results:
-            self.assert_redacted(result.detail)
-        self.assertTrue(results[0].detail.startswith("ScenarioFailure: cannot read <path>"))
+    def test_write_receipt_writes_only_past_the_gate(self):
+        settings = scenarios.settings_from_environ(candidate_env())
         receipt = scenarios.build_receipt(target="production", mode="record", settings=settings, chat_model="chat",
-                                          health=None, results=results)
+                                          health=None, results=self.results())
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "receipt.json"
             scenarios.write_receipt(path, receipt)
-            self.assert_redacted(path.read_text(encoding="utf-8"))
-            self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["exit_code"], 75)
+            self.assertEqual(json.loads(path.read_text())["exit_code"], 1)
+            path.unlink()
+            with mock.patch.dict(os.environ, {"OWUI_GITLEAKS_STUB_EXIT": str(scenarios.GITLEAKS_FINDINGS_EXIT)}), \
+                    self.assertRaisesRegex(ValueError, r"^gitleaks finding \(redacted\)$"):
+                scenarios.write_receipt(path, receipt)
+            self.assertFalse(path.exists())
+            # v1's check still runs first.
+            with self.assertRaisesRegex(ValueError, "absolute private path"):
+                scenarios.write_receipt(path, {**receipt, "values": "/home/someone/x"})
+            self.assertFalse(path.exists())
+            private = scenarios.write_private_receipt(path, receipt)
+            self.assertEqual(private, Path(directory) / "receipt.private.json")
+            self.assertEqual(private.stat().st_mode & 0o777, 0o600)
 
-    def test_a_failed_files_stored_error_is_redacted(self):
+    def test_a_withheld_public_receipt_keeps_the_private_one_and_fails_the_run(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(scenarios, "open_webui_pid", return_value=1), \
+                mock.patch.object(scenarios, "read_process_environ", return_value=candidate_env()), \
+                mock.patch.dict(os.environ, {"OWUI_GITLEAKS_STUB_EXIT": str(scenarios.GITLEAKS_FINDINGS_EXIT)}), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as errors:
+            code = scenarios.main(["resmoke", "--target", "acceptance", "--root", tmp, "--chat-model", "m",
+                                   "--receipt", f"{tmp}/r.json", "--credentials-dir", tmp,
+                                   "--socket", f"{tmp}/absent.sock", "--lemond-url", "http://127.0.0.1:9"])
+            self.assertFalse(Path(f"{tmp}/r.json").exists())
+            self.assertTrue(Path(f"{tmp}/r.private.json").is_file())
+        self.assertEqual(code, 75)
+        self.assertIn("gitleaks finding (redacted)", errors.getvalue())
+
+    def test_a_failed_files_stored_error_stays_private(self):
         class Webui:
             def request(self, method, path, **_):
                 if path.endswith("/process/status"):
@@ -1013,16 +1044,15 @@ class ReceiptTests(unittest.TestCase):
                                 settings=scenarios.settings_from_environ(candidate_env()), chat_model="chat")
         with self.assertRaises(scenarios.ScenarioFailure) as raised:
             scenarios._wait_for_file(ctx, "f1")
-        self.assertIn("status failed: cannot read <path>", str(raised.exception))
-        self.assert_redacted(str(raised.exception))
+        # The private message keeps the stored error; the public summary carries none of it.
+        self.assertIn("status failed: cannot read /home/someone", str(raised.exception))
+        summary = scenarios.public_detail(str(raised.exception), error_type="ScenarioFailure")
+        for part in self.PRIVATE_PARTS:
+            self.assertNotIn(part, summary)
 
-
-    TOKEN, SESSION = "eyJhbGciOiJIUzI1NiJ9.tok3n-value", "s3ssion-value-42"
-
-    def test_credentials_in_an_http_error_never_reach_the_receipt(self):
-        # The Greptile reproduction: an upstream 502 whose body echoes the
-        # request's Authorization and Cookie headers.
-        body = (f"Bad Gateway\nAuthorization: Bearer {self.TOKEN}\nCookie: session={self.SESSION}; theme=dark\n"
+    def test_credentials_in_an_http_error_never_reach_the_public_receipt(self):
+        token, session = "eyJhbGciOiJIUzI1NiJ9.tok3n-value", "s3ssion-value-42"
+        body = (f"Bad Gateway\nAuthorization: Bearer {token}\nCookie: session={session}; theme=dark\n"
                 "Via: proxy").encode()
         endpoint = scenarios.Endpoint(origin="http://127.0.0.1:9")
 
@@ -1034,7 +1064,6 @@ class ReceiptTests(unittest.TestCase):
         with mock.patch.object(scenarios, "SCENARIOS", {"open-webui.resmoke.zerank-qualification": failing}):
             result = scenarios.run_scenario(object(), "open-webui.resmoke.zerank-qualification")
         self.assertEqual(result.result, scenarios.FAIL)
-        self.assertIn("HTTP 502", result.detail)
         receipt = scenarios.build_receipt(target="production", mode="record",
                                           settings=scenarios.settings_from_environ(candidate_env()),
                                           chat_model="chat", health=None, results=[result])
@@ -1042,42 +1071,131 @@ class ReceiptTests(unittest.TestCase):
             path = Path(directory) / "receipt.json"
             scenarios.write_receipt(path, receipt)
             written = path.read_text(encoding="utf-8")
-        for secret in (self.TOKEN, self.SESSION, "tok3n", "s3ssion"):
+        for secret in (token, session, "tok3n", "s3ssion", "Bad Gateway"):
             self.assertNotIn(secret, written)
-        self.assertIn("<redacted credential>", written)
+        self.assertIn("ScenarioFailure; HTTP 502; ", written)
 
-    def test_every_credential_form_is_redacted_value_included(self):
-        secret = "V4LUE-9f8e7d"
-        forms = (
-            f"Authorization: Basic {secret}",
-            f"proxy-authorization: Digest username=x, response={secret}",
-            f"Cookie: a=1; sid={secret}",
-            f"Set-Cookie: sid={secret}; Path=/; HttpOnly",
-            f"X-Api-Key: {secret}",
-            f"x-goog-api-key: {secret}",
-            f"X-Auth-Token: {secret}",
-            f'{{"headers": {{"Authorization": "Bearer {secret}", "Accept": "*/*"}}}}',
-            f"{{'cookie': 'session={secret}'}}",
-            f"request failed with token {secret}",
-            f"password = {secret} and more",
-            f"api_key={secret}",
-            f"-----BEGIN PRIVATE KEY-----\n{secret}\n-----END PRIVATE KEY-----",
-        )
-        for form in forms:
-            with self.subTest(form=form):
-                detail = scenarios.public_detail(f"upstream error: {form}", scenarios.RESULT_DETAIL_LIMIT)
-                self.assertNotIn(secret, detail)
-                self.assertTrue(detail.startswith("upstream error:"))
-                scenarios.v1.assert_public_safe({"detail": detail})
-        # Ordinary text is untouched.
-        for plain in ("Model not found", "the key brass opens the seed cabinet", "HTTP 400: taken"):
-            self.assertEqual(scenarios.public_detail(plain), plain)
 
-    def test_the_safety_check_still_refuses_raw_credential_text(self):
-        # public_detail never weakens the receipt's own check.
-        for raw in (f"Authorization: Bearer {self.TOKEN}", f"cookie: session={self.SESSION}", "token=abc"):
-            with self.assertRaises(ValueError):
-                scenarios.v1.assert_public_safe({"detail": raw})
+class PublicDetailTests(unittest.TestCase):
+    """A public failure detail is a fixed summary: no part of the upstream text is copied."""
+
+    TEXT = "ScenarioFailure: GET /x returned HTTP 503: Authorization: Bearer abc.def; /home/someone/db"
+
+    def test_the_summary_names_type_status_media_length_and_digest(self):
+        raw = self.TEXT.encode()
+        summary = scenarios.public_detail(self.TEXT, error_type="ScenarioFailure",
+                                          content_type="Text/Plain; charset=utf-8")
+        digest = hashlib.sha256(raw).hexdigest()[:16]
+        self.assertEqual(summary, f"ScenarioFailure; HTTP 503; text/plain; {len(raw)} bytes; sha256:{digest}; "
+                                  f"{scenarios.PRIVATE_DETAIL_NOTE}")
+        for part in ("Authorization", "Bearer", "abc.def", "/home/someone", "GET /x"):
+            self.assertNotIn(part, summary)
+        scenarios.v1.assert_public_safe({"detail": summary})
+
+    def test_unknown_or_untrusted_parts_are_left_out(self):
+        summary = scenarios.public_detail("no status here")
+        self.assertRegex(summary, r"^14 bytes; sha256:[0-9a-f]{16}; ")
+        # A content type or error type that is not a plain token is dropped, never copied.
+        odd = scenarios.public_detail("x", error_type="Bearer abc", content_type="text/plain\nX-Api-Key: k1", status=500)
+        self.assertTrue(odd.startswith("HTTP 500; text/plain; 1 bytes; "), odd)
+        self.assertNotIn("abc", odd)
+        self.assertNotIn("k1", odd)
+        self.assertEqual(scenarios.public_detail("é", status=400).split("; ")[1], "2 bytes")
+
+    def test_a_measured_failure_names_its_original_type(self):
+        try:
+            try:
+                raise TimeoutError("timed out")
+            except TimeoutError as cause:
+                raise scenarios.MeasuredFailure("TimeoutError: timed out", {"a": 1}) from cause
+        except scenarios.MeasuredFailure as error:
+            self.assertEqual(scenarios.failure_type(error), "TimeoutError")
+        self.assertEqual(scenarios.failure_type(KeyError("x")), "KeyError")
+
+    def test_run_scenario_keeps_the_detail_private_and_its_type(self):
+        def failing(_ctx):
+            raise ScenarioDetail("upstream said " + ReceiptTests.UNSAFE)
+
+        class ScenarioDetail(scenarios.ScenarioFailure):
+            pass
+
+        with mock.patch.object(scenarios, "SCENARIOS", {"x": failing}):
+            result = scenarios.run_scenario(object(), "x")
+        self.assertEqual((result.result, result.error_type), (scenarios.FAIL, "ScenarioDetail"))
+        self.assertIn(ReceiptTests.UNSAFE, result.detail)
+
+
+class PublicValuesTests(unittest.TestCase):
+    """Failure values are made JSON-safe; only v1's own credential fields are renamed."""
+
+    def test_values_are_json_safe_and_v1_fields_renamed(self):
+        values = {"scores": [0.9, float("nan"), float("-inf")], "pair": (1, "a"), "margin": float("inf"),
+                  "api_key": "s3cret", "nested": [{"password": "", "kept": {1: "x"}}], "tags": {"b", "a"}}
+        public = scenarios.public_values(values)
+        json.dumps(public, allow_nan=False)
+        self.assertEqual(public["scores"], [0.9, None, None])
+        self.assertEqual((public["pair"], public["margin"], public["tags"]), ([1, "a"], None, ["a", "b"]))
+        self.assertEqual(public["redacted_credential_field"], "<redacted credential>")
+        self.assertEqual(public["nested"], [{"redacted_credential_field": "<redacted credential>", "kept": {"1": "x"}}])
+        self.assertNotIn("s3cret", json.dumps(public))
+        scenarios.v1.assert_public_safe(public)
+
+    def test_strings_are_not_rewritten(self):
+        # Secrets in text are the gitleaks gate's job; public_values adds no name or text rules.
+        values = {"provider_api_keys": ["x"], "note": "token count: 3", "path": "<root>/state"}
+        self.assertEqual(scenarios.public_values(values), values)
+
+
+FAKE_OPENAI_KEY = "sk-" + "a1B2c3D4e5F6g7H8i9J0" + "T3BlbkFJ" + "k1L2m3N4o5P6q7R8s9T0"
+
+
+class GitleaksGateTests(unittest.TestCase):
+    """The public-file gate: v1's check, then gitleaks; a finding or a missing gitleaks withholds."""
+
+    def test_a_clean_document_passes(self):
+        self.assertIsNone(scenarios.public_withhold_reason({"detail": "ok", "count": 3}))
+
+    def test_a_finding_withholds_without_echoing_the_match(self):
+        with mock.patch.dict(os.environ, {"OWUI_GITLEAKS_STUB_EXIT": str(scenarios.GITLEAKS_FINDINGS_EXIT)}):
+            self.assertEqual(scenarios.public_withhold_reason({"detail": "anything"}), "gitleaks finding (redacted)")
+
+    def test_a_gitleaks_error_withholds(self):
+        with mock.patch.dict(os.environ, {"OWUI_GITLEAKS_STUB_EXIT": "1"}):
+            self.assertEqual(scenarios.public_withhold_reason({"detail": "ok"}), "gitleaks failed (exit 1)")
+
+    def test_a_missing_gitleaks_fails_closed_naming_the_package(self):
+        with mock.patch.object(scenarios, "GITLEAKS", "owui-no-such-gitleaks"):
+            reason = scenarios.public_withhold_reason({"detail": "ok"})
+        self.assertEqual(reason, scenarios.GITLEAKS_MISSING)
+        self.assertIn("Arch package gitleaks (extra)", reason)
+
+    def test_v1_runs_first(self):
+        self.assertEqual(scenarios.public_withhold_reason({"api_key": "x"}),
+                         "public evidence contains a secret-valued field")
+
+    def test_the_gate_scans_the_serialized_document_with_the_default_rules(self):
+        with tempfile.TemporaryDirectory() as directory:
+            capture = Path(directory) / "capture"
+            script = Path(directory) / "gitleaks"
+            script.write_text(f'#!/bin/sh\nprintf "%s\\n" "$@" > {capture}.args\npwd > {capture}.cwd\n'
+                              f'env | grep -c "^GITLEAKS_" > {capture}.env\ncat > {capture}.in\nexit 0\n')
+            script.chmod(0o755)
+            with mock.patch.object(scenarios, "GITLEAKS", str(script)), \
+                    mock.patch.dict(os.environ, {"GITLEAKS_CONFIG": "/tmp/custom.toml"}):
+                self.assertIsNone(scenarios.public_withhold_reason({"b": 1, "a": "x"}))
+            args = Path(f"{capture}.args").read_text().split()
+            self.assertEqual(args, ["stdin", "--no-banner", "--redact", "--log-level", "error",
+                                    "--exit-code", str(scenarios.GITLEAKS_FINDINGS_EXIT)])
+            self.assertEqual(json.loads(Path(f"{capture}.in").read_text()), {"a": "x", "b": 1})
+            self.assertNotEqual(Path(f"{capture}.cwd").read_text().strip(), os.getcwd())
+            self.assertEqual(Path(f"{capture}.env").read_text().strip(), "0")
+
+    @unittest.skipIf(shutil.which("gitleaks") is None, "gitleaks is not installed")
+    def test_the_real_gitleaks_catches_an_openai_style_key(self):
+        with mock.patch.object(scenarios, "GITLEAKS", "gitleaks"):
+            self.assertIsNone(scenarios.public_withhold_reason({"detail": "ok", "count": 3}))
+            reason = scenarios.public_withhold_reason({"scenarios": [{"values": {"note": FAKE_OPENAI_KEY}}]})
+        self.assertEqual(reason, "gitleaks finding (redacted)")
 
 
 class FailureValuesTests(unittest.TestCase):
@@ -1102,19 +1220,17 @@ class FailureValuesTests(unittest.TestCase):
         self.assertEqual(result.result, scenarios.FAIL)
         self.assertEqual(result.values, values)
 
-    def test_failure_values_are_json_safe_and_public_safe(self):
+    def test_failure_values_are_json_safe(self):
         unsafe = {
-            "detail": ReceiptTests.UNSAFE,
             "scores": [0.9, float("nan"), float("-inf")],
-            "pair": ("Authorization: Bearer s3cret", 1),
+            "pair": ("x", 1),
             "margin": float("inf"),
+            "api_key": "s3cret",
         }
         result = self.run_one(scenarios.ScenarioFailure("measured", unsafe))
         self.assertEqual(result.result, scenarios.FAIL)
         text = json.dumps(result.values, allow_nan=False)
-        for private in ("/home/someone", "192.168.1.20", "fd12:3456::7", "admin@example.org", "k1", "nas.lan",
-                        "s3cret"):
-            self.assertNotIn(private, text)
+        self.assertNotIn("s3cret", text)
         self.assertEqual(result.values["scores"], [0.9, None, None])
         self.assertIsNone(result.values["margin"])
         receipt = scenarios.build_receipt(target="production", mode="record",
@@ -1298,398 +1414,6 @@ class ScenarioMeasurementTests(unittest.TestCase):
                 self.assertEqual(outcome.values["dimensions"], 2560)
                 self.assertNotIn("margin", outcome.values)
                 self.assert_receipt_safe(outcome)
-
-
-class CredentialFieldTests(unittest.TestCase):
-    """A credential-named field never reaches a receipt, by name or by value."""
-
-    SECRET = "s3cret-V4LUE"
-
-    def test_credential_fields_are_renamed_and_their_values_redacted(self):
-        cases = (
-            {"api_key": self.SECRET},
-            {"api_key": ""},
-            {"outer": {"token": self.SECRET, "nested": [{"X-Api-Key": self.SECRET, "Password": None}]}},
-            {"session": self.SECRET, "client_secret": self.SECRET, "authorization": f"Bearer {self.SECRET}"},
-        )
-        for value in cases:
-            with self.subTest(value=value):
-                with self.assertRaises(ValueError):
-                    scenarios.v1.assert_public_safe(value)
-                public = scenarios.public_values(value)
-                scenarios.v1.assert_public_safe(public)
-                text = json.dumps(public)
-                self.assertNotIn(self.SECRET, text)
-                self.assertIn("<redacted credential>", text)
-        self.assertEqual(scenarios.public_values({"api_key": "s3cret"}),
-                         {"redacted_credential_field": "<redacted credential>"})
-        nested = scenarios.public_values({"outer": {"token": "a", "cookie": "b", "count": 2}})
-        self.assertEqual(nested, {"outer": {"redacted_credential_field": "<redacted credential>",
-                                            "redacted_credential_field_2": "<redacted credential>", "count": 2}})
-
-    def test_ordinary_fields_are_kept(self):
-        value = {"selected_token": "kept", "runtime_credentials": ["openai-api-key"], "token_count": 3,
-                 "health_status": 200, "env_keys": ["HAYSTACK_TELEMETRY_ENABLED"],
-                 "stub_requests_with_credential": 0, "nonempty_key_fields": []}
-        self.assertEqual(scenarios.public_values(value), value)
-
-    def test_plural_credential_fields_redact_every_element(self):
-        cases = (
-            ({"provider_api_keys": [self.SECRET]}, {"redacted_credential_field": ["<redacted credential>"]}),
-            ({"OPENAI_API_KEYS": [self.SECRET, ""]},
-             {"redacted_credential_field": ["<redacted credential>", "<redacted credential>"]}),
-            ({"api_keys": []}, {"redacted_credential_field": []}),
-            ({"tokens": [self.SECRET]}, {"redacted_credential_field": ["<redacted credential>"]}),
-            ({"passwords": (self.SECRET,)}, {"redacted_credential_field": ["<redacted credential>"]}),
-            ({"secrets": {"a": self.SECRET}}, {"redacted_credential_field": "<redacted credential>"}),
-            ({"keys": [self.SECRET]}, {"redacted_credential_field": ["<redacted credential>"]}),
-            ({"outer": [{"session_tokens": [self.SECRET]}]},
-             {"outer": [{"redacted_credential_field": ["<redacted credential>"]}]}),
-        )
-        for value, expected in cases:
-            with self.subTest(value=value):
-                public = scenarios.public_values(value)
-                self.assertEqual(public, expected)
-                scenarios.v1.assert_public_safe(public)
-                self.assertNotIn(self.SECRET, json.dumps(public))
-
-    def test_common_credential_names_are_redacted(self):
-        for name in ("aws_access_key_id", "aws_secret_access_key", "docker_auth_config", "ssh_auth_sock",
-                     "credentials", "aws_credentials", "credential", "CLIENT-SECRET"):
-            with self.subTest(name=name):
-                public = scenarios.public_values({name: self.SECRET})
-                self.assertEqual(public, {"redacted_credential_field": "<redacted credential>"})
-                scenarios.v1.assert_public_safe(public)
-
-    def test_a_failure_carrying_a_credential_field_still_writes_a_receipt(self):
-        def failing(_ctx):
-            raise scenarios.ScenarioFailure("measured", {"api_key": self.SECRET, "timings": {"upload_s": 0.5}})
-
-        with mock.patch.object(scenarios, "SCENARIOS", {"x": failing}):
-            result = scenarios.run_scenario(object(), "x")
-        receipt = scenarios.build_receipt(target="production", mode="record",
-                                          settings=scenarios.settings_from_environ(candidate_env()),
-                                          chat_model="chat", health=None, results=[result])
-        self.assertNotIn(self.SECRET, json.dumps(receipt))
-        self.assertEqual(result.values["timings"], {"upload_s": 0.5})
-
-
-class KitBackstopTests(unittest.TestCase):
-    """The kit's receipt and evidence backstop: v1's check, then the widened credential rules."""
-
-    SECRET = "s3cret-V4LUE"
-    CREDENTIAL_NAMES = (
-        "provider_api_keys", "api_keys", "OPENAI_API_KEYS", "apikeys", "tokens", "session_tokens", "passwords",
-        "secrets", "cookies", "keys", "secret_keys", "private_keys", "access_keys", "aws_access_key_id",
-        "aws_secret_access_key", "docker_auth_config", "ssh_auth_sock", "credentials", "aws_credentials",
-        "credential", "session", "session_id", "sid", "passwd", "client_secret", "proxy_authorization",
-    )
-    EXEMPT = {"env_keys": ["HAYSTACK_TELEMETRY_ENABLED"], "stub_requests_with_credential": 0,
-              "runtime_credentials": ["openai-api-key"], "selected_token": 3, "token_count": 512,
-              "nonempty_key_fields": [], "credential_route": "systemd-creds",
-              "redacted_credential_field": ["<redacted credential>"]}
-
-    def test_each_plural_and_compound_credential_field_is_rejected(self):
-        for name in self.CREDENTIAL_NAMES:
-            for value in ({name: [self.SECRET]}, {name: ""}, {"outer": [{name: {"a": self.SECRET}}]}):
-                with self.subTest(name=name, value=value), self.assertRaisesRegex(ValueError, "secret-valued field"):
-                    scenarios.assert_kit_public_safe(value)
-
-    def test_plural_secret_assignments_in_text_are_rejected_and_redacted(self):
-        for text in (f"tokens={self.SECRET}", f"api_keys: {self.SECRET}", f"passwords = {self.SECRET}",
-                     f"secrets:{self.SECRET}", f"api-keys={self.SECRET}"):
-            with self.subTest(text=text):
-                with self.assertRaisesRegex(ValueError, "secret-like material"):
-                    scenarios.assert_kit_public_safe({"detail": text})
-                detail = scenarios.public_detail(f"upstream error: {text}", scenarios.RESULT_DETAIL_LIMIT)
-                self.assertNotIn(self.SECRET, detail)
-                scenarios.assert_kit_public_safe({"detail": detail})
-
-    def test_v1_findings_still_fail_first(self):
-        for value in ({"api_key": "x"}, {"detail": "token=abc"}, {"path": "/home/someone/x"}):
-            with self.subTest(value=value), self.assertRaises(ValueError):
-                scenarios.assert_kit_public_safe(value)
-
-    def test_the_exemptions_and_ordinary_text_pass(self):
-        scenarios.assert_kit_public_safe(self.EXEMPT)
-        scenarios.assert_kit_public_safe({"detail": "the tokens are counted; 3 secrets of the garden", "count": 2})
-        self.assertEqual(scenarios.public_values(self.EXEMPT), self.EXEMPT)
-
-    def test_redacted_failure_values_always_pass_the_backstop(self):
-        for name in self.CREDENTIAL_NAMES:
-            with self.subTest(name=name):
-                scenarios.assert_kit_public_safe(scenarios.public_values({name: [self.SECRET], "outer": {name: "x"}}))
-
-    def test_receipts_use_the_backstop(self):
-        result = scenarios.ScenarioResult("open-webui.resmoke.cited-answer", scenarios.FAIL, "measured", 0.1,
-                                          {"provider_api_keys": [self.SECRET]})
-        with self.assertRaisesRegex(ValueError, "secret-valued field"):
-            scenarios.build_receipt(target="production", mode="record",
-                                    settings=scenarios.settings_from_environ(candidate_env()), chat_model="chat",
-                                    health=None, results=[result])
-        with tempfile.TemporaryDirectory() as directory, \
-                self.assertRaisesRegex(ValueError, "secret-valued field"):
-            scenarios.write_receipt(Path(directory) / "receipt.json", {"tokens": [self.SECRET]})
-
-
-def spellings(*segments):
-    """One field name in each separator style: snake, dotted, dashed, camelCase, upper case, and spaced."""
-
-    words = list(segments)
-    return {
-        "snake": "_".join(words),
-        "dotted": ".".join(words),
-        "dashed": "-".join(words),
-        "camel": words[0] + "".join(word.capitalize() for word in words[1:]),
-        "upper": "_".join(words).upper(),
-        "spaced": " ".join(words),
-    }
-
-
-def nestings(document):
-    """``document`` at the top level, in a list, in a list-held dict, and in a dict-held dict."""
-
-    return {
-        "top": document,
-        "list": [document],
-        "list-held dict": {"outer": [document]},
-        "dict-held dict": {"outer": {"inner": document}},
-    }
-
-
-class CredentialSpellingGridTests(unittest.TestCase):
-    """Every credential spelling is redacted and rejected; every exemption spelling passes."""
-
-    SECRET = "s3cretV4LUE"
-    # Singular and plural credential names, each with and without a prefix.
-    CREDENTIALS = (
-        ("api", "key"), ("api", "keys"), ("openai", "api", "keys"), ("rag", "openai", "api", "key"),
-        ("token",), ("tokens",), ("session", "tokens"), ("password",), ("passwords",), ("admin", "password"),
-        ("secret",), ("secrets",), ("client", "secret"), ("aws", "access", "key", "id"), ("docker", "auth", "config"),
-        ("cookies",), ("private", "keys"),
-    )
-    EXEMPT = {
-        ("env", "keys"): ["HAYSTACK_TELEMETRY_ENABLED"], ("stub", "requests", "with", "credential"): 0,
-        ("runtime", "credentials"): ["openai-api-key"], ("selected", "token"): 3, ("token", "count"): 512,
-        ("nonempty", "key", "fields"): [], ("credential", "route"): "systemd-creds",
-        ("redacted", "credential", "field"): ["<redacted credential>"], ("total", "tokens"): 9,
-    }
-    TEXT_FORMS = {
-        "bare =": "{name}={value}",
-        "bare = spaced": "{name} = {value}",
-        "bare :": "{name}:{value}",
-        "bare : spaced": "{name}: {value}",
-        "JSON string": '"{name}": "{value}"',
-        "JSON string tight": '"{name}":"{value}"',
-        "JSON list": '"{name}": ["{value}"]',
-        "JSON object": '"{name}": {{"v": "{value}"}}',
-        "single-quoted": "'{name}': '{value}'",
-    }
-
-    def assert_redacted_and_rejected(self, document):
-        with self.assertRaises(ValueError):
-            scenarios.assert_kit_public_safe(document)
-        public = scenarios.public_values(document)
-        self.assertNotIn(self.SECRET, json.dumps(public))
-        scenarios.assert_kit_public_safe(public)
-
-    def test_codex_examples(self):
-        # r4181135457: a dotted plural field name.
-        secret = self.SECRET
-        with self.assertRaises(ValueError):
-            scenarios.assert_kit_public_safe({"openai.api_keys": [secret]})
-        self.assertEqual(scenarios.public_values({"openai.api_keys": [secret]}),
-                         {"redacted_credential_field": ["<redacted credential>"]})
-        # r4181135461: a structured upstream error serialized before redaction.
-        for body in ({"detail": {"api_keys": ["s3cret"]}}, {"error": {"tokens": ["s3cret"]}}):
-            with self.subTest(body=body):
-                detail = scenarios.response_detail(
-                    scenarios.Response(400, "application/json", json.dumps(body).encode()))
-                self.assertNotIn("s3cret", detail)
-                scenarios.assert_kit_public_safe({"detail": detail})
-        for text in ('upstream 400: {"api_keys": ["s3cret"]}', 'upstream 400: {"tokens": ["s3cret", "t2"]}'):
-            with self.subTest(text=text):
-                with self.assertRaises(ValueError):
-                    scenarios.assert_kit_public_safe({"detail": text})
-                detail = scenarios.public_detail(text)
-                self.assertNotIn("s3cret", detail)
-                scenarios.assert_kit_public_safe({"detail": detail})
-
-    def test_every_credential_field_spelling_and_nesting_is_redacted_and_rejected(self):
-        for segments in self.CREDENTIALS:
-            for style, name in spellings(*segments).items():
-                for value in ([self.SECRET], self.SECRET):
-                    for where, document in nestings({name: value, "kept": 1}).items():
-                        with self.subTest(name=name, style=style, value=value, where=where):
-                            self.assert_redacted_and_rejected(document)
-
-    def test_every_credential_text_form_is_redacted_and_rejected(self):
-        for segments in self.CREDENTIALS:
-            for style, name in spellings(*segments).items():
-                for form, template in self.TEXT_FORMS.items():
-                    text = "upstream error: " + template.format(name=name, value=self.SECRET)
-                    with self.subTest(name=name, style=style, form=form):
-                        detail = scenarios.public_detail(text, scenarios.RESULT_DETAIL_LIMIT)
-                        self.assertNotIn(self.SECRET, detail)
-                        self.assertTrue(detail.startswith("upstream error:"))
-                        scenarios.assert_kit_public_safe({"detail": detail})
-                        for where, document in nestings({"detail": text}).items():
-                            with self.subTest(where=where), self.assertRaises(ValueError):
-                                scenarios.assert_kit_public_safe(document)
-
-    def test_whole_json_text_is_redacted_structurally(self):
-        for segments in self.CREDENTIALS:
-            for style, name in spellings(*segments).items():
-                text = json.dumps({"status": 400, "outer": [{name: [self.SECRET]}]})
-                with self.subTest(name=name, style=style):
-                    detail = scenarios.public_detail(text, scenarios.RESULT_DETAIL_LIMIT)
-                    self.assertEqual(json.loads(detail), {
-                        "outer": [{"redacted_credential_field": ["<redacted credential>"]}], "status": 400})
-                    scenarios.assert_kit_public_safe({"detail": detail})
-
-    def test_every_exemption_spelling_passes(self):
-        for segments, value in self.EXEMPT.items():
-            for style, name in spellings(*segments).items():
-                with self.subTest(name=name, style=style):
-                    for where, document in nestings({name: value}).items():
-                        with self.subTest(where=where):
-                            scenarios.assert_kit_public_safe(document)
-                            self.assertEqual(scenarios.public_values(document), document)
-                    for form in ("bare =", "bare : spaced", "JSON string", "JSON list"):
-                        text = "measured " + self.TEXT_FORMS[form].format(name=name, value="3")
-                        with self.subTest(form=form):
-                            if segments == ("selected", "token") and style in ("dotted", "dashed", "spaced") \
-                                    and form.startswith("bare"):
-                                # v1's unchanged singular assignment rule, which the
-                                # backstop runs first, matches a bare ``token=`` or
-                                # ``token:`` after a ``.`` or ``-``: an over-rejection,
-                                # never a leak.
-                                with self.assertRaises(ValueError):
-                                    scenarios.v1.assert_public_safe({"detail": text})
-                                continue
-                            self.assertEqual(scenarios.public_detail(text, scenarios.RESULT_DETAIL_LIMIT), text)
-                            scenarios.assert_kit_public_safe({"detail": text})
-
-    def test_boolean_and_null_flags_are_not_credentials(self):
-        # Committed Qdrant browser evidence records whether a credential exists.
-        flags = {"authentication": {"browserCredential": {"adminSecret": False}}}
-        scenarios.assert_kit_public_safe(flags)
-        self.assertEqual(scenarios.public_values(flags), flags)
-        for segments in (("admin", "secret"), ("openai", "api", "keys"), ("session", "tokens")):
-            for style, name in spellings(*segments).items():
-                if scenarios.v1._contains_secret_field({name: None}):
-                    continue  # v1's own rule rejects the name whatever its value
-                for flag in (True, False, None):
-                    with self.subTest(name=name, style=style, flag=flag):
-                        for where, document in nestings({name: flag}).items():
-                            with self.subTest(where=where):
-                                scenarios.assert_kit_public_safe(document)
-                        bare = f"{name}={json.dumps(flag)}"
-                        if scenarios.v1._SECRET_ASSIGNMENT.search(bare):
-                            # v1's unchanged singular assignment rule matches a bare
-                            # ``secret=`` after a ``.`` or ``-``: over-rejected, never leaked.
-                            with self.assertRaises(ValueError):
-                                scenarios.assert_kit_public_safe({"detail": bare})
-                            bare = ""
-                        text = f'checked "{name}": {json.dumps(flag)}' + (f", {bare}" if bare else "")
-                        self.assertEqual(scenarios.public_detail(text), text)
-                        scenarios.assert_kit_public_safe({"detail": text})
-                with self.subTest(name=name, style=style, value="false-ish"):
-                    with self.assertRaises(ValueError):
-                        scenarios.assert_kit_public_safe({name: "false-ish"})
-                    with self.assertRaises(ValueError):
-                        scenarios.assert_kit_public_safe({"detail": f'"{name}": "false-ish"'})
-        # A name v1 itself rejects stays rejected, and redacted, whatever its value.
-        with self.assertRaises(ValueError):
-            scenarios.assert_kit_public_safe({"secret": False})
-        self.assertEqual(scenarios.public_values({"secret": False}),
-                         {"redacted_credential_field": "<redacted credential>"})
-
-    PROSE_JSON_FORMS = {
-        "embedded object": lambda name, secret: "upstream 400: " + json.dumps({name: [secret], "ok": 1}) + " (retry)",
-        "embedded nested": lambda name, secret: "error " + json.dumps({"outer": [{"inner": {name: secret}}]}) + ".",
-        "embedded list": lambda name, secret: "got " + json.dumps([1, {name: secret}]) + " then stop",
-        "two embedded": lambda name, secret: 'a {"n": 1} b ' + json.dumps({name: secret}) + " c",
-        "truncated": lambda name, secret: "upstream 400: " + json.dumps({name: [secret, "x"]})[:-3],
-        "malformed unquoted": lambda name, secret: f'upstream 400: {{"ok": 1, "{name}": "{secret}", bad}}',
-        "single-quoted dict": lambda name, secret: f"upstream 400: {{'{name}': '{secret}'}}",
-    }
-
-    def test_every_embedded_json_form_is_redacted_and_rejected(self):
-        # r4185383096, literally.
-        literal = 'upstream 400: {"aws access key id": ["s3cretV4LUE"]}'
-        with self.assertRaises(ValueError):
-            scenarios.assert_kit_public_safe({"detail": literal})
-        self.assertEqual(scenarios.public_detail(literal),
-                         'upstream 400: {"redacted_credential_field": ["<redacted credential>"]}')
-        self.assertEqual(scenarios.credential_term("aws access key id"), "access_key_id")
-        for segments in self.CREDENTIALS:
-            for style, name in spellings(*segments).items():
-                for form, build in self.PROSE_JSON_FORMS.items():
-                    text = build(name, self.SECRET)
-                    with self.subTest(name=name, style=style, form=form):
-                        detail = scenarios.public_detail(text, scenarios.RESULT_DETAIL_LIMIT)
-                        self.assertNotIn(self.SECRET, detail)
-                        scenarios.assert_kit_public_safe({"detail": detail})
-                        for where, document in nestings({"detail": text}).items():
-                            with self.subTest(where=where), self.assertRaises(ValueError):
-                                scenarios.assert_kit_public_safe(document)
-
-    def test_embedded_json_keeps_prose_and_exemptions(self):
-        text = 'upstream 400: {"api_keys": ["s3cretV4LUE"], "status": 400} (retry later)'
-        self.assertEqual(scenarios.public_detail(text),
-                         'upstream 400: {"redacted_credential_field": ["<redacted credential>"], "status": 400}'
-                         " (retry later)")
-        for segments, value in self.EXEMPT.items():
-            for style, name in spellings(*segments).items():
-                text = "measured " + json.dumps({name: value}) + " and " + json.dumps([{name: value}])
-                with self.subTest(name=name, style=style):
-                    self.assertEqual(scenarios.public_detail(text, scenarios.RESULT_DETAIL_LIMIT), text)
-                    scenarios.assert_kit_public_safe({"detail": text})
-
-    def test_embedded_json_work_is_bounded(self):
-        # Unbalanced openers and an over-long fragment never decode; the pattern still cuts.
-        for text in ("[" * 50000 + ' "tokens": ["s3cretV4LUE"]', "{" * 100 + json.dumps({"tokens": ["s3cretV4LUE"]}),
-                     "x" + json.dumps({"pad": "a" * (scenarios.JSON_SPAN + 10), "tokens": ["s3cretV4LUE"]})):
-            with self.subTest(text=text[:20]):
-                started = time.monotonic()
-                detail = scenarios.public_detail(text, scenarios.RESULT_DETAIL_LIMIT)
-                with self.assertRaises(ValueError):
-                    scenarios.assert_kit_public_safe({"detail": text})
-                self.assertLess(time.monotonic() - started, 5.0)
-                self.assertNotIn("s3cretV4LUE", detail)
-
-    def test_a_long_run_before_an_assignment_is_redacted_in_bounded_time(self):
-        blob = "QUJD" * 50000  # 200,000 characters of unbroken base64-like text
-        for text in (blob + " token=s3cretV4LUE", "x." + blob + ".token=s3cretV4LUE", blob + " api_keys=s3cretV4LUE"):
-            with self.subTest(text=text[-30:]):
-                started = time.monotonic()
-                redacted = scenarios._redact_credential_lines(text)
-                detail = scenarios.public_detail(text, len(text) + 100)
-                found = scenarios.first_secret_assignment(text)
-                with self.assertRaises(ValueError):
-                    scenarios.assert_kit_public_safe({"detail": text})
-                self.assertLess(time.monotonic() - started, 5.0)
-                if "token=" in text:  # the line redaction covers singular names
-                    self.assertNotIn("s3cretV4LUE", redacted)
-                self.assertNotIn("s3cretV4LUE", detail)
-                self.assertIsNotNone(found)
-
-    def test_a_name_longer_than_the_lookback_is_never_exempt(self):
-        short = "x.selected.token: 3"
-        self.assertEqual(scenarios._redact_assignment(short), short)
-        long = "x" * (scenarios.NAME_LOOKBACK + 10) + ".selected.token: 3"
-        self.assertTrue(scenarios._redact_assignment(long).endswith("<redacted credential>"))
-
-    def test_descriptive_nouns_in_prose_pass_but_not_as_assignments(self):
-        condition = "credentials: 0400-file fallback; systemd-creds --user unavailable"
-        self.assertEqual(scenarios.public_detail(condition), condition)
-        scenarios.assert_kit_public_safe({"conditions": [condition]})
-        for text in ('"credentials": "x1"', "credentials=x1", "session=x1", '"keys": ["x1"]'):
-            with self.subTest(text=text), self.assertRaises(ValueError):
-                scenarios.assert_kit_public_safe({"detail": text})
-        self.assertEqual(scenarios.public_detail("plain ratio: 3 of 4; http://h:8080/x"),
-                         "plain ratio: 3 of 4; http://h:8080/x")
 
 
 class StubProviderTests(unittest.TestCase):

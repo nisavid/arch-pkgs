@@ -126,6 +126,8 @@ PROVIDERS_OF_RECORD_NOTE = (
 HOST_TOOLS = (
     "bwrap", "socat", "bsdtar", "unshare", "systemd-creds", "systemd-run",
     "systemctl", "journalctl", "valkey-server", "ss",
+    # The public-evidence gate (sc.gitleaks_withhold_reason): Arch package gitleaks (extra).
+    sc.GITLEAKS,
 )
 PYTHON_SITE_PACKAGES = ("python-rapidocr", "python-faster-whisper", "python-omegaconf", "python-antlr4")
 LEGACY_OPT = Path("/opt/open-webui")
@@ -2251,7 +2253,7 @@ def reply_detail(status: int, detail: Any) -> str | None:
 
     if status == 200 or detail is None:
         return None
-    return sc.public_detail(detail if isinstance(detail, str) else json.dumps(detail, sort_keys=True))
+    return sc.public_detail(detail if isinstance(detail, str) else json.dumps(detail, sort_keys=True), status=status)
 
 
 def cited_check(webui: sc.Endpoint, token: str, chat_model: str, file_id: str) -> dict[str, Any]:
@@ -3084,9 +3086,11 @@ def profile_persistence(profile: Mapping[str, str], overlay: Mapping[str, str],
 class Step:
     id: str
     result: str
+    # The private detail: public evidence carries sc.public_detail's summary of a non-PASS one.
     detail: str
     duration_s: float
     values: dict[str, Any] = dataclasses.field(default_factory=dict)
+    error_type: str | None = None
 
     def line(self) -> str:
         return f"{self.id} {self.result} {self.detail}"
@@ -3108,6 +3112,12 @@ def migration_errors(lines: Iterable[str]) -> list[str]:
         line for line in lines
         if "alembic" in line.lower() and not PYTHON_WARNING.search(line) and MIGRATION_FAILURE.search(line)
     ]
+
+
+# The trial's private evidence, with every failure's full detail, under the
+# root's raw evidence directory (mode 0600); teardown refuses until it is
+# moved out of the root.
+PRIVATE_EVIDENCE = "trial-evidence.json"
 
 
 class Stop(Exception):
@@ -3145,18 +3155,20 @@ class Trial:
 
     def step(self, step_id: str, action: Callable[[], dict[str, Any] | Passed], *, critical: bool = False) -> None:
         started = time.monotonic()
+        error_type: str | None = None
         try:
             outcome, result = action(), sc.PASS
             values, detail = (outcome.values, outcome.detail) if isinstance(outcome, Passed) else (outcome, "ok")
         except sc.Escalation as error:
-            values, result, detail = dict(error.values), sc.ESCALATE, str(error)
+            values, result, detail, error_type = dict(error.values), sc.ESCALATE, str(error), "Escalation"
         except sc.Blocked as error:
-            values, result, detail = self.failure_values(error), sc.BLOCKED, str(error)
+            values, result, detail, error_type = self.failure_values(error), sc.BLOCKED, str(error), "Blocked"
         except STEP_FAILURES as error:
             # The one trial promises every value: a failed step keeps what it
-            # measured, not only the redacted, truncated detail.
+            # measured, and its full detail stays in the private evidence.
             values, result, detail = self.failure_values(error), sc.FAIL, failure_text(error)
-        self.record(Step(step_id, result, detail, round(time.monotonic() - started, 3), values))
+            error_type = sc.failure_type(error)
+        self.record(Step(step_id, result, detail, round(time.monotonic() - started, 3), values, error_type))
         if result in {sc.ESCALATE, sc.BLOCKED} or (critical and result == sc.FAIL):
             raise Stop()
 
@@ -3177,8 +3189,10 @@ class Trial:
         try:
             outcome = sc.run_scenario(ctx, scenario_id)
         except STEP_FAILURES as error:
-            outcome = sc.ScenarioResult(scenario_id, sc.FAIL, f"{type(error).__name__}: {error}", 0.0)
-        self.record(Step(outcome.id, outcome.result, outcome.detail, outcome.duration_s, outcome.values))
+            outcome = sc.ScenarioResult(scenario_id, sc.FAIL, f"{type(error).__name__}: {error}", 0.0,
+                                        error_type=type(error).__name__)
+        self.record(Step(outcome.id, outcome.result, outcome.detail, outcome.duration_s, outcome.values,
+                         outcome.error_type))
         if outcome.result in {sc.ESCALATE, sc.BLOCKED}:
             raise Stop()
 
@@ -3827,13 +3841,9 @@ class Trial:
         exit_code = sc.aggregate_exit_code(results)
         if restarted and exit_code == sc.EXIT_PASS:
             exit_code = sc.EXIT_PRECONDITION
-        evidence = build_evidence(kit, self, exit_code, restarted)
-        try:
-            sc.assert_kit_public_safe(evidence)
-            safe = True
-            detail = "ok"
-        except ValueError as error:
-            safe, detail = False, str(error)
+        # The public form's checks: v1.assert_public_safe, then the gitleaks gate.
+        reason = sc.public_withhold_reason(build_evidence(kit, self, exit_code, restarted))
+        safe, detail = reason is None, reason or "ok"
         drills = self.drill_counts()
         complete = drills == {"restore_drills": 1, "rollback_drills": 1}
         if safe and not complete:
@@ -3852,23 +3862,29 @@ class Trial:
         elif restarted is None:
             print("lemonade restart: not detectable from /api/v1/health; compare the Lemonade service start "
                   "times recorded before and after trial", file=sys.stderr)
-        # The one trial's values always survive: the full document goes to a
-        # private raw file first, and only the public copy waits on the
-        # safety check.
-        private = kit.raw / "trial-evidence.json"
+        # The one trial's values always survive: the private document, with
+        # every step's full detail, goes to a private raw file first, and only
+        # the public copy, with their summaries, waits on the checks.
+        private = kit.raw / PRIVATE_EVIDENCE
         private.parent.mkdir(parents=True, exist_ok=True)
         descriptor = os.open(private, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            handle.write(json.dumps(evidence, indent=2, sort_keys=True, ensure_ascii=False) + "\n")
+            handle.write(json.dumps(build_evidence(kit, self, exit_code, restarted, public=False),
+                                    indent=2, sort_keys=True, ensure_ascii=False) + "\n")
         os.chmod(private, 0o600)
         if safe:
-            sc.assert_kit_public_safe(evidence)
+            # The final public document adds the evidence step; check it again.
+            reason = sc.public_withhold_reason(evidence)
+            safe, detail = reason is None, reason or detail
+            if not safe and exit_code == sc.EXIT_PASS:
+                exit_code = sc.EXIT_FAIL
+        if safe:
             destination = kit.path("evidence", "public", f"open-webui-household-acceptance-{time.strftime('%Y-%m-%d', time.gmtime())}.json")
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_text(json.dumps(evidence, indent=2, sort_keys=True, ensure_ascii=False) + "\n")
             print(f"evidence: {destination}")
         else:
-            print(f"evidence: NOT public-safe ({detail}); the full document is kept privately at {private}",
+            print(f"evidence: NOT written publicly ({detail}); the full document is kept privately at {private}",
                   file=sys.stderr)
         expectation = evidence.get("production_expectation")
         if expectation:
@@ -4045,7 +4061,16 @@ def private_credstore(path: Path) -> None:
             os.chmod(item, 0o400)
 
 
-def build_evidence(kit: Kit, trial: Trial, exit_code: int, lemond_restarted_: bool | None) -> dict[str, Any]:
+def build_evidence(kit: Kit, trial: Trial, exit_code: int, lemond_restarted_: bool | None, *,
+                   public: bool = True) -> dict[str, Any]:
+    """The trial's evidence document.
+
+    The public form carries ``sc.public_detail``'s summary of every non-PASS
+    step detail, never its text, and its path tokens; the private form
+    (``public=False``, written to ``<root>/evidence/raw/trial-evidence.json``)
+    carries every detail in full.
+    """
+
     disposition = (
         "void: Lemonade restarted during the trial"
         if lemond_restarted_
@@ -4077,12 +4102,13 @@ def build_evidence(kit: Kit, trial: Trial, exit_code: int, lemond_restarted_: bo
         "conditions": trial_conditions(kit) + ([] if lemond_restarted_ is not None else [LEMONADE_RESTART_CONDITION]),
         "production_expectation": production_expectation_for(kit),
         # A step's detail is exception text that can carry whatever a server
-        # returned; redact it like a receipt's, after the path tokens apply.
-        "steps": [{**dataclasses.asdict(step), "detail": sc.public_detail(publicize(step.detail, kit.replacements()),
-                                                                          sc.RESULT_DETAIL_LIMIT)}
+        # returned, so the public form carries only its summary.
+        "steps": [{**dataclasses.asdict(step),
+                   "detail": (sc.public_detail(step.detail, error_type=step.error_type)
+                              if public and step.result != sc.PASS else step.detail)}
                   for step in trial.steps],
     }
-    return publicize(document, kit.replacements())
+    return publicize(document, kit.replacements()) if public else document
 
 
 def production_expectation_for(kit: Kit) -> dict[str, Any] | None:
@@ -4538,7 +4564,7 @@ def cmd_teardown(kit: Kit, args: argparse.Namespace) -> int:
                          "pass --keep-plaintext-credentials to keep the test-only 0400 files")
     if keep and not kit.anchor.is_dir():
         raise sc.Blocked("there is no anchor to keep")
-    private = kit.raw / "trial-evidence.json"
+    private = kit.raw / PRIVATE_EVIDENCE
     public = sorted(kit.path("evidence", "public").glob("*.json")) if kit.path("evidence", "public").is_dir() else []
     if state.get("mode") == "record" and private.is_file() and not public:
         raise sc.Blocked(f"the trial's evidence was not public-safe and {private} is its only copy; "

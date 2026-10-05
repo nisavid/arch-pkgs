@@ -29,8 +29,10 @@ import os
 import re
 import socket
 import ssl
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.parse
 import uuid
@@ -942,441 +944,150 @@ class Endpoint:
         return response.json()
 
 
-ERROR_DETAIL_LIMIT = 200
-# A scenario or step result's detail can carry the step's JSON values.
+# A private failure detail is bounded: an upstream body can be large.
 RESULT_DETAIL_LIMIT = 4000
-# Credential material is redacted value included: from a credential header
-# or assignment to the end of its line, since a header's value runs to the
-# line end.  Header names cover Authorization, Proxy-Authorization, Cookie,
-# Set-Cookie, and X-Api-Key-style names, also as JSON or Python-dict keys.
-_CREDENTIAL_HEADER = re.compile(
-    r"(?i)[\"']?\b(?:proxy-authorization|authorization|set-cookie|cookie"
-    r"|x-[\w-]*(?:api[_-]?key|token|secret|auth[\w-]*)|api[_-]?key|access[_-]?token|auth[_-]?token)"
-    r"\b[\"']?\s*[:=].*"
-)
-_CREDENTIAL_ASSIGNMENT = re.compile(
-    r"(?i)\b(?P<word>password|passwd|secret|client[_-]?secret|token|key|api[_-]?key|access[_-]?key|session(?:id)?|sid)"
-    r"[\"']?\s*[=:]"
-)
-# How far ``_redact_assignment`` looks back for the rest of a dotted or
-# dashed name before a credential word.  A longer run is a blob, not a
-# name, so it is not exempt.
-NAME_LOOKBACK = 256
-# An HTTP auth scheme with its credential, wherever it appears in a line.
-_AUTH_SCHEME = re.compile(r"(?i)\b(?P<scheme>bearer|basic|digest|negotiate|ntlm|hoba|mutual|token)\s+(?P<credential>\S+)")
-_LEADING_NAME = re.compile(r"[A-Za-z][\w.\-]*")
-_KEY_MATERIAL = re.compile(r"-----BEGIN [A-Z0-9 ]+-----.*?(?:-----END [A-Z0-9 ]+-----|\Z)", re.DOTALL)
-_DETAIL_REDACTIONS = (
-    (re.compile(r"\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b"), "<email>"),
-    (re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b"), "<address>"),
-    # An absolute path, unless it follows an evidence token such as <root> or ~.
-    (re.compile(r"(?<![\w.:/>~])/(?:[\w.@+-]+/)+[\w.@+-]*"), "<path>"),
-    # Whatever else the public-safety check itself refuses.
-    (v1._PRIVATE_IPV6, "<address>"),
-    (v1._PRIVATE_HOSTNAME, "<host>"),
-    (v1._ABSOLUTE_PRIVATE_PATH, " <path>"),
-)
+PRIVATE_DETAIL_NOTE = "full detail kept in the private copy"
+_HTTP_STATUS = re.compile(r"\bHTTP (\d{3})\b")
+_ERROR_TYPE = re.compile(r"[A-Za-z_][\w.]{0,63}")
+_CONTENT_TYPE = re.compile(r"[\w.+-]{1,64}/[\w.+-]{1,64}")
 
 
-def _redact_credential_lines(text: str) -> str:
-    """Replace credential material, value included, line by line, before lines are joined."""
+def public_detail(text: str, *, error_type: str | None = None, status: int | None = None,
+                  content_type: str | None = None) -> str:
+    """A fixed public summary of a failure detail; no part of the text is copied.
 
-    text = _KEY_MATERIAL.sub("<redacted key material>", text)
-    lines = []
-    for line in text.splitlines():
-        line = _CREDENTIAL_HEADER.sub("<redacted credential>", line)
-        line = _redact_assignment(line)
-        lines.append(_redact_auth_scheme(line))
-    return "\n".join(lines)
-
-
-def _redact_auth_scheme(line: str) -> str:
-    """The line up to its first auth scheme with a credential, then a marker.
-
-    An exempt measurement name that only reads like a scheme, such as
-    ``token count``, is kept.
+    The summary names the error type, the HTTP status (given, or the first
+    ``HTTP <code>`` the text names), the media type, the text's length in
+    bytes, and the first 16 hex digits of its SHA-256.  The text itself lives
+    only in the private copy: the trial's private evidence file
+    (``<root>/evidence/raw/trial-evidence.json``) or the re-smoke's private
+    receipt (``private_receipt_path``).
     """
 
-    for match in _AUTH_SCHEME.finditer(line):
-        word = _LEADING_NAME.match(match.group("credential"))
-        if word and exempt_field(f"{match.group('scheme')} {word.group(0)}"):
-            continue
-        return line[: match.start()] + "<redacted credential>"
-    return line
+    raw = text.encode("utf-8", "replace")
+    if status is None:
+        found = _HTTP_STATUS.search(text)
+        status = int(found.group(1)) if found else None
+    parts: list[str] = []
+    if error_type and _ERROR_TYPE.fullmatch(error_type):
+        parts.append(error_type)
+    if status is not None:
+        parts.append(f"HTTP {status}")
+    media = _CONTENT_TYPE.match(content_type.strip()) if content_type else None
+    if media:
+        parts.append(media.group(0).lower())
+    parts += [f"{len(raw)} bytes", f"sha256:{hashlib.sha256(raw).hexdigest()[:16]}", PRIVATE_DETAIL_NOTE]
+    return "; ".join(parts)
 
 
-def _redact_assignment(line: str) -> str:
-    """The line up to its first credential assignment, then a marker; an exempt name is kept."""
+def failure_type(error: BaseException) -> str:
+    """The type a failure's detail names: a MeasuredFailure's original error, else its own."""
 
-    for match in _CREDENTIAL_ASSIGNMENT.finditer(line):
-        # A backward walk bounded by NAME_LOOKBACK, so a long unbroken run
-        # (a base64 body) costs at most that much per match.
-        start = match.start()
-        floor = max(0, start - NAME_LOOKBACK)
-        begin = start
-        while begin > floor and (line[begin - 1].isalnum() or line[begin - 1] in "_.-"):
-            begin -= 1
-        truncated = begin == floor and begin > 0 and (line[begin - 1].isalnum() or line[begin - 1] in "_.-")
-        if truncated:
-            # The whole name is unknown: never exempt it or read it as a flag.
-            return line[:start] + "<redacted credential>"
-        own = line[begin:start] + match.group("word")
-        quoted = _QUOTED_NAME_HEAD.search(line, floor, begin)
-        if quoted:
-            # Inside a quoted name, spaces included: the quotes bound it.
-            own = quoted.group("inner") + own
-            names = (own,)
-        else:
-            before = _PRECEDING_WORDS.search(line, floor, begin)
-            names = (own, " ".join(before.group("words").split() + [own])) if before else (own,)
-        if any(exempt_field(name) for name in names):
-            continue
-        if _FLAG_VALUE.match(line, match.end()) and not v1._contains_secret_field({own: None}):
-            continue  # a flag, not a credential (see ``credential_entry``)
-        return line[:start] + "<redacted credential>"
-    return line
-
-
-def public_detail(text: str, limit: int = ERROR_DETAIL_LIMIT) -> str:
-    """One line of error text, bounded and redacted for public evidence and receipts.
-
-    Every JSON object or list embedded in the text, or the whole text when
-    it is one, as ``response_detail`` serializes a structured upstream
-    error, is redacted structurally first (``embedded_json`` and
-    ``public_values``: credential-named fields renamed, their values
-    redacted) and spliced back in.  Then credential material goes first and whole: header
-    values, auth-scheme tokens, cookies, and secret assignments, each to the
-    end of its line.  Anything the kit backstop would still refuse as
-    credential material (v1's guards and the quote-tolerant credential
-    assignment, ``first_secret_assignment``) cuts the text there, so a
-    marker is never removed while its value stays; ``assert_kit_public_safe``
-    still checks every receipt after this.
-    """
-
-    line = " ".join(_redact_credential_lines(_redact_embedded_json(text)).split())
-    for pattern, token in _DETAIL_REDACTIONS:
-        line = pattern.sub(token, line)
-    for guard in (v1._AUTHENTICATION_MATERIAL, v1._SECRET_ASSIGNMENT):
-        found = guard.search(line)
-        if found:
-            line = line[: found.start()] + "<redacted credential>"
-    start = first_secret_assignment(line)
-    if start is not None:
-        line = line[:start] + "<redacted credential>"
-    line = line.strip()
-    return line if len(line) <= limit else line[: limit - 1] + "…"
-
-
-# Embedded JSON.  ``embedded_json`` decodes the JSON objects and lists in
-# a text with ``json.JSONDecoder.raw_decode`` at each ``{`` or ``[``.  The
-# work is bounded: at most JSON_ATTEMPTS decode attempts, each over at most
-# JSON_SPAN characters.  A fragment that does not decode within those
-# bounds (malformed, truncated, or too long) is left to the quote-tolerant
-# text pattern, which cuts at the first credential assignment it finds.
-JSON_ATTEMPTS = 64
-JSON_SPAN = 65536
-_JSON_OPENER = re.compile(r"[\[{]")
-_JSON_DECODER = json.JSONDecoder()
-
-
-def embedded_json(text: str) -> Iterator[tuple[int, int, Any]]:
-    """Yield ``(start, end, value)`` for each JSON object or list embedded in ``text``."""
-
-    position, attempts = 0, 0
-    while attempts < JSON_ATTEMPTS:
-        opener = _JSON_OPENER.search(text, position)
-        if opener is None:
-            return
-        start = opener.start()
-        attempts += 1
-        try:
-            value, length = _JSON_DECODER.raw_decode(text[start:start + JSON_SPAN])
-        except (ValueError, RecursionError):
-            position = start + 1
-            continue
-        yield start, start + length, value
-        position = start + length
-
-
-def _redact_embedded_json(text: str) -> str:
-    """``text`` with every embedded JSON object or list that holds anything to redact redacted structurally.
-
-    A fragment ``public_values`` leaves unchanged keeps its original text.
-    """
-
-    pieces, position = [], 0
-    for start, end, value in embedded_json(text):
-        public = public_values(value)
-        if public == value:
-            continue
-        pieces += [text[position:start], json.dumps(public, sort_keys=True, ensure_ascii=False)]
-        position = end
-    return "".join(pieces) + text[position:] if pieces else text
-
-
-# The kit's one widened public-safety rule.  ``v1.assert_public_safe``
-# stays the measurement tool's own check, byte-identical because dated
-# envelope evidence binds that file by digest; the kit's receipts and
-# evidence go through ``assert_kit_public_safe``, which runs it first and
-# then these rules.  The failure-value redaction (``public_values``), the
-# detail redaction (``public_detail``), and the backstop share them.
-#
-# Field names.  ``field_segments`` normalizes a name the same way for
-# every spelling: camelCase boundaries split, lower-cased, and split on
-# every non-alphanumeric separator (``.``, ``-``, ``_``, space, ``/``,
-# ``:``), so ``openai.api_keys``, ``OPENAI_API_KEYS``, ``openai-api-keys``,
-# and ``openaiApiKeys`` all end in the segments ``api``, ``keys``.  A name
-# is credential-valued when the last one, two, or three segments, joined
-# with ``_``, are one of ``_SECRET_TERMS``, or when the whole name is one
-# of ``_WHOLE_NAME_TERMS`` (``keys`` and ``credential`` alone: as suffixes
-# they name the kit's measurements, ``env_keys`` and
-# ``stub_requests_with_credential``); v1's own field rule is kept as well.
-_SECRET_TERMS = frozenset({
-    # v1's names and suffixes.
-    "api_key", "authorization", "bearer", "cookie", "password", "secret", "token",
-    # Plural forms, such as Open WebUI's OPENAI_API_KEYS lists.
-    "api_keys", "cookies", "passwords", "secrets", "tokens",
-    # The other names this module's credential-line redaction treats as secrets.
-    "passwd", "apikey", "apikeys", "access_key", "access_keys", "private_key", "private_keys",
-    "secret_key", "secret_keys", "session", "session_id", "sessionid", "sid",
-    # Common credential names.
-    "access_key_id", "auth_config", "auth_sock", "credentials",
-})
-_WHOLE_NAME_TERMS = frozenset({"keys", "credential"})
-# Measurement names that only look credential-named, exempt under every
-# spelling and after any prefix.
-_NOT_SECRET_FIELDS = (
-    "env_keys", "stub_requests_with_credential", "runtime_credentials", "selected_token", "token_count",
-    "nonempty_key_fields", "credential_route", "redacted_credential_field",
-    # OpenAI-style token counts and limits, as chat usage and requests carry them.
-    "max_tokens", "prompt_tokens", "completion_tokens", "total_tokens", "input_tokens", "output_tokens",
-)
-# Terms that also read as plain nouns: a bare ``credentials: …`` in prose,
-# as the kit's own trial condition reads, is not an assignment.  Quoted
-# (``"credentials": …``) or with ``=``, they still are.
-_DESCRIPTIVE_TERMS = frozenset({"credential", "credentials", "keys", "session", "sid"})
-_CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
-_FIELD_SEPARATOR = re.compile(r"[^0-9a-z]+")
-
-
-def field_segments(name: str) -> tuple[str, ...]:
-    """A field name's lower-case segments, split at separators and camelCase boundaries."""
-
-    return tuple(part for part in _FIELD_SEPARATOR.split(_CAMEL_BOUNDARY.sub("_", name).lower()) if part)
-
-
-_EXEMPT_SEGMENTS = tuple(field_segments(name) for name in _NOT_SECRET_FIELDS)
-
-
-def exempt_field(name: str) -> bool:
-    """Whether a field name ends in an exempt measurement name, under any spelling."""
-
-    segments = field_segments(name)
-    return any(len(segments) >= len(exempt) and segments[-len(exempt):] == exempt for exempt in _EXEMPT_SEGMENTS)
-
-
-def credential_term(name: str) -> str | None:
-    """The credential term a field name ends in, or None (exempt names included)."""
-
-    segments = field_segments(name)
-    if not segments or exempt_field(name):
-        return None
-    for size in (3, 2, 1):
-        if len(segments) >= size and "_".join(segments[-size:]) in _SECRET_TERMS:
-            return "_".join(segments[-size:])
-    whole = "_".join(segments)
-    return whole if whole in _WHOLE_NAME_TERMS else None
-
-
-def secret_field_name(key: Any) -> bool:
-    """Whether a mapping key names a credential-valued field (the kit's widened rule)."""
-
-    text = key if isinstance(key, str) else str(key)
-    return credential_term(text) is not None or v1._contains_secret_field({text: None})
-
-
-def credential_field(key: Any) -> bool:
-    """Whether a mapping key names a credential-valued field."""
-
-    return isinstance(key, str) and secret_field_name(key)
-
-
-def credential_entry(key: Any, value: Any) -> bool:
-    """Whether a mapping entry holds credential material.
-
-    v1's own field rule rejects a name whatever its value, so it always
-    counts.  The widened rule counts a credential-named field unless its
-    value is a boolean or null: a flag such as Qdrant browser evidence's
-    ``browserCredential.adminSecret: false`` records whether a credential
-    exists and cannot hold one.
-    """
-
-    text = key if isinstance(key, str) else str(key)
-    if v1._contains_secret_field({text: None}):
-        return True
-    return credential_term(text) is not None and not isinstance(value, (bool, type(None)))
-
-
-# Text.  One quote-tolerant assignment: a quoted name (JSON-escaped or
-# not, and up to 128 characters, spaces included, for malformed JSON such
-# as ``{"aws access key id": [...`` that does not decode), or a bare name
-# that may be dotted or dashed with an optional closing quote; then
-# optional whitespace, ``:`` or ``=``, then optional whitespace and a
-# value: a quoted string, a bare token, or the start of a JSON list or
-# object.  The value is a lookahead, so a non-credential name never
-# consumes a credential assignment that follows it.  It is a credential
-# assignment when the name is a credential field name, except a bare
-# ``<descriptive noun>: …`` (see ``_DESCRIPTIVE_TERMS``).
-_ASSIGNMENT = re.compile(
-    r"""(?<![\w.\-])(?:(?P<open>\\?["'])(?P<qname>[A-Za-z][^"'\\\r\n]{0,127}?)(?P<qclose>\\?["'])"""
-    r"""|(?P<name>[A-Za-z][\w.\-]*?)(?P<close>\\?["'])?)\s*(?P<sep>[:=])"""
-    r"""(?=\s*(?:\\?["']|[\[{]|[^\s,;]))"""
-)
-
-
-_PRECEDING_WORDS = re.compile(r"(?P<words>(?:[A-Za-z][\w.\-]*[ \t]+){1,3})$")
-# The head of a quoted name that ends where a credential word starts:
-# ``"selected `` before ``token": …``.
-_QUOTED_NAME_HEAD = re.compile(r"""\\?["'](?P<inner>[A-Za-z][^"'\\\r\n]{0,126}[ \t])$""")
-
-
-# A boolean or null after the separator: a flag, not a credential (see
-# ``credential_entry``).
-_FLAG_VALUE = re.compile(r"""\s*(?P<quote>\\?["']?)(?i:true|false|null|none)(?P=quote)(?=\s*(?:[,;}\])]|$))""")
-
-
-def first_secret_assignment(text: str) -> int | None:
-    """Where the first credential assignment in ``text`` starts, or None."""
-
-    for match in _ASSIGNMENT.finditer(text):
-        own = match.group("qname") or match.group("name")
-        name = own
-        if match.group("name"):
-            # A bare name in prose may be the last word of a spaced one
-            # (``aws access key id=…``): read up to three words before it.
-            before = _PRECEDING_WORDS.search(text, max(0, match.start() - 128), match.start())
-            if before:
-                name = " ".join(before.group("words").split() + [own])
-            if exempt_field(own):
-                continue
-        term = credential_term(name)
-        v1_named = v1._contains_secret_field({own: None})
-        if term is None and not v1_named:
-            continue
-        if term is not None and not v1_named and _FLAG_VALUE.match(text, match.end()):
-            continue
-        bare_colon = match.group("sep") == ":" and not (match.group("open") or match.group("close"))
-        if bare_colon and term in _DESCRIPTIVE_TERMS:
-            continue
-        return match.start()
-    return None
+    if isinstance(error, MeasuredFailure) and error.__cause__ is not None:
+        return type(error.__cause__).__name__
+    return type(error).__name__
 
 
 REDACTED_FIELD = "redacted_credential_field"
 REDACTED_VALUE = "<redacted credential>"
 
 
-def _first_secret(value: Any) -> str | None:
-    """The first reason ``value`` holds credential material by the widened rules, or None."""
+def public_values(value: Any) -> Any:
+    """A failure's measured values, JSON-safe for receipts and evidence.
 
-    if isinstance(value, str):
-        for _start, _end, embedded in embedded_json(value):
-            found = _first_secret(embedded)
-            if found:
-                return found
-        return "public evidence contains secret-like material" if first_secret_assignment(value) is not None else None
-    if isinstance(value, Mapping):
-        for key, item in value.items():
-            if credential_entry(key, item):
-                return "public evidence contains a secret-valued field"
-            found = _first_secret(key) if isinstance(key, str) else None
-            found = found or _first_secret(item)
-            if found:
-                return found
-    elif isinstance(value, (list, tuple)):
-        for item in value:
-            found = _first_secret(item)
-            if found:
-                return found
-    return None
-
-
-def assert_kit_public_safe(value: Any) -> None:
-    """The kit's receipt and evidence backstop: ``v1.assert_public_safe``, then the widened rules.
-
-    Raises ``ValueError`` for a credential-named field under any spelling,
-    and for a credential assignment in any string, quoted or JSON-serialized
-    names included.
+    A non-finite float is recorded as None, as ``_finite`` records one;
+    tuples and sets become lists, keys and any other object their text.  A
+    field v1's own public-safety rule names a credential
+    (``v1._contains_secret_field``) is renamed ``redacted_credential_field``
+    (``..._2``, ``..._3`` for more in one mapping) with a redacted value.
+    Nothing else is rewritten: the public files' checks are
+    ``v1.assert_public_safe`` and the gitleaks gate (``public_withhold_reason``).
     """
 
-    v1.assert_public_safe(value)
-    found = _first_secret(value)
-    if found:
-        raise ValueError(found)
-
-
-def redacted_value(value: Any) -> Any:
-    """A credential field's value with nothing of it left: a list keeps its length."""
-
-    if isinstance(value, (list, tuple, set, frozenset)):
-        return [REDACTED_VALUE] * len(value)
-    return REDACTED_VALUE
-
-
-def public_values(value: Any, limit: int = RESULT_DETAIL_LIMIT) -> Any:
-    """A failure's measured values, JSON-safe and public-safe for receipts and evidence.
-
-    Every string goes through ``public_detail``, dict keys included (a
-    non-string key as its text); a non-finite float is recorded as None, as
-    ``_finite`` records one; tuples and sets become lists, and any other
-    object its redacted text.
-
-    A credential-named field (``credential_field``), plural forms
-    included, is renamed, not kept: its value, empty or not, becomes
-    ``<redacted credential>`` (a list, one marker per element) under the
-    neutral key ``redacted_credential_field`` (``..._2``, ``..._3`` for
-    more in the same mapping), so neither its name nor its value reaches a
-    receipt.  ``assert_public_safe`` still checks every receipt after this.
-    """
-
-    if value is None or isinstance(value, (bool, int)):
+    if value is None or isinstance(value, (bool, int, str)):
         return value
     if isinstance(value, float):
         return value if math.isfinite(value) else None
-    if isinstance(value, str):
-        return public_detail(value, limit)
     if isinstance(value, Mapping):
         public: dict[str, Any] = {}
         redacted = 0
         for key, item in value.items():
-            # JSON keys are strings, so any other key is recorded as its text.
-            name = public_detail(key if isinstance(key, str) else str(key), limit)
-            if credential_entry(key, item) or credential_entry(name, item):
+            name = key if isinstance(key, str) else str(key)
+            if v1._contains_secret_field({name: None}):
                 redacted += 1
                 name = REDACTED_FIELD if redacted == 1 else f"{REDACTED_FIELD}_{redacted}"
                 while name in value or name in public:
                     redacted += 1
                     name = f"{REDACTED_FIELD}_{redacted}"
-                public[name] = redacted_value(item)
+                public[name] = REDACTED_VALUE
             else:
-                public[name] = public_values(item, limit)
+                public[name] = public_values(item)
         return public
     if isinstance(value, (list, tuple)):
-        return [public_values(item, limit) for item in value]
+        return [public_values(item) for item in value]
     if isinstance(value, (set, frozenset)):
-        return sorted((public_values(item, limit) for item in value), key=repr)
-    return public_detail(str(value), limit)
+        return sorted((public_values(item) for item in value), key=repr)
+    return str(value)
 
 
 def failure_values(error: BaseException) -> dict[str, Any]:
-    """The structured values a failure carries (``ScenarioFailure.values``), public-safe; else empty."""
+    """The structured values a failure carries (``ScenarioFailure.values``), JSON-safe; else empty."""
 
     values = getattr(error, "values", None)
     return public_values(dict(values)) if isinstance(values, Mapping) else {}
 
 
+# The gitleaks gate.  Every would-be public receipt or evidence file is
+# serialized and scanned with gitleaks's default ruleset before it is
+# written; a finding withholds the public file (the private copy is always
+# written).  gitleaks runs in an empty directory with no GITLEAKS_* variables,
+# so no repository .gitleaks.toml or .gitleaksignore changes its rules.
+GITLEAKS = "gitleaks"
+GITLEAKS_FINDINGS_EXIT = 42
+GITLEAKS_FINDING = "gitleaks finding (redacted)"
+GITLEAKS_MISSING = "gitleaks is not installed: install the Arch package gitleaks (extra) to write public files"
+GITLEAKS_TIMEOUT_S = 300
+
+
+def gitleaks_withhold_reason(document: Any) -> str | None:
+    """Why gitleaks withholds ``document`` from a public file, or None; never the matched text."""
+
+    executable = shutil.which(GITLEAKS)
+    if executable is None:
+        return GITLEAKS_MISSING
+    payload = (json.dumps(document, indent=2, sort_keys=True, ensure_ascii=False) + "\n").encode()
+    environment = {key: value for key, value in os.environ.items() if not key.startswith("GITLEAKS_")}
+    command = [executable, "stdin", "--no-banner", "--redact", "--log-level", "error",
+               "--exit-code", str(GITLEAKS_FINDINGS_EXIT)]
+    try:
+        with tempfile.TemporaryDirectory(prefix="owui-gitleaks-") as directory:
+            completed = subprocess.run(command, input=payload, cwd=directory, env=environment,
+                                       capture_output=True, timeout=GITLEAKS_TIMEOUT_S, check=False)
+    except (OSError, subprocess.SubprocessError) as error:
+        return f"gitleaks could not run ({type(error).__name__})"
+    if completed.returncode == 0:
+        return None
+    if completed.returncode == GITLEAKS_FINDINGS_EXIT:
+        return GITLEAKS_FINDING
+    return f"gitleaks failed (exit {completed.returncode})"
+
+
+def public_withhold_reason(document: Any) -> str | None:
+    """Why ``document`` must not be written publicly, or None: ``v1.assert_public_safe``, then gitleaks."""
+
+    try:
+        v1.assert_public_safe(document)
+    except ValueError as error:
+        return str(error)
+    return gitleaks_withhold_reason(document)
+
+
 def response_detail(response: Response) -> str | None:
-    """The error detail a response carries: its JSON ``detail`` (or ``error``), else its text, public-safe."""
+    """The error detail a response carries, for private failure text: its JSON ``detail`` (or ``error``), else its body.
+
+    It reaches only exception messages and private copies; a public file
+    carries ``public_detail``'s summary instead.
+    """
 
     if not response.body:
         return None
@@ -1393,12 +1104,12 @@ def response_detail(response: Response) -> str | None:
             text = json.dumps(text, sort_keys=True)
     if text is None:
         text = response.body.decode("utf-8", "replace")
-    detail = public_detail(text)
+    detail = " ".join(str(text).split())[:RESULT_DETAIL_LIMIT]
     return detail or None
 
 
 def error_detail(response: Response) -> str:
-    """``": <detail>"`` for a failure message, or ``""`` when the response carries none."""
+    """``": <detail>"`` for a (private) failure message, or ``""`` when the response carries none."""
 
     detail = response_detail(response)
     return f": {detail}" if detail else ""
@@ -1604,9 +1315,11 @@ class Context:
 class ScenarioResult:
     id: str
     result: str
+    # The private detail: public receipts carry public_detail's summary of it.
     detail: str
     duration_s: float
     values: dict[str, Any] = dataclasses.field(default_factory=dict)
+    error_type: str | None = None
 
     def line(self) -> str:
         return f"{self.id} {self.result} {self.detail}"
@@ -1744,8 +1457,8 @@ def file_processing_error(webui: Endpoint, token: str, file_id: str) -> str:
         record = None
     data = record.get("data") if isinstance(record, dict) else None
     error = data.get("error") if isinstance(data, dict) else None
-    # The stored error can name server paths or addresses; it reaches receipts.
-    return public_detail(str(error), 500) if error else "no stored error"
+    # Private failure text: public files carry public_detail's summary of it.
+    return " ".join(str(error).split())[:500] if error else "no stored error"
 
 
 def _wait_for_file(ctx: Context, file_id: str) -> None:
@@ -1905,22 +1618,20 @@ SCENARIO_FAILURES = (
 
 def run_scenario(ctx: Context, scenario_id: str) -> ScenarioResult:
     started = time.monotonic()
+    error_type: str | None = None
     try:
         values = SCENARIOS[scenario_id](ctx)
         result, detail = PASS, "ok"
     except Escalation as error:
         # The lead decides on the values the canary computed, so keep them.
-        values, result, detail = dict(error.values), ESCALATE, str(error)
+        values, result, detail, error_type = dict(error.values), ESCALATE, str(error), "Escalation"
     except Blocked as error:
-        values, result, detail = failure_values(error), BLOCKED, str(error)
+        values, result, detail, error_type = failure_values(error), BLOCKED, str(error), "Blocked"
     except SCENARIO_FAILURES as error:
-        # A failed check keeps what it measured; the detail alone is redacted text.
-        values, result, detail = failure_values(error), FAIL, failure_text(error)
-    # An exception's text can carry whatever a server returned; the detail
-    # goes into receipts and evidence, so it is redacted here, once.
-    if result != PASS:
-        detail = public_detail(detail, RESULT_DETAIL_LIMIT)
-    return ScenarioResult(scenario_id, result, detail, round(time.monotonic() - started, 3), values)
+        # A failed check keeps what it measured.  The detail is private text:
+        # a public receipt carries only public_detail's summary of it.
+        values, result, detail, error_type = failure_values(error), FAIL, failure_text(error), failure_type(error)
+    return ScenarioResult(scenario_id, result, detail, round(time.monotonic() - started, 3), values, error_type)
 
 
 def run_scenarios(ctx: Context, scenario_ids: Sequence[str]) -> list[ScenarioResult]:
@@ -1951,8 +1662,20 @@ def build_receipt(
     health: Any,
     results: Sequence[ScenarioResult],
     precondition: str | None = None,
+    public: bool = True,
 ) -> dict[str, Any]:
+    """The re-smoke receipt.
+
+    The public form carries ``public_detail``'s summary of every non-PASS
+    detail and of the precondition; the private form (``public=False``)
+    carries their full text.  ``write_receipt`` gates the public form.
+    """
+
     codes = [item.result for item in results] + ([BLOCKED] if precondition else [])
+
+    def detail(item: ScenarioResult) -> str:
+        return public_detail(item.detail, error_type=item.error_type) if public and item.result != PASS else item.detail
+
     lemond = {
         key: health[key]
         for key in ("version", "start_time", "started_at", "uptime")
@@ -1977,12 +1700,14 @@ def build_receipt(
             "chat": chat_model,
         },
         "settings_source": settings.source if settings else None,
-        "precondition": precondition,
+        "precondition": (
+            public_detail(precondition, error_type="Blocked") if public and precondition else precondition
+        ),
         "scenarios": [
             {
                 "id": item.id,
                 "result": item.result,
-                "detail": item.detail,
+                "detail": detail(item),
                 "duration_s": item.duration_s,
                 "values": item.values,
             }
@@ -1990,12 +1715,33 @@ def build_receipt(
         ],
         "exit_code": aggregate_exit_code(codes),
     }
-    assert_kit_public_safe(receipt)
     return receipt
 
 
+def private_receipt_path(path: Path) -> Path:
+    """Where the private receipt, with the full failure details, sits beside the public one."""
+
+    return path.with_name(f"{path.stem}.private{path.suffix or '.json'}")
+
+
+def write_private_receipt(path: Path, receipt: Mapping[str, Any]) -> Path:
+    """Write the private receipt (mode 0600) beside ``path``; never commit it."""
+
+    private = private_receipt_path(path)
+    private.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(private, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle.write(json.dumps(receipt, indent=2, sort_keys=True, ensure_ascii=False) + "\n")
+    os.chmod(private, 0o600)
+    return private
+
+
 def write_receipt(path: Path, receipt: Mapping[str, Any]) -> None:
-    assert_kit_public_safe(receipt)
+    """Write the public receipt, or raise ``ValueError`` and write nothing when it must be withheld."""
+
+    reason = public_withhold_reason(receipt)
+    if reason is not None:
+        raise ValueError(reason)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(receipt, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
 
@@ -2220,7 +1966,7 @@ def _resmoke(args: argparse.Namespace) -> int:
                 ) from error
             chat_model = webui_chat_model(webui, token, args.chat_model)
         except Blocked as error:
-            precondition = public_detail(str(error), RESULT_DETAIL_LIMIT)
+            precondition = str(error)
             print(f"precondition BLOCKED {precondition}", flush=True)
         else:
             ctx = Context(
@@ -2231,18 +1977,32 @@ def _resmoke(args: argparse.Namespace) -> int:
     except BaseException as error:
         # An unexpected error or an interrupt still leaves a FAIL receipt; the
         # detail names only the error type so the receipt stays public-safe.
-        results.append(ScenarioResult("open-webui.resmoke.run", FAIL, type(error).__name__, 0.0))
+        results.append(ScenarioResult("open-webui.resmoke.run", FAIL, type(error).__name__, 0.0,
+                                      error_type=type(error).__name__))
         raise
     finally:
         # Every run that gets this far leaves a receipt with its exit code,
         # except a rehearsal, which writes no evidence-shaped file.
-        receipt = build_receipt(
-            target=args.target, mode=args.mode, settings=settings, chat_model=args.chat_model,
-            health=health, results=results, precondition=precondition,
-        )
-        receipt["whisper_model"] = args.whisper_model
+        receipts = {
+            public: build_receipt(
+                target=args.target, mode=args.mode, settings=settings, chat_model=args.chat_model,
+                health=health, results=results, precondition=precondition, public=public,
+            )
+            for public in (True, False)
+        }
+        receipt = receipts[True]
+        for each in receipts.values():
+            each["whisper_model"] = args.whisper_model
         if args.mode != "rehearsal":
-            write_receipt(args.receipt, receipt)
+            # The private receipt keeps the full failure details; the public
+            # one, with their summaries, is written only past the gate.
+            private = write_private_receipt(args.receipt, receipts[False])
+            try:
+                write_receipt(args.receipt, receipt)
+            except ValueError as error:
+                print(f"receipt: NOT written publicly ({error}); the private receipt is {private}", file=sys.stderr)
+                if receipt["exit_code"] == EXIT_PASS:
+                    receipt["exit_code"] = EXIT_FAIL
     return receipt["exit_code"]
 
 

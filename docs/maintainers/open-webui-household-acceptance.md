@@ -152,9 +152,11 @@ rehearsal may run earlier.
    `NEEDS LEAD` instead of triggering a load.
 6. **Host tools.** `bwrap`, `socat`, `bsdtar`, `unshare`, `systemd-creds`,
    `systemd-run`, `systemctl`, `journalctl`, `ss`, the host `valkey-server`,
-   and the host `python-ctranslate2-gfx1151` speech provider (4.7.2 on the
-   host today). Preflight refuses when any is missing. A user manager with
-   lingering enabled.
+   `gitleaks` (the Arch `extra` package; `sudo pacman -S gitleaks`), and the
+   host `python-ctranslate2-gfx1151` speech provider (4.7.2 on the host
+   today). Preflight refuses when any is missing, and without `gitleaks` no
+   public evidence or receipt is ever written. A user manager with lingering
+   enabled.
 7. **A household window.** The trial runs in an announced window that does not
    overlap a Lemonade redeploy. A Lemonade restart during the trial voids the
    run; the lead decides whether one rerun is allowed. The kit detects a
@@ -798,18 +800,28 @@ instead.
   every trial value, the A-ID2 table, the trial `conditions` (such as the
   0400-file credential fallback), and the disposition.
 - A failed step keeps its measured values in its `values`, as a passing step
-  does, with every string redacted like the step's detail and any
-  credential-named field recorded as `redacted_credential_field` with a
-  redacted value.
-- The kit's public-safety check runs on it before it is written. Ports appear
+  does; a field the public-safety check names a credential is recorded as
+  `redacted_credential_field` with a redacted value.
+- Public versus private detail: a step that does not pass has a public
+  `detail` that is a fixed summary, never upstream text: the error type, the
+  HTTP status when known, the byte length, the first 16 hex digits of the
+  text's SHA-256, and a note that the full detail is kept privately. The
+  full text lives only in the private file below; match a summary to it by
+  the digest.
+- Before the public copy is written, the kit runs the public-safety check and
+  then `gitleaks stdin` with its default rules on the serialized document. A
+  finding, a gitleaks error, or a missing `gitleaks` withholds the public copy
+  and records the evidence step as FAIL (`gitleaks finding (redacted)`; the
+  match is never printed). Ports appear
   only as `loopback:<port>` tokens, loopback ranges as `loopback/<prefix>`, and
   a non-default Lemonade origin as `<lemond>`; the root path, hostnames, and
   addresses never appear.
-- The full document is always written first to
-  `<root>/evidence/raw/trial-evidence.json` (mode 0600). If the public-safety
-  check fails, only the public copy is withheld, and the kit prints the
-  private path with the reason, so the one trial's values survive. Teardown
-  refuses until that file is moved out of the root.
+- The full document, with every step's full detail, is always written first
+  to `<root>/evidence/raw/trial-evidence.json` (mode 0600). If the
+  public-safety check or gitleaks withholds the public copy, the kit prints
+  the private path with the reason, so the one trial's values survive. Never
+  commit the private file. Teardown refuses until it is moved out of the
+  root.
 - It records `production_expectation`, the frozen production-settings entry
   for the deployed `open-webui` archive (for this trial, the `0.11.4-2`
   entry), and the trial prints it. The evidence commit adds that entry to
@@ -985,8 +997,12 @@ no receipt in rehearsal mode.
   a secret. Every run past argument parsing writes one, including a
   precondition failure (a missing `--root` or `--origin`, or an unreachable
   Lemonade or Open WebUI, exits 75 with a receipt) and a malformed response (a
-  FAIL row). A rehearsal writes none, and a receipt that fails the
-  public-safety check is not written: the run exits 1 instead.
+  FAIL row). A non-PASS detail and a precondition appear only as the same
+  fixed summary the trial evidence uses; the full text goes to a private
+  receipt beside it, `<out>.private.json` (mode 0600, never committed). A
+  rehearsal writes neither, and a public receipt that fails the
+  public-safety check or the gitleaks gate is not written (the private one
+  is): the run exits 1 instead, unless it already exits 75 or 3.
 
 ## Ported constants
 

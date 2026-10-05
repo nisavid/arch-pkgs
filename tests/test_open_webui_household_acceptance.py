@@ -41,6 +41,23 @@ kit_module = load("accept_open_webui_household", KIT)
 sc = kit_module.sc
 v1 = kit_module.v1
 
+# The gitleaks gate runs a stub by default, so the tests need no gitleaks and
+# stay fast; OWUI_GITLEAKS_STUB_EXIT sets its exit code.
+_gitleaks_stub = tempfile.TemporaryDirectory(prefix="owui-gitleaks-stub-")
+_gitleaks_patch = mock.patch.object(sc, "GITLEAKS", str(Path(_gitleaks_stub.name) / "gitleaks"))
+
+
+def setUpModule():
+    path = Path(_gitleaks_stub.name) / "gitleaks"
+    path.write_text("#!/bin/sh\ncat >/dev/null\nexit \"${OWUI_GITLEAKS_STUB_EXIT:-0}\"\n")
+    path.chmod(0o755)
+    _gitleaks_patch.start()
+
+
+def tearDownModule():
+    _gitleaks_patch.stop()
+    _gitleaks_stub.cleanup()
+
 
 def packaged_env():
     """The candidate's vanilla open-webui.env."""
@@ -1585,19 +1602,20 @@ class FailureDetailTests(unittest.TestCase):
     def test_a_wrong_refusal_records_open_webuis_detail(self):
         reply = kit_module.ChatReply(400, "", [], "Model not found", self.MODEL_NOT_FOUND)
         record = kit_module.refusal_record(reply)
-        self.assertEqual((record["status"], record["fixed_detail"], record["detail"]), (400, False, "Model not found"))
+        # A chat's error detail is recorded as its summary, never its text.
+        self.assertEqual((record["status"], record["fixed_detail"]), (400, False))
+        self.assertEqual(record["detail"], sc.public_detail("Model not found", status=400))
+        self.assertNotIn("Model not found", record["detail"])
         fixed = kit_module.ChatReply(503, "", [], kit_module._rag_unavailable_detail(), b"")
         self.assertIsNone(kit_module.refusal_record(fixed)["detail"])
         self.assertIsNone(kit_module.reply_detail(200, "ignored"))
-        long_detail = "x" * 500
-        self.assertLessEqual(len(kit_module.reply_detail(400, long_detail)), sc.ERROR_DETAIL_LIMIT)
 
     def test_the_cited_check_keeps_the_failed_chats_status_and_detail(self):
         with mock.patch.object(kit_module, "file_chat", return_value=(400, "", {"count": 0, "names": []},
                                                                       "Model not found")):
             check = kit_module.cited_check(mock.Mock(), "t", "chat", "f1")
-        self.assertEqual(check, {"cited": False, "status": 400, "detail": "Model not found", "fact_present": False,
-                                 "sources": {"count": 0, "names": []}})
+        self.assertEqual(check, {"cited": False, "status": 400, "detail": sc.public_detail("Model not found", status=400),
+                                 "fact_present": False, "sources": {"count": 0, "names": []}})
 
     def test_the_cited_check_reads_the_upload_name_from_0_11_4_chunk_metadata(self):
         # Open WebUI 0.11.4 echoes the request's {"type": "file", "id"} item as
@@ -1825,14 +1843,13 @@ class FailedStepValuesTests(unittest.TestCase):
             self.assertEqual(step.values["cache_inventory"]["new_files"], ["tmp/open-webui/scratch"])
             self.assert_public_values(kit, trial, step)
 
-    def test_failure_values_are_json_safe_and_redacted(self):
+    def test_failure_values_are_json_safe(self):
         with tempfile.TemporaryDirectory() as directory:
             kit = make_kit(directory)
             trial = kit_module.Trial(kit)
             unsafe = {
-                "reason": "cannot read /home/someone/x from 192.168.1.20 with api_key=k1 at nas.lan",
                 "kit_path": f"{kit.root}/state/open-webui/cache/x",
-                "nested": [{"Authorization: Bearer s3cret": "Bearer s3cret"}, ("a", float("nan"))],
+                "nested": [{"api_key": "s3cret"}, ("a", float("nan"))],
                 "inf": float("inf"), "ratio": 0.5, "count": 3, "ok": True, "none": None,
             }
 
@@ -1841,7 +1858,7 @@ class FailedStepValuesTests(unittest.TestCase):
 
             step = self.run_step(trial, "open-webui.acceptance.privacy", failing)
             text = json.dumps(step.values, allow_nan=False)
-            for private in ("/home/someone", "192.168.1.20", "k1", "nas.lan", "s3cret", directory):
+            for private in ("s3cret", directory):
                 self.assertNotIn(private, text)
             self.assertEqual(step.values["kit_path"], "<root>/state/open-webui/cache/x")
             self.assertEqual(step.values["nested"][1], ["a", None])
@@ -3746,19 +3763,41 @@ class EvidenceTests(unittest.TestCase):
             void = kit_module.build_evidence(kit, trial, 0, True)
             self.assertTrue(void["disposition"].startswith("void"))
 
-    def test_evidence_with_a_plural_credential_field_is_withheld_by_the_kit_backstop(self):
+    def finish_with_gitleaks(self, directory, environment):
+        kit, trial = self.trial(directory, rehearsal=False)
+        with mock.patch.dict(os.environ, environment), contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(io.StringIO()) as errors:
+            code = trial.finish()
+        return kit, trial, code, errors.getvalue()
+
+    def test_a_gitleaks_finding_withholds_the_public_evidence_and_keeps_the_private(self):
         with tempfile.TemporaryDirectory() as directory:
-            kit, trial = self.trial(directory, rehearsal=False)
-            trial.steps[0].values = {"provider_api_keys": ["s3cret-V4LUE"]}
-            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as errors:
-                code = trial.finish()
+            kit, trial, code, errors = self.finish_with_gitleaks(
+                directory, {"OWUI_GITLEAKS_STUB_EXIT": str(sc.GITLEAKS_FINDINGS_EXIT)})
             self.assertEqual(code, sc.EXIT_FAIL)
             recorded = trial.steps[-1]
-            self.assertEqual((recorded.id, recorded.result), (kit_module.TRIAL_STEPS[-1], sc.FAIL))
-            self.assertIn("secret-valued field", recorded.detail)
-            self.assertIn("NOT public-safe", errors.getvalue())
+            self.assertEqual((recorded.id, recorded.result, recorded.detail),
+                             (kit_module.TRIAL_STEPS[-1], sc.FAIL, "gitleaks finding (redacted)"))
+            self.assertIn("NOT written publicly (gitleaks finding (redacted))", errors)
             self.assertFalse(kit.path("evidence", "public").exists())
-            self.assertTrue((kit.raw / "trial-evidence.json").is_file())
+            self.assertTrue((kit.raw / kit_module.PRIVATE_EVIDENCE).is_file())
+
+    def test_a_missing_gitleaks_fails_closed_naming_the_package(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(sc, "GITLEAKS", "owui-no-such-gitleaks"):
+            kit, trial, code, errors = self.finish_with_gitleaks(directory, {})
+            self.assertEqual(code, sc.EXIT_FAIL)
+            self.assertEqual((trial.steps[-1].result, trial.steps[-1].detail), (sc.FAIL, sc.GITLEAKS_MISSING))
+            self.assertIn("Arch package gitleaks (extra)", errors)
+            self.assertFalse(kit.path("evidence", "public").exists())
+            self.assertTrue((kit.raw / kit_module.PRIVATE_EVIDENCE).is_file())
+        self.assertIn("gitleaks", kit_module.HOST_TOOLS)
+
+    def test_a_clean_trial_writes_the_public_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit, trial, code, _ = self.finish_with_gitleaks(directory, {})
+            self.assertEqual(code, sc.EXIT_PASS)
+            self.assertEqual(len(list(kit.path("evidence", "public").glob("*.json"))), 1)
 
     def test_the_0400_fallback_is_a_trial_condition_not_a_failure(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -3868,20 +3907,27 @@ class EvidenceTests(unittest.TestCase):
                 ["a PASS", "b FAIL ScenarioFailure: head mismatch", "c BLOCKED stub unreachable"],
             )
 
-    def test_a_step_detail_is_redacted_so_the_public_record_is_written(self):
+    def test_a_step_detail_is_summarized_publicly_and_kept_privately(self):
         with tempfile.TemporaryDirectory() as directory:
             kit, trial = self.trial(directory, rehearsal=False)
-            trial.steps[0] = kit_module.Step(
-                trial.steps[0].id, sc.FAIL,
-                f"OSError: cannot read /home/someone/x from 10.1.2.3 for admin@example.org; "
-                f"kept {kit.root}/state/open-webui/data; with api_key=k1", 1.0, {})
+            raw = (f"OSError: GET /x returned HTTP 502: cannot read /home/someone/x from 10.1.2.3 for "
+                   f"admin@example.org; kept {kit.root}/state/open-webui/data; with api_key=k1")
+            trial.steps[0] = kit_module.Step(trial.steps[0].id, sc.FAIL, raw, 1.0, {}, "OSError")
             evidence = kit_module.build_evidence(kit, trial, sc.EXIT_FAIL, False)
             v1.assert_public_safe(evidence)
             detail = evidence["steps"][0]["detail"]
-            for private in ("/home/someone", "10.1.2.3", "admin@example.org", "k1", str(kit.root)):
+            self.assertEqual(detail, sc.public_detail(raw, error_type="OSError"))
+            self.assertTrue(detail.startswith("OSError; HTTP 502; "))
+            for private in ("/home/someone", "10.1.2.3", "admin@example.org", "k1", str(kit.root), "cannot read"):
                 self.assertNotIn(private, detail)
-            # The kit's own path tokens survive, so the detail still says where.
-            self.assertIn("<root>/state/open-webui/data", detail)
+            # PASS details are the kit's own text and stay as they are.
+            self.assertEqual(evidence["steps"][1]["detail"], "ok")
+            private = kit_module.build_evidence(kit, trial, sc.EXIT_FAIL, False, public=False)
+            self.assertEqual(private["steps"][0]["detail"], raw)
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                trial.finish()
+            written = json.loads((kit.raw / kit_module.PRIVATE_EVIDENCE).read_text())
+            self.assertEqual(written["steps"][0]["detail"], raw)
 
     def test_an_unsafe_record_keeps_the_values_privately(self):
         with tempfile.TemporaryDirectory() as directory:
