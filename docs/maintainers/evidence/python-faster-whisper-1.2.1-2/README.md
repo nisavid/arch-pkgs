@@ -101,8 +101,15 @@ Every check passed on Python 3.14.6 with PyAV 19.0.1 (`python-av`
   loaded host files under `/usr`. The two unowned ones are the generated
   `gconv-modules.cache` and `locale-archive`. Of the other mapped paths, one
   is a package library outside `/usr`: `libOpenCL.so.1.0.0` from the `cuda`
-  package. The rest are the harness, the dynamic linker cache, and anonymous
-  shared memory.
+  package. The rest are the harness, the dynamic linker cache, and an
+  anonymous POSIX semaphore.
+
+The record is the run's output with one exception: the ownership
+`unowned_note` was corrected after the run, from a generic sentence that
+named inputs which were not mapped and called every other path non-payload.
+The runner's summary step now writes the corrected note, and re-running that
+step alone on the run's raw outputs reproduces this `g0-g2.json` byte for
+byte. No fixture was re-run.
 
 `provider_profile` in `g0-g2.json` lists the host package versions.
 

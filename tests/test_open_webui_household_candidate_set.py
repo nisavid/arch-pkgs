@@ -51,6 +51,9 @@ EXPECTED_IDENTITIES = {
 }
 SOURCE_COMMIT_BASES = {"recorded-build-commit", "derived-tree-equal"}
 DERIVED_SOURCE_COMMITS: set[str] = set()
+# Records whose source_commit is on main; the others are kept reachable by
+# other refs (see the maintainer note's reachability section).
+ON_MAIN_SOURCE_COMMITS = {"open-webui", "qdrant-migration", "python-faster-whisper"}
 ABSOLUTE_PATH = re.compile(r"(^|[\s\"'(=,;:])(/(?!/)|~/)|file:")
 HOUSEHOLD_LANES = {
     "ctranslate2",
@@ -255,14 +258,29 @@ class OpenWebUIHouseholdCandidateSetTests(unittest.TestCase):
     def test_adoption_commit_is_the_latest_merged_main_build(self):
         # The tree comparison runs against the newest main commit any record
         # was built from: python-faster-whisper 1.2.1-2's merged main build.
-        # Every merged-main build must still be tree-equal there.
+        # Every on-main source commit must be its ancestor, and every
+        # tree-equal build must have an empty delta there.
+        main_commit = self.manifest["adoption_main_commit"]
         self.assertEqual(
-            self.manifest["adoption_main_commit"],
+            main_commit,
             self.entries["python-faster-whisper"]["archive"]["source_commit"],
         )
         for package in ("open-webui", "python-rapidocr", "python-faster-whisper"):
             with self.subTest(package=package):
                 self.assertEqual(self.entries[package]["main_tree_delta"], [])
+        self.assertLessEqual(ON_MAIN_SOURCE_COMMITS, set(self.entries))
+        if not has_commit(main_commit):
+            self.skipTest("adoption commit not present in this clone")
+        for package, entry in self.entries.items():
+            commit = entry["archive"]["source_commit"]
+            with self.subTest(package=package):
+                if not has_commit(commit):
+                    self.skipTest(f"{package} source commit not present in this clone")
+                ancestry = git("merge-base", "--is-ancestor", commit, main_commit)
+                self.assertIn(ancestry.returncode, (0, 1), ancestry.stderr)
+                self.assertEqual(
+                    ancestry.returncode == 0, package in ON_MAIN_SOURCE_COMMITS, commit
+                )
 
     def test_qdrant_records_match_the_g0_g1_candidate_set(self):
         candidates = json.loads(QDRANT_G0_G1.read_text(encoding="utf-8"))[
@@ -332,7 +350,13 @@ class OpenWebUIHouseholdCandidateSetTests(unittest.TestCase):
         self.assertNotIn("status", g2)
         self.assertEqual(g2["versions"]["av"], "19.0.1")
         self.assertTrue(all(check["pass"] for check in g2["checks"].values()))
-        self.assertTrue(g2["baseline_control"]["pass"])
+        control = g2["baseline_control"]
+        self.assertTrue(control["pass"])
+        self.assertTrue(control["checks"])
+        self.assertTrue(all(check["pass"] for check in control["checks"].values()))
+        raised = control["checks"]["baseline_decode_audio_raises_pyav19_typeerror"]
+        self.assertEqual(raised["raised"], "TypeError")
+        self.assertIn("metadata_errors", raised["message"])
         transcript = g2["checks"]["fw_int8_transcription_word_timestamps"]
         self.assertEqual(transcript["language"], "en")
         self.assertGreaterEqual(transcript["word_count"], 20)
@@ -431,6 +455,8 @@ class OpenWebUIHouseholdCandidateSetTests(unittest.TestCase):
                 self.assertEqual(sorted(delta.stdout.split()), entry["main_tree_delta"])
 
     def test_derived_source_commits_are_the_earliest_tree_equal_main_commit(self):
+        # Dormant while DERIVED_SOURCE_COMMITS is empty: no record is
+        # derived-tree-equal since the 1.2.1-2 rebind.
         main_commit = self.manifest["adoption_main_commit"]
         for entry in self.manifest["archives"]:
             if entry["source_commit_basis"] != "derived-tree-equal":

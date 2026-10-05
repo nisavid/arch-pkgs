@@ -106,8 +106,8 @@ rehearsal may run earlier.
    `ctranslate2` and `python-ctranslate2` 4.8.2-1, are bound but never
    deployed. Each archive record carries its own `source_commit`, and the kit
    copies each one into A-ID1; the manifest has no top-level source commit,
-   and its `adoption_main_commit` is only the `main` commit that the build
-   ticket's tree check ran against. The kit records the manifest's `external_inputs`
+   and its `adoption_main_commit` is only the `main` commit that the tree
+   check (#88's tree-equality rule) ran against. The kit records the manifest's `external_inputs`
    verbatim as declared inputs, next to the host providers it observes; they
    are evidence, not gates. The kit refuses a manifest of any other schema
    with exit 75.

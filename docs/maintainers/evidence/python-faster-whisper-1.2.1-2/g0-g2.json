@@ -288,7 +288,7 @@
             "<scratch>/g2_fixture.py"
           ]
         },
-        "unowned_note": "Host files are the loaded files under /usr; pacman -Qo owns every one not listed as unowned. Other mapped paths (the harness, the model and audio inputs, the dynamic linker cache, anonymous shared memory) are not package payload and are shown as placeholders."
+        "unowned_note": "Host files are the loaded files under /usr; pacman -Qo owns every one not listed as unowned. The other mapped paths, shown as placeholders, are an anonymous POSIX semaphore (/dev/shm/<anonymous>), the dynamic linker cache (<other>/ld.so.cache), the cuda package's libOpenCL.so.1.0.0, outside /usr (<other>/libOpenCL.so.1.0.0), and the harness (<scratch>/g2_fixture.py); of these, only the cuda package's libOpenCL.so.1.0.0 is package payload."
       },
       "provider_profile": {
         "python-gfx1151": "3.14.6-1",

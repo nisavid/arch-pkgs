@@ -211,7 +211,9 @@ The `open-webui` row now points at this candidate set and says not to rebuild
 
 - the manifest's shape, the `source_commit_basis` of each record, the
   literal `open-webui`, `python-rapidocr`, and `python-faster-whisper`
-  records, and that `adoption_main_commit` is the newest merged-main build;
+  records, and that `adoption_main_commit` is the `python-faster-whisper`
+  build commit and, where the commits exist, a descendant of every on-`main`
+  source commit and of none of the others;
 - the stager's archive-record validation;
 - the Qdrant and speech records against their in-repo evidence, including
   the `python-faster-whisper` recipe digests and G2 harness digest;
