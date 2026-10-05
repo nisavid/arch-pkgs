@@ -1,0 +1,39 @@
+# Pass av.open(metadata_errors=...) only on PyAV releases older than 19.
+# Backport of upstream SYSTRAN/faster-whisper commit
+# 2ce7f9d7a9fbe315a5804a33bf7224d42e101174 (PR #1495,
+# https://github.com/SYSTRAN/faster-whisper/pull/1495), which adopts the
+# PyAV 19.0.0 av.open() signature.
+# The diff below is upstream's, byte for byte; it applies to the v1.2.1 tag
+# tarball without offset or fuzz.
+# PyAV 19.0.0 removed the metadata_errors argument to av.open(), so the
+# unpatched 1.2.1 decode_audio() raises TypeError on PyAV 19. PyAV 19 always
+# decodes metadata as UTF-8 with surrogateescape, which cannot fail; PyAV 18
+# and older keep the "ignore" setting that guards against non-UTF-8 tags.
+# Drop this patch at the first upstream release that contains 2ce7f9d.
+# Details: packages/python-faster-whisper/README.md, PyAV 19 Compatibility
+diff --git a/faster_whisper/audio.py b/faster_whisper/audio.py
+index 222e73ba..b8ddbec9 100644
+--- a/faster_whisper/audio.py
++++ b/faster_whisper/audio.py
+@@ -15,6 +15,12 @@
+ import av
+ import numpy as np
+ 
++# `metadata_errors` was removed in PyAV 19; pass it only for older versions
++# to preserve the previous behavior.
++_AV_OPEN_KWARGS = (
++    {"metadata_errors": "ignore"} if int(av.__version__.split(".")[0]) < 19 else {}
++)
++
+ 
+ def decode_audio(
+     input_file: Union[str, BinaryIO],
+@@ -43,7 +49,7 @@ def decode_audio(
+     raw_buffer = io.BytesIO()
+     dtype = None
+ 
+-    with av.open(input_file, mode="r", metadata_errors="ignore") as container:
++    with av.open(input_file, mode="r", **_AV_OPEN_KWARGS) as container:
+         frames = container.decode(audio=0)
+         frames = _ignore_invalid_frames(frames)
+         frames = _group_frames(frames, 500000)
