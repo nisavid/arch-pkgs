@@ -1,7 +1,7 @@
 pkgbase = python-faster-whisper
 	pkgdesc = Faster Whisper transcription with CTranslate2
 	pkgver = 1.2.1
-	pkgrel = 1
+	pkgrel = 2
 	url = https://github.com/SYSTRAN/faster-whisper
 	arch = any
 	license = MIT
@@ -18,6 +18,8 @@ pkgbase = python-faster-whisper
 	depends = python-tokenizers
 	depends = python-tqdm
 	source = faster-whisper-1.2.1.tar.gz::https://github.com/SYSTRAN/faster-whisper/archive/refs/tags/v1.2.1.tar.gz
+	source = 0001-support-pyav-19.patch
 	b2sums = 771e25eb86e8c64c319245d07070ed0ccc8378a44a93ffb064712985322a5fd187cbba89d4bc03dcf4beb04fe691da07590c7f0620da14c894e0dccdcff4fdb9
+	b2sums = d2835778b534712963ee57c2fd7a45057ad831710f534268998a84fe52e30419e5c3801231ab3f2c800517a88625c257b199daddbd6cce8e9fae125d8987f4ec
 
 pkgname = python-faster-whisper

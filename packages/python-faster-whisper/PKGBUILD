@@ -5,7 +5,7 @@
 pkgname=python-faster-whisper
 _pkgname=faster-whisper
 pkgver=1.2.1
-pkgrel=1
+pkgrel=2
 pkgdesc="Faster Whisper transcription with CTranslate2"
 arch=('any')
 url="https://github.com/SYSTRAN/faster-whisper"
@@ -26,8 +26,19 @@ makedepends=(
   'python-setuptools'
   'python-wheel'
 )
-source=("${_pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz")
-b2sums=('771e25eb86e8c64c319245d07070ed0ccc8378a44a93ffb064712985322a5fd187cbba89d4bc03dcf4beb04fe691da07590c7f0620da14c894e0dccdcff4fdb9')
+source=(
+  "${_pkgname}-${pkgver}.tar.gz::${url}/archive/refs/tags/v${pkgver}.tar.gz"
+  '0001-support-pyav-19.patch'
+)
+b2sums=('771e25eb86e8c64c319245d07070ed0ccc8378a44a93ffb064712985322a5fd187cbba89d4bc03dcf4beb04fe691da07590c7f0620da14c894e0dccdcff4fdb9'
+        'd2835778b534712963ee57c2fd7a45057ad831710f534268998a84fe52e30419e5c3801231ab3f2c800517a88625c257b199daddbd6cce8e9fae125d8987f4ec')
+
+prepare() {
+  cd "${_pkgname}-${pkgver}"
+
+  # Upstream 2ce7f9d (PR #1495): PyAV 19 removed av.open(metadata_errors=...).
+  patch --fuzz=0 -Np1 -i "${srcdir}/0001-support-pyav-19.patch"
+}
 
 build() {
   cd "${_pkgname}-${pkgver}"
