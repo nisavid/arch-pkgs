@@ -53,7 +53,7 @@ import urllib.parse
 import uuid
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence
+from typing import Any, Callable, Iterable, Mapping, Sequence
 
 TOOLS = Path(__file__).resolve().parent
 REPO_ROOT = TOOLS.parent
@@ -2915,40 +2915,16 @@ def route_checks(kit: Kit, token: str) -> dict[str, Any]:
     return values
 
 
-class MeasuredFailure(sc.ScenarioFailure):
-    """A step failure other than a check's, raised after the step measured values.
-
-    Its message is the detail ``Trial.step`` records for the original error,
-    ``<type>: <text>``, so the detail reads as it would without the values;
-    the original error is its ``__cause__``.
-    """
+# A step failure other than a check's, raised after the step measured
+# values; see ``sc.MeasuredFailure`` and ``sc.keeping``.
+MeasuredFailure = sc.MeasuredFailure
+failure_text = sc.failure_text
 
 
-def failure_text(error: BaseException) -> str:
-    """A step failure's detail as ``Trial.step`` records it."""
+def keeping(values: dict[str, Any]) -> contextlib.AbstractContextManager[None]:
+    """Any step failure inside carries ``values``, what the step measured so far (``sc.keeping``)."""
 
-    return str(error) if isinstance(error, MeasuredFailure) else f"{type(error).__name__}: {error}"
-
-
-@contextlib.contextmanager
-def keeping(values: dict[str, Any]) -> Iterator[None]:
-    """Any step failure inside carries ``values``, what the step measured so far.
-
-    A ``ScenarioFailure`` keeps its type and message, with its own values
-    merged over these; any other step failure becomes a ``MeasuredFailure``.
-    The caller fills ``values`` as it measures, so a failure keeps every
-    measurement taken before it.
-    """
-
-    try:
-        yield
-    except sc.ScenarioFailure as error:
-        merged = {**values, **error.values}
-        if merged == error.values:
-            raise
-        raise type(error)(str(error), merged) from error
-    except STEP_FAILURES as error:
-        raise MeasuredFailure(failure_text(error), values) from error
+    return sc.keeping(values, STEP_FAILURES)
 
 
 def record_check(values: dict[str, Any], key: str, check: Callable[[], dict[str, Any]]) -> None:

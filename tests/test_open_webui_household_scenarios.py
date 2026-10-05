@@ -1154,6 +1154,165 @@ class FailureValuesTests(unittest.TestCase):
         self.assertIn("not ranked first", result.detail)
         self.assertEqual(result.values, {"health": "qualified", "scores": [0.1, 0.8]})
 
+    def test_zerank_keeps_the_health_it_measured_on_every_failure(self):
+        class Webui:
+            def __init__(self, status):
+                self.status = status
+
+            def request(self, *_args, **_kwargs):
+                return scenarios.Response(self.status, "application/json", b'{"status": "qualified"}')
+
+        class Lemond:
+            def json(self, *_args, **_kwargs):
+                return {"results": [{"index": 0}]}
+
+        settings = scenarios.settings_from_environ(candidate_env())
+        with mock.patch.object(scenarios, "rag_gate_constants", return_value=("q", ("relevant", "other"))):
+            unhealthy = scenarios.run_scenario(
+                scenarios.Context(target="acceptance", webui=Webui(500), lemond=Lemond(), token="t",
+                                  settings=settings, chat_model="chat"), "open-webui.resmoke.zerank-qualification")
+            malformed = scenarios.run_scenario(
+                scenarios.Context(target="acceptance", webui=Webui(200), lemond=Lemond(), token="t",
+                                  settings=settings, chat_model="chat"), "open-webui.resmoke.zerank-qualification")
+        self.assertEqual((unhealthy.result, unhealthy.values), (scenarios.FAIL, {"health_status": 500}))
+        self.assertEqual((malformed.result, malformed.values), (scenarios.FAIL, {"health": "qualified"}))
+        self.assertIn("one result per document", malformed.detail)
+
+
+class ScenarioMeasurementTests(unittest.TestCase):
+    """Every failure path keeps the timings and records a scenario took before it."""
+
+    cited_context = CitedAnswerTests.cited_context
+
+    def cited(self, ctx, wait=None):
+        with mock.patch.object(scenarios, "_wait_for_file", side_effect=wait), \
+                mock.patch.object(scenarios, "SCENARIOS", {"cited": scenarios.cited_answer}):
+            return scenarios.run_scenario(ctx, "cited")
+
+    def assert_receipt_safe(self, result):
+        receipt = scenarios.build_receipt(target="production", mode="record",
+                                          settings=scenarios.settings_from_environ(candidate_env()),
+                                          chat_model="chat", health=None, results=[result])
+        json.dumps(receipt, allow_nan=False)
+
+    def test_failed_or_timed_out_processing_keeps_the_upload_timing(self):
+        for message in ("file processing ended with HTTP 200 status failed: embedding failed",
+                        "file processing did not complete in time"):
+            with self.subTest(message):
+                ctx, deletes = self.cited_context(200)
+                result = self.cited(ctx, scenarios.ScenarioFailure(message))
+                self.assertEqual((result.result, result.detail), (scenarios.FAIL, f"ScenarioFailure: {message}"))
+                self.assertEqual(set(result.values["timings"]), {"upload_s"})
+                self.assertEqual(result.values["expected_source_name"], scenarios.HANDBOOK_NAME)
+                self.assertEqual(len(deletes), 1)
+                self.assert_receipt_safe(result)
+
+    def test_a_failed_chat_keeps_every_timing_and_still_cleans_up(self):
+        ctx, deletes = self.cited_context(200, chat_status=502)
+        result = self.cited(ctx)
+        self.assertEqual(result.result, scenarios.FAIL)
+        self.assertIn("HTTP 502", result.detail)
+        self.assertEqual(set(result.values["timings"]), {"upload_s", "index_s", "chat_s"})
+        self.assertEqual(len(deletes), 1)
+        self.assert_receipt_safe(result)
+
+    def test_a_chat_transport_error_keeps_the_timings_and_its_detail(self):
+        ctx, deletes = self.cited_context(200)
+        fixed = ctx.webui.request.side_effect
+
+        def request(method, path, **kw):
+            if (method, path) == ("POST", scenarios.API["chat"]):
+                raise ConnectionResetError("connection reset by peer")
+            return fixed(method, path, **kw)
+
+        ctx.webui.request.side_effect = request
+        result = self.cited(ctx)
+        self.assertEqual((result.result, result.detail), (scenarios.FAIL, "ConnectionResetError: connection reset by peer"))
+        self.assertEqual(set(result.values["timings"]), {"upload_s", "index_s"})
+        self.assertEqual(len(deletes), 1)
+        self.assert_receipt_safe(result)
+
+    def test_a_failed_upload_keeps_its_timing(self):
+        ctx, deletes = self.cited_context(200)
+        ctx.webui.request.side_effect = lambda *_a, **_k: mock.Mock(status=500, body=b"", json=lambda: None)
+        result = self.cited(ctx)
+        self.assertEqual(result.result, scenarios.FAIL)
+        self.assertIn("handbook upload returned HTTP 500", result.detail)
+        self.assertEqual(set(result.values["timings"]), {"upload_s"})
+        self.assertEqual(deletes, [])
+
+    def test_a_failed_transcription_keeps_its_timing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            audio = Path(directory) / "jfk.flac"
+            audio.write_bytes(b"flac")
+            webui = mock.Mock(request=mock.Mock(return_value=scenarios.Response(500, "text/plain", b"boom")))
+            ctx = scenarios.Context(target="acceptance", webui=webui, lemond=mock.Mock(), token="t",
+                                    settings=scenarios.settings_from_environ(candidate_env()), chat_model="chat",
+                                    audio=audio)
+            with mock.patch.object(scenarios.v1, "_file_sha256", return_value=scenarios.JFK_FLAC_SHA256):
+                result = scenarios.run_scenario(ctx, "open-webui.resmoke.stt")
+        self.assertEqual(result.result, scenarios.FAIL)
+        self.assertIn("transcription returned HTTP 500", result.detail)
+        self.assertEqual(set(result.values), {"transcription_s", "whisper"})
+        self.assert_receipt_safe(result)
+
+    def test_a_failed_stored_chunk_read_keeps_the_canary_margin(self):
+        canary = ZembedCanaryTests()
+
+        def unreadable():
+            raise OSError("qdrant unreachable")
+
+        outcome = canary.run_canary(stored_chunk=unreadable)
+        self.assertEqual((outcome.result, outcome.detail), (scenarios.FAIL, "OSError: qdrant unreachable"))
+        self.assertEqual(outcome.values["margin"], 0.9)
+        self.assertEqual(sorted(outcome.values["vectors"]), ["query", "relevant", "unrelated"])
+        self.assert_receipt_safe(outcome)
+
+
+class CredentialFieldTests(unittest.TestCase):
+    """A credential-named field never reaches a receipt, by name or by value."""
+
+    SECRET = "s3cret-V4LUE"
+
+    def test_credential_fields_are_renamed_and_their_values_redacted(self):
+        cases = (
+            {"api_key": self.SECRET},
+            {"api_key": ""},
+            {"outer": {"token": self.SECRET, "nested": [{"X-Api-Key": self.SECRET, "Password": None}]}},
+            {"session": self.SECRET, "client_secret": self.SECRET, "authorization": f"Bearer {self.SECRET}"},
+        )
+        for value in cases:
+            with self.subTest(value=value):
+                with self.assertRaises(ValueError):
+                    scenarios.v1.assert_public_safe(value)
+                public = scenarios.public_values(value)
+                scenarios.v1.assert_public_safe(public)
+                text = json.dumps(public)
+                self.assertNotIn(self.SECRET, text)
+                self.assertIn("<redacted credential>", text)
+        self.assertEqual(scenarios.public_values({"api_key": "s3cret"}),
+                         {"redacted_credential_field": "<redacted credential>"})
+        nested = scenarios.public_values({"outer": {"token": "a", "cookie": "b", "count": 2}})
+        self.assertEqual(nested, {"outer": {"redacted_credential_field": "<redacted credential>",
+                                            "redacted_credential_field_2": "<redacted credential>", "count": 2}})
+
+    def test_ordinary_fields_are_kept(self):
+        value = {"selected_token": "kept", "runtime_credentials": ["openai-api-key"], "token_count": 3,
+                 "health_status": 200}
+        self.assertEqual(scenarios.public_values(value), value)
+
+    def test_a_failure_carrying_a_credential_field_still_writes_a_receipt(self):
+        def failing(_ctx):
+            raise scenarios.ScenarioFailure("measured", {"api_key": self.SECRET, "timings": {"upload_s": 0.5}})
+
+        with mock.patch.object(scenarios, "SCENARIOS", {"x": failing}):
+            result = scenarios.run_scenario(object(), "x")
+        receipt = scenarios.build_receipt(target="production", mode="record",
+                                          settings=scenarios.settings_from_environ(candidate_env()),
+                                          chat_model="chat", health=None, results=[result])
+        self.assertNotIn(self.SECRET, json.dumps(receipt))
+        self.assertEqual(result.values["timings"], {"upload_s": 0.5})
+
 
 class StubProviderTests(unittest.TestCase):
     def test_stub_embeddings_honor_the_zembed_heads(self):

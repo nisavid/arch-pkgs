@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import contextlib
 import dataclasses
 import hashlib
 import http.client
@@ -35,7 +36,7 @@ import urllib.parse
 import uuid
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Callable, Iterable, Mapping, Sequence
+from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence
 
 TOOLS = Path(__file__).resolve().parent
 REPO_ROOT = TOOLS.parent
@@ -303,6 +304,43 @@ class Escalation(RuntimeError):
     def __init__(self, message: str, values: Mapping[str, Any] | None = None) -> None:
         super().__init__(message)
         self.values: dict[str, Any] = dict(values or {})
+
+
+class MeasuredFailure(ScenarioFailure):
+    """A failure other than a check's, raised after a scenario or step measured values.
+
+    Its message is the detail recorded for the original error, ``<type>:
+    <text>``, so the detail reads as it would without the values; the
+    original error is its ``__cause__``.
+    """
+
+
+def failure_text(error: BaseException) -> str:
+    """A failure's detail as a FAIL row records it: ``<type>: <text>``."""
+
+    return str(error) if isinstance(error, MeasuredFailure) else f"{type(error).__name__}: {error}"
+
+
+@contextlib.contextmanager
+def keeping(values: dict[str, Any], failures: tuple[type[BaseException], ...]) -> Iterator[None]:
+    """Any of ``failures`` raised inside carries ``values``, what was measured so far.
+
+    A ``ScenarioFailure`` keeps its type and message, with its own values
+    merged over these; any other listed failure becomes a ``MeasuredFailure``.
+    The caller fills ``values`` as it measures, so a failure keeps every
+    measurement taken before it.  Anything not listed, such as ``Blocked``
+    or ``Escalation``, passes through unchanged.
+    """
+
+    try:
+        yield
+    except ScenarioFailure as error:
+        merged = {**values, **error.values}
+        if merged == error.values:
+            raise
+        raise type(error)(str(error), merged) from error
+    except failures as error:
+        raise MeasuredFailure(failure_text(error), values) from error
 
 
 # ---------------------------------------------------------------------------
@@ -968,14 +1006,39 @@ def public_detail(text: str, limit: int = ERROR_DETAIL_LIMIT) -> str:
     return line if len(line) <= limit else line[: limit - 1] + "…"
 
 
+# Field names whose values are credentials.  The public-safety check's own
+# rule (``_contains_secret_field``: api_key, authorization, bearer, cookie,
+# password, secret, set_cookie, token, and the *_password, *_secret,
+# *_api_key, and *_token suffixes) plus the other names this module's
+# credential-line redaction treats as secrets.
+_CREDENTIAL_FIELD = re.compile(
+    r"(?:\w+_)?(?:passwd|apikey|access_key|private_key|client_secret|proxy_authorization|session|session_?id|sid)"
+)
+REDACTED_FIELD = "redacted_credential_field"
+
+
+def credential_field(key: Any) -> bool:
+    """Whether a mapping key names a credential-valued field."""
+
+    if not isinstance(key, str):
+        return False
+    normalized = key.strip().lower().replace("-", "_").replace(" ", "_")
+    return v1._contains_secret_field({key: None}) or bool(_CREDENTIAL_FIELD.fullmatch(normalized))
+
+
 def public_values(value: Any, limit: int = RESULT_DETAIL_LIMIT) -> Any:
     """A failure's measured values, JSON-safe and public-safe for receipts and evidence.
 
     Every string goes through ``public_detail``, dict keys included (a
     non-string key as its text); a non-finite float is recorded as None, as
     ``_finite`` records one; tuples and sets become lists, and any other
-    object its redacted text.  ``assert_public_safe`` still checks every
-    receipt after this.
+    object its redacted text.
+
+    A credential-named field (``credential_field``) is renamed, not kept:
+    its value, empty or not, becomes ``<redacted credential>`` under the
+    neutral key ``redacted_credential_field`` (``..._2``, ``..._3`` for
+    more in the same mapping), so neither its name nor its value reaches a
+    receipt.  ``assert_public_safe`` still checks every receipt after this.
     """
 
     if value is None or isinstance(value, (bool, int)):
@@ -985,11 +1048,21 @@ def public_values(value: Any, limit: int = RESULT_DETAIL_LIMIT) -> Any:
     if isinstance(value, str):
         return public_detail(value, limit)
     if isinstance(value, Mapping):
-        return {
+        public: dict[str, Any] = {}
+        redacted = 0
+        for key, item in value.items():
             # JSON keys are strings, so any other key is recorded as its text.
-            public_detail(key if isinstance(key, str) else str(key), limit): public_values(item, limit)
-            for key, item in value.items()
-        }
+            name = public_detail(key if isinstance(key, str) else str(key), limit)
+            if credential_field(key) or credential_field(name):
+                redacted += 1
+                name = REDACTED_FIELD if redacted == 1 else f"{REDACTED_FIELD}_{redacted}"
+                while name in value or name in public:
+                    redacted += 1
+                    name = f"{REDACTED_FIELD}_{redacted}"
+                public[name] = "<redacted credential>"
+            else:
+                public[name] = public_values(item, limit)
+        return public
     if isinstance(value, (list, tuple)):
         return [public_values(item, limit) for item in value]
     if isinstance(value, (set, frozenset)):
@@ -1299,12 +1372,14 @@ def zembed_canary(ctx: Context) -> dict[str, Any]:
     if not v1.embedding_canary_passes(query, relevant, unrelated):
         raise Escalation("ESCALATE: zembed canary", values)
     if ctx.stored_chunk is not None:
-        chunk, stored = ctx.stored_chunk()
-        direct = lemond_embed(ctx, ctx.settings.content_prefix + chunk)
-        vectors["stored_chunk"] = vector_record(stored)
-        vectors["direct_chunk"] = vector_record(direct)
-        similarity = _cosine_or_none(stored, direct)
-        values["stored_vector_cosine"] = _finite(similarity, 6)
+        # The margin is measured; a failed chunk read or embedding keeps it.
+        with keeping(values, SCENARIO_FAILURES):
+            chunk, stored = ctx.stored_chunk()
+            vectors["stored_chunk"] = vector_record(stored)
+            direct = lemond_embed(ctx, ctx.settings.content_prefix + chunk)
+            vectors["direct_chunk"] = vector_record(direct)
+            similarity = _cosine_or_none(stored, direct)
+            values["stored_vector_cosine"] = _finite(similarity, 6)
         if similarity is None or not similarity >= STORED_VECTOR_MINIMUM_COSINE:
             raise Escalation(
                 "ESCALATE: zembed canary (stored vector differs from the settings-prefixed embedding)", values
@@ -1332,19 +1407,23 @@ def zerank_qualification(ctx: Context) -> dict[str, Any]:
             raise Blocked(NEEDS_OWNER_RESTART)
         raise Blocked(f"NEEDS: re-save the RAG config or restart {ctx.unit}")
     if health.status != 200 or (health.json() or {}).get("status") != "qualified":
-        raise ScenarioFailure(f"retrieval health returned HTTP {health.status}{error_detail(health)}")
+        raise ScenarioFailure(f"retrieval health returned HTTP {health.status}{error_detail(health)}",
+                              {"health_status": health.status})
     query, documents = rag_gate_constants()
-    response = ctx.lemond.json(
-        "POST",
-        LEMOND_API["rerank"],
-        {"model": ctx.settings.reranking_model, "query": query, "documents": list(documents)},
-    )
-    scores = validate_rerank_results(
-        response.get("results") if isinstance(response, dict) else None, len(documents)
-    )
-    values = {"health": "qualified", "scores": [round(score, 6) for score in scores]}
-    if scores[0] <= max(scores[1:]):
-        raise ScenarioFailure("the relevant document was not ranked first", values)
+    values: dict[str, Any] = {"health": "qualified"}
+    # Health is measured; a failed or malformed rerank keeps it.
+    with keeping(values, SCENARIO_FAILURES):
+        response = ctx.lemond.json(
+            "POST",
+            LEMOND_API["rerank"],
+            {"model": ctx.settings.reranking_model, "query": query, "documents": list(documents)},
+        )
+        scores = validate_rerank_results(
+            response.get("results") if isinstance(response, dict) else None, len(documents)
+        )
+        values["scores"] = [round(score, 6) for score in scores]
+        if scores[0] <= max(scores[1:]):
+            raise ScenarioFailure("the relevant document was not ranked first", values)
     return values
 
 
@@ -1386,53 +1465,56 @@ def _wait_for_file(ctx: Context, file_id: str) -> None:
 
 def cited_answer(ctx: Context) -> dict[str, Any]:
     body, content_type = multipart_file("file", HANDBOOK_NAME, handbook_bytes(), "text/markdown")
-    started = time.monotonic()
-    upload = ctx.webui.request("POST", API["files"], body=body, content_type=content_type, token=ctx.token)
-    if upload.status != 200 or not isinstance((upload.json() or {}).get("id"), str):
-        raise ScenarioFailure(f"handbook upload returned HTTP {upload.status}{error_detail(upload)}")
-    file_id = upload.json()["id"]
-    timings = {"upload_s": round(time.monotonic() - started, 3)}
-    try:
+    timings: dict[str, float] = {}
+    # Filled as the scenario measures, so every failure, from the upload to
+    # the cleanup delete, keeps the timings and records taken before it.
+    values: dict[str, Any] = {
+        "timings": timings,
+        # Open WebUI 0.11.4 records a file source's upload name on its
+        # chunks' metadata, so that is the one source name the check
+        # requires (filename only, per the #89 ruling).
+        "expected_source_name": HANDBOOK_NAME,
+    }
+    with keeping(values, SCENARIO_FAILURES):
         started = time.monotonic()
-        _wait_for_file(ctx, file_id)
-        timings["index_s"] = round(time.monotonic() - started, 3)
-        started = time.monotonic()
-        response = ctx.webui.request(
-            "POST",
-            API["chat"],
-            payload={
-                "model": ctx.chat_model,
-                "stream": True,
-                "temperature": 0,
-                "params": {"temperature": 0},
-                "messages": [{"role": "user", "content": CITED_ANSWER_PROMPT}],
-                "files": [{"type": "file", "id": file_id}],
-            },
-            token=ctx.token,
-        )
-        timings["chat_s"] = round(time.monotonic() - started, 3)
-        if response.status != 200:
-            raise ScenarioFailure(f"file-scoped chat returned HTTP {response.status}{error_detail(response)}")
-        text, sources = parse_chat_response(response.body, response.content_type)
-        summary = summarize_sources(sources)
-        values = {
-            "timings": timings,
-            "sources": summary,
-            # Open WebUI 0.11.4 records a file source's upload name on its
-            # chunks' metadata, so that is the one source name the check
-            # requires (filename only, per the #89 ruling).
-            "expected_source_name": HANDBOOK_NAME,
-            "fact_present": CANONICAL_FACT in text,
-        }
-        if not cited_answer_passes(text, summary, HANDBOOK_NAME):
-            raise ScenarioFailure(json.dumps(values, sort_keys=True, ensure_ascii=False), values)
-    except BaseException:
-        # Clean up on every path, but never let the cleanup hide the failure.
-        _delete_file(ctx, file_id)
-        raise
-    deleted = _delete_file(ctx, file_id)
-    if deleted != 200:
-        raise ScenarioFailure(f"the handbook delete returned {deleted}; the uploaded file remains", values)
+        upload = ctx.webui.request("POST", API["files"], body=body, content_type=content_type, token=ctx.token)
+        timings["upload_s"] = round(time.monotonic() - started, 3)
+        if upload.status != 200 or not isinstance((upload.json() or {}).get("id"), str):
+            raise ScenarioFailure(f"handbook upload returned HTTP {upload.status}{error_detail(upload)}")
+        file_id = upload.json()["id"]
+        try:
+            started = time.monotonic()
+            _wait_for_file(ctx, file_id)
+            timings["index_s"] = round(time.monotonic() - started, 3)
+            started = time.monotonic()
+            response = ctx.webui.request(
+                "POST",
+                API["chat"],
+                payload={
+                    "model": ctx.chat_model,
+                    "stream": True,
+                    "temperature": 0,
+                    "params": {"temperature": 0},
+                    "messages": [{"role": "user", "content": CITED_ANSWER_PROMPT}],
+                    "files": [{"type": "file", "id": file_id}],
+                },
+                token=ctx.token,
+            )
+            timings["chat_s"] = round(time.monotonic() - started, 3)
+            if response.status != 200:
+                raise ScenarioFailure(f"file-scoped chat returned HTTP {response.status}{error_detail(response)}")
+            text, sources = parse_chat_response(response.body, response.content_type)
+            summary = summarize_sources(sources)
+            values.update(sources=summary, fact_present=CANONICAL_FACT in text)
+            if not cited_answer_passes(text, summary, HANDBOOK_NAME):
+                raise ScenarioFailure(json.dumps(values, sort_keys=True, ensure_ascii=False), values)
+        except BaseException:
+            # Clean up on every path, but never let the cleanup hide the failure.
+            _delete_file(ctx, file_id)
+            raise
+        deleted = _delete_file(ctx, file_id)
+        if deleted != 200:
+            raise ScenarioFailure(f"the handbook delete returned {deleted}; the uploaded file remains", values)
     return values
 
 
@@ -1475,27 +1557,28 @@ def stt(ctx: Context) -> dict[str, Any]:
         "POST", API["transcriptions"], body=body, content_type=content_type, token=ctx.token
     )
     elapsed = round(time.monotonic() - started, 3)
-    if response.status != 200:
-        raise ScenarioFailure(f"transcription returned HTTP {response.status}{error_detail(response)}")
-    result = response.json()
-    if not isinstance(result, dict):
-        result = {}
-    text = result.get("text")
-    if not isinstance(text, str):
-        text = ""
-    language = result.get("language")
-    if not isinstance(language, str):
-        language = None
-    values = {
+    values: dict[str, Any] = {
         "transcription_s": elapsed,
-        "language": language,
-        "word_count": len(normalize_words(text).split()),
         "whisper": {"model": ctx.whisper_model, **whisper_pin_record(ctx.whisper_model)},
     }
-    if not transcription_passes(text, language):
-        raise ScenarioFailure(f"transcription did not match: {normalize_words(text)[:120]}", values)
-    if ctx.journal is not None and "WhisperModel initialization failed" in ctx.journal():
-        raise ScenarioFailure("the journal shows a Whisper model load failure", values)
+    # The transcription is timed; a failed or malformed reply keeps the time.
+    with keeping(values, SCENARIO_FAILURES):
+        if response.status != 200:
+            raise ScenarioFailure(f"transcription returned HTTP {response.status}{error_detail(response)}")
+        result = response.json()
+        if not isinstance(result, dict):
+            result = {}
+        text = result.get("text")
+        if not isinstance(text, str):
+            text = ""
+        language = result.get("language")
+        if not isinstance(language, str):
+            language = None
+        values.update(language=language, word_count=len(normalize_words(text).split()))
+        if not transcription_passes(text, language):
+            raise ScenarioFailure(f"transcription did not match: {normalize_words(text)[:120]}", values)
+        if ctx.journal is not None and "WhisperModel initialization failed" in ctx.journal():
+            raise ScenarioFailure("the journal shows a Whisper model load failure", values)
     return values
 
 
@@ -1529,7 +1612,7 @@ def run_scenario(ctx: Context, scenario_id: str) -> ScenarioResult:
         values, result, detail = failure_values(error), BLOCKED, str(error)
     except SCENARIO_FAILURES as error:
         # A failed check keeps what it measured; the detail alone is redacted text.
-        values, result, detail = failure_values(error), FAIL, f"{type(error).__name__}: {error}"
+        values, result, detail = failure_values(error), FAIL, failure_text(error)
     # An exception's text can carry whatever a server returned; the detail
     # goes into receipts and evidence, so it is redacted here, once.
     if result != PASS:
