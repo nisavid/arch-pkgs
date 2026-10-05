@@ -25,16 +25,17 @@ stays `deferred` until #90 decides it.
 | `qdrant` | 1.19.1-1 | deployed | `41208bd` | recorded | [cutover identities](qdrant-production-cutover.md#candidate-identities); [1.19.1 G0-G1](evidence/qdrant-1.19.1-1/g0-g1.json) |
 | `qdrant-migration` | 1.18.3-1 | deployed | `51a55e7` | recorded | [cutover identities](qdrant-production-cutover.md#candidate-identities); [1.19.1 G0-G1](evidence/qdrant-1.19.1-1/g0-g1.json); [rebind rebuild](evidence/qdrant-1.19.0-1-rebind-2026-09-22/g0-g1-rebuild.json) |
 | `qdrant-web-ui` | 0.2.18-1 | deployed | `41208bd` | recorded | [cutover identities](qdrant-production-cutover.md#candidate-identities); [1.19.1 G0-G1](evidence/qdrant-1.19.1-1/g0-g1.json) |
-| `python-faster-whisper` | 1.2.1-1 | deployed | `9b41578` | derived | [speech G0-G2](evidence/speech-providers-4.8.2-1.2.1/) |
+| `python-faster-whisper` | 1.2.1-2 | deployed | `86549fa` | recorded | [1.2.1-2 G0-G2](evidence/python-faster-whisper-1.2.1-2/); [#125](https://github.com/nisavid/arch-pkgs/pull/125) |
 | `ctranslate2` | 4.8.2-1 | publication identity only | `0b4b327` | recorded | [speech G0-G2](evidence/speech-providers-4.8.2-1.2.1/) |
 | `python-ctranslate2` | 4.8.2-1 | publication identity only | `0b4b327` | recorded | [speech G0-G2](evidence/speech-providers-4.8.2-1.2.1/) |
 
 The manifest holds the full sizes, SHA-256 digests, and 40-character commits.
 Each size and digest equals its cited source. #88's table gives the
-`python-rapidocr` size, and #88's speech table repeats the speech evidence.
-Every bound archive was re-hashed in the candidate store on 2026-10-02, and
-each `.BUILDINFO` `pkgbuild_sha256sum` matched the `PKGBUILD` at the record's
-source commit.
+`python-rapidocr` size, and #88's speech table repeats the CTranslate2
+evidence. Every bound archive was re-hashed in the candidate store on
+2026-10-02, and each `.BUILDINFO` `pkgbuild_sha256sum` matched the `PKGBUILD`
+at the record's source commit. The `python-faster-whisper` record was rebound
+on 2026-10-05 and checked the same way; see [Rebinds](#rebinds).
 
 `open-webui` 0.11.4-2 records its two offline closures as build inputs. The
 asset names, releases, and digests are the ones its `PKGBUILD` pins at the
@@ -108,19 +109,19 @@ The records:
   and `51a55e7` holds the recorded `PKGBUILD` and `.SRCINFO` digests.
 - **`ctranslate2` and `python-ctranslate2`:** clean-built from `0b4b327`, the
   speech evidence's `source_commit`.
-- **`python-faster-whisper`:** derived. The speech evidence records `0b4b327`
-  as its source commit and `51a55e7` as that commit's base. It records no
-  build commit for the reused faster-whisper bytes, which come from the
-  superseded 4.8.1 candidate run; that run also built a ctranslate2 4.8.1
-  recipe that was never committed. The faster-whisper `PKGBUILD` and
-  `.SRCINFO` match the archive and the evidence. Tree `0746eed` holds exactly
-  those files, and `main` carried that tree from `9b41578` (2026-08-17) until
-  the README-only `e0d5b2b` (2026-09-23), a window that covers the 2026-09-22
-  build. `9b41578` is the earliest such commit.
+- **`python-faster-whisper`:** built from merged `main` at `86549fa`, the
+  squash of [#125](https://github.com/nisavid/arch-pkgs/pull/125), so its tree
+  is the merged tree by construction. Its
+  [G0-G2 evidence](evidence/python-faster-whisper-1.2.1-2/) records the
+  `PKGBUILD`, `.SRCINFO`, and patch digests at that commit.
+
+No record uses `derived-tree-equal` now. The replaced 1.2.1-1 record did:
+its tree `0746eed` was derived to `9b41578`, the earliest `main` commit that
+carried it.
 
 ### Which ref keeps each commit reachable
 
-`2059571`, `51a55e7`, and `9b41578` are on `main`. The other three are not:
+`2059571`, `51a55e7`, and `86549fa` are on `main`. The other three are not:
 
 - `f25fd53` is reachable through `refs/pull/87/head`.
 - `41208bd` is reachable through the tag `open-webui-0.11.4-offline-closures-v1`.
@@ -134,15 +135,33 @@ The records:
 
 ## Adoption
 
-#88's tree-equality rule governs the two Open WebUI builds. It admits an
-archive only if its package tree equals the merged tree of that package on
-`main`. Against `main` at `2059571`, `open-webui` and `python-rapidocr` are both
-tree-equal, and their `main_tree_delta` is empty.
+#88's tree-equality rule governs the two Open WebUI builds and the
+`python-faster-whisper` 1.2.1-2 build. It admits an archive only if its package
+tree equals the merged tree of that package on `main`. `adoption_main_commit`
+is `86549fa`, the newest of those builds. Against it, `open-webui`,
+`python-rapidocr`, and `python-faster-whisper` are tree-equal, and their
+`main_tree_delta` is empty.
 
-The Qdrant trio and the speech archives are not adopted under that rule. They
+The Qdrant trio and the CTranslate2 pair are not adopted under that rule. They
 are bound from their accepted evidence, under #88's Inputs and Remaining
 scope 2. Their `main_tree_delta` of `README.md` is informational: `makepkg`
 does not read it, and no `PKGBUILD` references it.
+
+## Rebinds
+
+On 2026-10-05 the `python-faster-whisper` record moved from 1.2.1-1 to
+1.2.1-2, the PyAV 19 fix for
+[speech transcription breaks on PyAV 19](https://github.com/nisavid/arch-pkgs/issues/124).
+1.2.1-1 (`9b052be8…`, derived from `9b41578`) fails speech-to-text on the
+host's PyAV 19. The new record is `recorded-build-commit` at `86549fa`, with
+store `source` `python-faster-whisper/86549fa`. `adoption_main_commit` moved
+from `2059571` to `86549fa`: a tree check against `2059571` would compare the
+1.2.1-2 recipe with the older 1.2.1-1 tree. Every other record and its
+`main_tree_delta` is unchanged against `86549fa`.
+
+The manifest is edited in place and keeps its file name and `recorded`
+date, because the acceptance kit, its tests, and both runbooks name this file
+as the candidate of record. Git history keeps the 1.2.1-1 binding.
 
 ## Archives stay outside git
 
@@ -190,10 +209,12 @@ The `open-webui` row now points at this candidate set and says not to rebuild
 
 `tests/test_open_webui_household_candidate_set.py` checks:
 
-- the manifest's shape, the `source_commit_basis` of each record, and the
-  literal `open-webui` and `python-rapidocr` records;
+- the manifest's shape, the `source_commit_basis` of each record, the
+  literal `open-webui`, `python-rapidocr`, and `python-faster-whisper`
+  records, and that `adoption_main_commit` is the newest merged-main build;
 - the stager's archive-record validation;
-- the Qdrant and speech records against their in-repo evidence;
+- the Qdrant and speech records against their in-repo evidence, including
+  the `python-faster-whisper` recipe digests and G2 harness digest;
 - the external-input records;
 - the catalog rows.
 
@@ -203,7 +224,7 @@ changes the household rows, and #62's cleanup changes or removes the
 this test.
 
 The Git checks run only where the commit objects exist. They cover each
-`package_tree`, each `main_tree_delta`, the derived commit, and the
+`package_tree`, each `main_tree_delta`, any derived commit, and the
 `PKGBUILD` pins of the open-webui build inputs. CI's depth-1 checkout skips
 them all. A plain full clone fetches the tags, but skips the
 `python-rapidocr` record unless `refs/pull/87/head` is fetched. Run the test in

@@ -46,7 +46,7 @@ The agent checks these read-only before the window opens:
   promoted the stack.
 - [Publish the accepted-only package repository](https://github.com/nisavid/arch-pkgs/issues/57)
   is done: `pacman -Si nisavid/open-webui nisavid/python-rapidocr nisavid/python-faster-whisper`
-  shows 0.11.4-2, 3.9.2-1, and 1.2.1-1, and the sync-database SHA-256 values
+  shows 0.11.4-2, 3.9.2-1, and 1.2.1-2, and the sync-database SHA-256 values
   equal the candidate manifest.
 - The candidate of record is 0.11.4-2, the Open WebUI 0.11.4 re-baseline
   with patches 0001 through 0008, built from `main` at `2059571`. It carries
@@ -242,8 +242,11 @@ sudo pacman -S nisavid/open-webui nisavid/python-rapidocr nisavid/python-faster-
 
 - pacman asks to remove `python-rapidocr-onnxruntime`, because
   `python-rapidocr` conflicts with it. Answer **yes**.
-- Do not add `--needed`: the installed `python-faster-whisper` 1.2.1-1 is a
-  different build and must be replaced.
+- Do not add `--needed`: P2 must install the published bytes even where an
+  installed version string already matches. The host's locally built
+  `python-faster-whisper` 1.2.1-1 is upgraded to 1.2.1-2, which carries the
+  PyAV 19 fix ([#124](https://github.com/nisavid/arch-pkgs/issues/124));
+  1.2.1-1's speech-to-text fails on PyAV 19.
 - `open-webui` 0.11.0-1 is replaced in place. Its unowned legacy files under
   `/etc/open-webui` were copied in P0.
 - Leave `open-webui.service` and `open-webui-tailnet.service` disabled.
@@ -257,7 +260,7 @@ package is not a rollback target.
 - Agent:
   - `pacman -Q open-webui python-rapidocr python-faster-whisper` shows the
     published versions;
-  - `sha256sum /var/cache/pacman/pkg/{open-webui-0.11.4-2-x86_64,python-rapidocr-3.9.2-1-any,python-faster-whisper-1.2.1-1-any}.pkg.tar.zst`
+  - `sha256sum /var/cache/pacman/pkg/{open-webui-0.11.4-2-x86_64,python-rapidocr-3.9.2-1-any,python-faster-whisper-1.2.1-2-any}.pkg.tar.zst`
     equals the promotion record;
   - `pacman -Q python-rapidocr-onnxruntime` fails;
   - `pacman -Qi caddy python-omegaconf python-antlr4 tailscale` succeeds;
@@ -900,7 +903,7 @@ sudo install -d -m 0700 "$a" "$a/credstore" "$a/archives" "$a/qdrant" \
   && sudo cp -a /var/lib/valkey/open-webui/dump.rdb "$a/" \
   && sudo sh -c 'cp -a /etc/credstore.encrypted/open-webui.* "$1/credstore/"' sh "$a" \
   && sudo sh -c '/usr/lib/open-webui/open-webui-session-epoch-ledger current >"$1/epoch-bound"' sh "$a" \
-  && sudo cp -a /var/cache/pacman/pkg/{open-webui-0.11.4-2-x86_64,python-rapidocr-3.9.2-1-any,python-faster-whisper-1.2.1-1-any}.pkg.tar.zst "$a/archives/" \
+  && sudo cp -a /var/cache/pacman/pkg/{open-webui-0.11.4-2-x86_64,python-rapidocr-3.9.2-1-any,python-faster-whisper-1.2.1-2-any}.pkg.tar.zst "$a/archives/" \
   && echo copied
 ```
 
@@ -942,7 +945,7 @@ sudo sh -c '
   for n in webui-secret-key oauth-client-info-encryption-key oauth-session-token-encryption-key valkey-url qdrant-runtime-api-key admin-email admin-name admin-final-password; do
     test -s "$1/credstore/open-webui.$n"
   done
-  for n in open-webui-0.11.4-2-x86_64 python-rapidocr-3.9.2-1-any python-faster-whisper-1.2.1-1-any; do
+  for n in open-webui-0.11.4-2-x86_64 python-rapidocr-3.9.2-1-any python-faster-whisper-1.2.1-2-any; do
     test -s "$1/archives/$n.pkg.tar.zst"
   done
   for s in memories knowledge files web-search hash-based; do
@@ -1039,7 +1042,7 @@ The acceptance trial values are the baseline.
   sudo systemctl stop open-webui.service
   sudo /usr/lib/open-webui/open-webui-session-epoch-ledger reserve
   sudo sh -c 'cd "$1" && sha256sum --quiet -c SHA256SUMS' sh <anchor> && echo verified \
-    && sudo pacman -U <anchor>/archives/{open-webui-0.11.4-2-x86_64,python-rapidocr-3.9.2-1-any,python-faster-whisper-1.2.1-1-any}.pkg.tar.zst
+    && sudo pacman -U <anchor>/archives/{open-webui-0.11.4-2-x86_64,python-rapidocr-3.9.2-1-any,python-faster-whisper-1.2.1-2-any}.pkg.tar.zst
   ```
 
   The anchor check must print `verified`; `pacman -U` runs only then.

@@ -38,7 +38,9 @@ onto the `1.2.1` tag tarball, byte for byte. It changes only
     [candidate evidence](../../docs/maintainers/evidence/speech-providers-4.8.2-1.2.1/).
   - `1.2.1-2` carries `0001-support-pyav-19.patch`, a backport of upstream
     `2ce7f9d` for PyAV 19; see [PyAV 19 Compatibility](#pyav-19-compatibility).
-    That gate evidence covers `1.2.1-1`, not `1.2.1-2`.
+    That gate evidence covers `1.2.1-1`, not `1.2.1-2`. The `1.2.1-2`
+    [candidate evidence](../../docs/maintainers/evidence/python-faster-whisper-1.2.1-2/)
+    records G0 and G1 and the PyAV 19 G2 fixture.
   - Preserve the AUR source-build shape and generic `python-ctranslate2` and
     `python-onnxruntime` provider dependencies. The accepted set must compose
     with CTranslate2 `4.8.2` and the exact Python 3.14/system-provider profile.

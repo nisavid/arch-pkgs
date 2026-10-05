@@ -3,7 +3,7 @@
   "candidate_set": "open-webui-household",
   "recorded": "2026-10-02",
   "binding_ticket": "https://github.com/nisavid/arch-pkgs/issues/88",
-  "adoption_main_commit": "2059571d63b02ee1d66b3dfed943c7554a643876",
+  "adoption_main_commit": "86549fa8062d792861d27d0f3faf722a733bcaaa",
   "archives": [
     {
       "archive": {
@@ -133,23 +133,22 @@
     {
       "archive": {
         "package": "python-faster-whisper",
-        "version": "1.2.1-1",
+        "version": "1.2.1-2",
         "arch": "any",
-        "filename": "python-faster-whisper-1.2.1-1-any.pkg.tar.zst",
-        "size": 1087994,
-        "sha256": "9b052be890fd7f21135ca2ebc090ff140432e0e8493dd484b44585386ae8d1cb",
-        "source": "speech",
-        "source_commit": "9b41578c06fbda2b22cfda73c2fd30255d1137e9"
+        "filename": "python-faster-whisper-1.2.1-2-any.pkg.tar.zst",
+        "size": 1088665,
+        "sha256": "9d8bdab118453c3a3cfded8a0430a526784e2ee4c9bce5038171f4de3a29f89b",
+        "source": "python-faster-whisper/86549fa",
+        "source_commit": "86549fa8062d792861d27d0f3faf722a733bcaaa"
       },
-      "source_commit_basis": "derived-tree-equal",
+      "source_commit_basis": "recorded-build-commit",
       "role": "deployed",
       "package_directory": "packages/python-faster-whisper",
-      "package_tree": "0746eed1d054788470fec1d71f82ee1141d01921",
-      "main_tree_delta": [
-        "README.md"
-      ],
+      "package_tree": "042e1f67990f6b834153b58fb8b98bd9329ffe7f",
+      "main_tree_delta": [],
       "evidence": [
-        "docs/maintainers/evidence/speech-providers-4.8.2-1.2.1/"
+        "docs/maintainers/evidence/python-faster-whisper-1.2.1-2/",
+        "https://github.com/nisavid/arch-pkgs/pull/125"
       ]
     },
     {
