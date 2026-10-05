@@ -1,0 +1,176 @@
+{
+  "schema": "arch-pkgs.speech-providers.g0-g2.v1",
+  "scope": "Public-safe G0-G2 candidate evidence for python-faster-whisper 1.2.1-2, the PyAV 19 fix for speech transcription breaks on PyAV 19 (#124). It replaces the python-faster-whisper part of the speech-providers-4.8.2-1.2.1 record; the CTranslate2 4.8.2-1 evidence there carries over unchanged. It does not promote the sublane. Publication, production installation, and the Open WebUI cutover remain outside this record.",
+  "evidence_date": "2026-10-05",
+  "privacy": {
+    "public_copy_safe": true,
+    "machine_local_paths_omitted": true,
+    "buildinfo_paths_omitted": true,
+    "credential_material_omitted": true
+  },
+  "decision": "https://github.com/nisavid/arch-pkgs/issues/26#issuecomment-5258698835",
+  "issue": "https://github.com/nisavid/arch-pkgs/issues/124",
+  "repository_source": {
+    "source_commit": "86549fa8062d792861d27d0f3faf722a733bcaaa",
+    "source_commit_note": "The squash merge of https://github.com/nisavid/arch-pkgs/pull/125 on main; the archive was built from it.",
+    "package_tree": "042e1f67990f6b834153b58fb8b98bd9329ffe7f",
+    "files": {
+      "packages/python-faster-whisper/PKGBUILD": {
+        "sha256": "3fc29738813ba8b21289a06b2ef342d0642b012454b698ac1fccd068acddfc35",
+        "size": 1470
+      },
+      "packages/python-faster-whisper/.SRCINFO": {
+        "sha256": "ced36c7a20f84e2890e96f88dd7ab16af870e13bc845ae1f5c35428b69050bd6",
+        "size": 984
+      },
+      "packages/python-faster-whisper/0001-support-pyav-19.patch": {
+        "sha256": "ce683e6dccca6edc6937356a77f740a4cee5f30402b80e8db2281aaa5e236a60",
+        "size": 1718
+      }
+    }
+  },
+  "gates": {
+    "G0": {
+      "pass": true,
+      "upstream_sources": {
+        "python-faster-whisper": {
+          "repository": "https://github.com/SYSTRAN/faster-whisper",
+          "tag": "v1.2.1",
+          "archive": "faster-whisper-1.2.1.tar.gz",
+          "b2sum": "771e25eb86e8c64c319245d07070ed0ccc8378a44a93ffb064712985322a5fd187cbba89d4bc03dcf4beb04fe691da07590c7f0620da14c894e0dccdcff4fdb9",
+          "sha256": "ff0b5428b3a074cd63f580ae73fa21f7d9fd3bba28e0e2e097868d78d5b06f2f",
+          "size": 21407900
+        },
+        "backport": {
+          "patch": "0001-support-pyav-19.patch",
+          "b2sum": "d2835778b534712963ee57c2fd7a45057ad831710f534268998a84fe52e30419e5c3801231ab3f2c800517a88625c257b199daddbd6cce8e9fae125d8987f4ec",
+          "upstream_commit": "2ce7f9d7a9fbe315a5804a33bf7224d42e101174",
+          "upstream_pull_request": "https://github.com/SYSTRAN/faster-whisper/pull/1495",
+          "scope": "faster_whisper/audio.py only; the hunk is upstream's, byte for byte"
+        }
+      },
+      "checks": {
+        "verifysource": "makepkg --verifysource passed; the tag tarball matched its b2sum",
+        "srcinfo_regenerated": "makepkg --printsrcinfo matches the committed .SRCINFO",
+        "cold_tree": "the build used a git archive of tree 042e1f6 at 86549fa; every exported blob matched the commit tree",
+        "compatibility_matrix": "Faster Whisper 1.2.1 requires ctranslate2>=4.0,<5, huggingface_hub>=0.21, tokenizers>=0.13,<1, onnxruntime>=1.14,<2, av>=11, and tqdm. The patch keeps av unversioned: it passes metadata_errors=\"ignore\" to av.open() only below PyAV 19.",
+        "upstream_release_review": "PyAV 19.0.0 removed the metadata_encoding and metadata_errors arguments to av.open() and always decodes metadata as UTF-8 with surrogateescape; 19.0.1 has fixes only. faster-whisper has no release after 1.2.1; upstream fixed the call on master in 2ce7f9d (PR #1495), which changes only faster_whisper/audio.py. The other commits on master since v1.2.1 (new Silero VAD weights, new VAD parameters, a huggingface_hub floor) are not taken.",
+        "secret_or_host_material": "none in the recipe diff"
+      }
+    },
+    "G1": {
+      "pass": true,
+      "builder": {
+        "tool": "makepkg -f --nodeps --cleanbuild inside a bubblewrap namespace with only loopback, a read-only host, and fresh /tmp, /run, and home; every depends and makedepends entry was already installed (pacman -T), so --nodeps only kept makepkg from calling pacman; nothing was installed",
+        "makepkg": "7.1.0",
+        "python": "3.14.6 (python-gfx1151 3.14.6-1)",
+        "bwrap": "0.13.0",
+        "fakeroot": "1:1.37.2-3.1",
+        "python-build": "1.6.0-1",
+        "python-installer": "1.0.1-1",
+        "python-setuptools": "1:84.0.0-1",
+        "python-wheel": "0.48.0-1",
+        "built_utc": "2026-10-05T06:03:12Z"
+      },
+      "archives": {
+        "python-faster-whisper-1.2.1-2-any.pkg.tar.zst": {
+          "name": "python-faster-whisper",
+          "version": "1.2.1-2",
+          "architecture": "any",
+          "size": 1088665,
+          "sha256": "9d8bdab118453c3a3cfded8a0430a526784e2ee4c9bce5038171f4de3a29f89b",
+          "installed_size": 1383630,
+          "pkgbuild_sha256": "3fc29738813ba8b21289a06b2ef342d0642b012454b698ac1fccd068acddfc35",
+          "payload_file_count": 16,
+          "depends": [
+            "python",
+            "python-av",
+            "python-ctranslate2",
+            "python-huggingface-hub",
+            "python-numpy",
+            "python-onnxruntime",
+            "python-tokenizers",
+            "python-tqdm"
+          ],
+          "optdepends": [],
+          "key_payload_sha256": {
+            "usr/lib/python3.14/site-packages/faster_whisper/assets/silero_vad_v6.onnx": "4cbf549b8326f60f80f2536d9eefeb450a9abe83365a098031c89719f1be17d2",
+            "usr/lib/python3.14/site-packages/faster_whisper/audio.py": "af7d60c7e1abfb5b000ade4004679d5ff24e3e7beca0ad42a79b0d86d6d7e58e"
+          }
+        }
+      },
+      "payload_checks": {
+        "baseline_diff": "against the 1.2.1-1 archive (sha256 9b052be8...), only faster_whisper/audio.py, the dist-info RECORD line for audio.py, and the package metadata (.PKGINFO, .BUILDINFO, .MTREE) differ; every other payload file is byte-identical",
+        "patch_reapplied": "the 1.2.1-1 audio.py re-patched with the committed patch at --fuzz=0 equals the packaged audio.py byte for byte",
+        "av_open_gate": "the packaged audio.py carries the _AV_OPEN_KWARGS gate and no unconditional metadata_errors call",
+        "version_py": "faster_whisper/version.py declares __version__ = \"1.2.1\"",
+        "silero_vad_asset": "assets/silero_vad_v6.onnx is unchanged from 1.2.1-1 (sha256 4cbf549b...)",
+        "buildinfo": ".BUILDINFO pkgbuild_sha256sum equals the committed PKGBUILD",
+        "no_local_paths_in_payload": "no build or home path appears in .PKGINFO, .BUILDINFO, .MTREE, or any payload file",
+        "licenses": "installs its MIT LICENSE under /usr/share/licenses/python-faster-whisper"
+      }
+    },
+    "G2": {
+      "pass": null,
+      "status": "pending: the fixture runs under the heavy-work lease; its output replaces this status with checks, baseline_control, ownership, and provider_profile",
+      "fixture": {
+        "kind": "declared Python 3.14 CPU provider fixture, as in the speech-providers-4.8.2-1.2.1 G2: the candidate archives extracted into one overlay root that leads PYTHONPATH and LD_LIBRARY_PATH over the host's installed system providers, run inside an unprivileged network namespace that has only loopback. PyAV is the host's, so the run exercises decode_audio() against the installed PyAV 19.",
+        "environment": "env -i; HF_HUB_OFFLINE=1; CUDA_VISIBLE_DEVICES, HIP_VISIBLE_DEVICES, and ROCR_VISIBLE_DEVICES empty; PYTHONNOUSERSITE=1; PYTHONDONTWRITEBYTECODE=1",
+        "harness": "g2_fixture.py",
+        "harness_sha256": "772bc3402cb82b98f487c53942b66f810a523a5da89f67d4ff24d1bf550590b9",
+        "derived_from": {
+          "harness": "../speech-providers-4.8.2-1.2.1/g2_fixture.py",
+          "harness_sha256": "7b79bc037804ea95ffbb297d58aa4fdc64ad55ddb8ab2975ab3d197c527d1d37",
+          "change": "Drops the CTranslate2 bundled-model and malformed-model checks, which the CTranslate2 4.8.2-1 evidence covers; adds the PyAV identity, the av.open() keyword gate, the Silero VAD digest, a direct decode_audio() call, and a baseline-control mode for the unpatched 1.2.1-1 archive. The transcription checks are unchanged."
+        },
+        "overlays": {
+          "candidate": [
+            "ctranslate2-4.8.2-1-x86_64.pkg.tar.zst",
+            "python-ctranslate2-4.8.2-1-x86_64.pkg.tar.zst",
+            "python-faster-whisper-1.2.1-2-any.pkg.tar.zst"
+          ],
+          "baseline_control": [
+            "ctranslate2-4.8.2-1-x86_64.pkg.tar.zst",
+            "python-ctranslate2-4.8.2-1-x86_64.pkg.tar.zst",
+            "python-faster-whisper-1.2.1-1-any.pkg.tar.zst"
+          ]
+        },
+        "inputs": {
+          "whisper_model": {
+            "repository": "Systran/faster-whisper-base",
+            "revision": "ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66",
+            "files_sha256": {
+              "config.json": "56a6d8110d311f19c8f0471e562832c7527f146b567275bfca59fcf7c184da9a",
+              "model.bin": "d01c3014881c9c6f3133c182f3d2887eb6ca1c789a7538c5c007196857a0a6a9",
+              "tokenizer.json": "fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab",
+              "vocabulary.txt": "34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913"
+            },
+            "note": "The acceptance kit's default Whisper pin (tools/open_webui_household_scenarios.py WHISPER_BASE), which the household rehearsal and trial speech-to-text smoke use. The 1.2.1-1 record used the tiny model, which this host does not hold."
+          },
+          "audio": {
+            "source": "faster-whisper 1.2.1 tests/data/jfk.flac",
+            "sha256": "63a4b1e4c1dc655ac70961ffbf518acd249df237e5a0152faae9a4a836949715"
+          }
+        }
+      }
+    }
+  },
+  "carried_over": {
+    "evidence": "../speech-providers-4.8.2-1.2.1/g0-g2.json",
+    "archives": [
+      "ctranslate2-4.8.2-1-x86_64.pkg.tar.zst",
+      "python-ctranslate2-4.8.2-1-x86_64.pkg.tar.zst"
+    ],
+    "note": "The CTranslate2 G0-G2 results, including the upstream Python tests and the bundled-model and malformed-model checks, are not rerun. Both archives are the same bytes and enter this record's overlay unchanged."
+  },
+  "supersedes": {
+    "note": "1.2.1-1 passed G0-G2 on PyAV 18.1.0. Its decode_audio() raises TypeError on PyAV 19, so it is no longer a candidate.",
+    "archives": {
+      "python-faster-whisper-1.2.1-1-any.pkg.tar.zst": {
+        "size": 1087994,
+        "sha256": "9b052be890fd7f21135ca2ebc090ff140432e0e8493dd484b44585386ae8d1cb",
+        "evidence": "../speech-providers-4.8.2-1.2.1/g0-g2.json"
+      }
+    }
+  }
+}
