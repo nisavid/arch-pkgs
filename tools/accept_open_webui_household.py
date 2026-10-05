@@ -3832,7 +3832,7 @@ class Trial:
             exit_code = sc.EXIT_PRECONDITION
         evidence = build_evidence(kit, self, exit_code, restarted)
         try:
-            v1.assert_public_safe(evidence)
+            sc.assert_kit_public_safe(evidence)
             safe = True
             detail = "ok"
         except ValueError as error:
@@ -3865,7 +3865,7 @@ class Trial:
             handle.write(json.dumps(evidence, indent=2, sort_keys=True, ensure_ascii=False) + "\n")
         os.chmod(private, 0o600)
         if safe:
-            v1.assert_public_safe(evidence)
+            sc.assert_kit_public_safe(evidence)
             destination = kit.path("evidence", "public", f"open-webui-household-acceptance-{time.strftime('%Y-%m-%d', time.gmtime())}.json")
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_text(json.dumps(evidence, indent=2, sort_keys=True, ensure_ascii=False) + "\n")

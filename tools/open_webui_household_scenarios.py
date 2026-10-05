@@ -998,7 +998,7 @@ def public_detail(text: str, limit: int = ERROR_DETAIL_LIMIT) -> str:
     line = " ".join(_redact_credential_lines(text).split())
     for pattern, token in _DETAIL_REDACTIONS:
         line = pattern.sub(token, line)
-    for guard in (v1._AUTHENTICATION_MATERIAL, v1._SECRET_ASSIGNMENT):
+    for guard in (v1._AUTHENTICATION_MATERIAL, v1._SECRET_ASSIGNMENT, _PLURAL_SECRET_ASSIGNMENT):
         found = guard.search(line)
         if found:
             line = line[: found.start()] + "<redacted credential>"
@@ -1006,11 +1006,19 @@ def public_detail(text: str, limit: int = ERROR_DETAIL_LIMIT) -> str:
     return line if len(line) <= limit else line[: limit - 1] + "…"
 
 
-# Field names whose values are credentials.  The public-safety check's own
-# rule (``_contains_secret_field``: api_key, authorization, bearer, cookie,
-# password, secret, set_cookie, token, and the *_password, *_secret,
-# *_api_key, and *_token suffixes) plus the names below, each whole or
-# after any ``<prefix>_``:
+# The kit's one widened public-safety rule.  ``v1.assert_public_safe``
+# stays the measurement tool's own check, byte-identical because dated
+# envelope evidence binds that file by digest; the kit's receipts and
+# evidence go through ``assert_kit_public_safe``, which runs it first and
+# then these rules, and the failure-value redaction (``public_values``)
+# uses the same field rule, so the redaction and the backstop agree.
+#
+# A credential field name, normalized to lower case with ``-`` and spaces
+# as ``_``: the v1 rule (``_contains_secret_field``: api_key,
+# authorization, bearer, cookie, password, secret, set_cookie, token, and
+# the *_password, *_secret, *_api_key, and *_token suffixes, except
+# selected_token) plus the names below, each whole or after any
+# ``<prefix>_``:
 # - the other names this module's credential-line redaction treats as
 #   secrets: passwd, apikey, access_key, private_key, client_secret,
 #   proxy_authorization, session, session_id, sid;
@@ -1023,7 +1031,7 @@ def public_detail(text: str, limit: int = ERROR_DETAIL_LIMIT) -> str:
 # A bare ``*_keys`` suffix and a ``*_credential`` suffix are not matched:
 # the kit records environment key names under ``env_keys`` and a request
 # count under ``stub_requests_with_credential``.
-_CREDENTIAL_FIELD = re.compile(
+_SECRET_FIELD_PATTERN = re.compile(
     r"(?:\w+_)?(?:passwd|apikeys?|access_keys?|private_keys?|client_secret|proxy_authorization|session|session_?id"
     r"|sid|api_keys|secret_keys|tokens|secrets|passwords|cookies|access_key_id|auth_config|auth_sock"
     r"|credentials)"
@@ -1031,20 +1039,50 @@ _CREDENTIAL_FIELD = re.compile(
 )
 # Measurement keys that only look credential-named: ``runtime_credentials``
 # lists the names of the credentials a unit loads, never their values.
-_NOT_CREDENTIAL_FIELDS = frozenset({"runtime_credentials"})
+_NOT_SECRET_FIELDS = frozenset({"selected_token", "runtime_credentials"})
+# The plural assignments v1's ``_SECRET_ASSIGNMENT`` (singular only) misses,
+# such as ``tokens=…`` or ``api_keys: …`` in text.
+_PLURAL_SECRET_ASSIGNMENT = re.compile(r"(?i)\b(?:tokens|passwords|secrets|api[_-]?keys)\s*[=:]\s*[^\s,;]+")
 REDACTED_FIELD = "redacted_credential_field"
 REDACTED_VALUE = "<redacted credential>"
+
+
+def secret_field_name(key: Any) -> bool:
+    """Whether a mapping key names a credential-valued field (the kit's widened rule)."""
+
+    text = key if isinstance(key, str) else str(key)
+    normalized = text.strip().lower().replace("-", "_").replace(" ", "_")
+    if normalized in _NOT_SECRET_FIELDS:
+        return False
+    return v1._contains_secret_field({text: None}) or bool(_SECRET_FIELD_PATTERN.fullmatch(normalized))
 
 
 def credential_field(key: Any) -> bool:
     """Whether a mapping key names a credential-valued field."""
 
-    if not isinstance(key, str):
-        return False
-    normalized = key.strip().lower().replace("-", "_").replace(" ", "_")
-    if normalized in _NOT_CREDENTIAL_FIELDS:
-        return False
-    return v1._contains_secret_field({key: None}) or bool(_CREDENTIAL_FIELD.fullmatch(normalized))
+    return isinstance(key, str) and secret_field_name(key)
+
+
+def _contains_widened_secret_field(value: Any) -> bool:
+    if isinstance(value, Mapping):
+        return any(secret_field_name(key) or _contains_widened_secret_field(item) for key, item in value.items())
+    if isinstance(value, (list, tuple)):
+        return any(_contains_widened_secret_field(item) for item in value)
+    return False
+
+
+def assert_kit_public_safe(value: Any) -> None:
+    """The kit's receipt and evidence backstop: ``v1.assert_public_safe``, then the widened rules.
+
+    Raises ``ValueError`` for a credential-named field, plural and compound
+    forms included, and for a plural secret assignment in any text.
+    """
+
+    v1.assert_public_safe(value)
+    if _contains_widened_secret_field(value):
+        raise ValueError("public evidence contains a secret-valued field")
+    if _PLURAL_SECRET_ASSIGNMENT.search(json.dumps(value, sort_keys=True)):
+        raise ValueError("public evidence contains secret-like material")
 
 
 def redacted_value(value: Any) -> Any:
@@ -1722,12 +1760,12 @@ def build_receipt(
         ],
         "exit_code": aggregate_exit_code(codes),
     }
-    v1.assert_public_safe(receipt)
+    assert_kit_public_safe(receipt)
     return receipt
 
 
 def write_receipt(path: Path, receipt: Mapping[str, Any]) -> None:
-    v1.assert_public_safe(receipt)
+    assert_kit_public_safe(receipt)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(receipt, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
 

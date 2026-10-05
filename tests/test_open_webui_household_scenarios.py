@@ -1374,6 +1374,64 @@ class CredentialFieldTests(unittest.TestCase):
         self.assertEqual(result.values["timings"], {"upload_s": 0.5})
 
 
+class KitBackstopTests(unittest.TestCase):
+    """The kit's receipt and evidence backstop: v1's check, then the widened credential rules."""
+
+    SECRET = "s3cret-V4LUE"
+    CREDENTIAL_NAMES = (
+        "provider_api_keys", "api_keys", "OPENAI_API_KEYS", "apikeys", "tokens", "session_tokens", "passwords",
+        "secrets", "cookies", "keys", "secret_keys", "private_keys", "access_keys", "aws_access_key_id",
+        "aws_secret_access_key", "docker_auth_config", "ssh_auth_sock", "credentials", "aws_credentials",
+        "credential", "session", "session_id", "sid", "passwd", "client_secret", "proxy_authorization",
+    )
+    EXEMPT = {"env_keys": ["HAYSTACK_TELEMETRY_ENABLED"], "stub_requests_with_credential": 0,
+              "runtime_credentials": ["openai-api-key"], "selected_token": 3, "token_count": 512,
+              "nonempty_key_fields": [], "credential_route": "systemd-creds",
+              "redacted_credential_field": ["<redacted credential>"]}
+
+    def test_each_plural_and_compound_credential_field_is_rejected(self):
+        for name in self.CREDENTIAL_NAMES:
+            for value in ({name: [self.SECRET]}, {name: ""}, {"outer": [{name: {"a": self.SECRET}}]}):
+                with self.subTest(name=name, value=value), self.assertRaisesRegex(ValueError, "secret-valued field"):
+                    scenarios.assert_kit_public_safe(value)
+
+    def test_plural_secret_assignments_in_text_are_rejected_and_redacted(self):
+        for text in (f"tokens={self.SECRET}", f"api_keys: {self.SECRET}", f"passwords = {self.SECRET}",
+                     f"secrets:{self.SECRET}", f"api-keys={self.SECRET}"):
+            with self.subTest(text=text):
+                with self.assertRaisesRegex(ValueError, "secret-like material"):
+                    scenarios.assert_kit_public_safe({"detail": text})
+                detail = scenarios.public_detail(f"upstream error: {text}", scenarios.RESULT_DETAIL_LIMIT)
+                self.assertNotIn(self.SECRET, detail)
+                scenarios.assert_kit_public_safe({"detail": detail})
+
+    def test_v1_findings_still_fail_first(self):
+        for value in ({"api_key": "x"}, {"detail": "token=abc"}, {"path": "/home/someone/x"}):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                scenarios.assert_kit_public_safe(value)
+
+    def test_the_exemptions_and_ordinary_text_pass(self):
+        scenarios.assert_kit_public_safe(self.EXEMPT)
+        scenarios.assert_kit_public_safe({"detail": "the tokens are counted; 3 secrets of the garden", "count": 2})
+        self.assertEqual(scenarios.public_values(self.EXEMPT), self.EXEMPT)
+
+    def test_redacted_failure_values_always_pass_the_backstop(self):
+        for name in self.CREDENTIAL_NAMES:
+            with self.subTest(name=name):
+                scenarios.assert_kit_public_safe(scenarios.public_values({name: [self.SECRET], "outer": {name: "x"}}))
+
+    def test_receipts_use_the_backstop(self):
+        result = scenarios.ScenarioResult("open-webui.resmoke.cited-answer", scenarios.FAIL, "measured", 0.1,
+                                          {"provider_api_keys": [self.SECRET]})
+        with self.assertRaisesRegex(ValueError, "secret-valued field"):
+            scenarios.build_receipt(target="production", mode="record",
+                                    settings=scenarios.settings_from_environ(candidate_env()), chat_model="chat",
+                                    health=None, results=[result])
+        with tempfile.TemporaryDirectory() as directory, \
+                self.assertRaisesRegex(ValueError, "secret-valued field"):
+            scenarios.write_receipt(Path(directory) / "receipt.json", {"tokens": [self.SECRET]})
+
+
 class StubProviderTests(unittest.TestCase):
     def test_stub_embeddings_honor_the_zembed_heads(self):
         def embed(head, text):

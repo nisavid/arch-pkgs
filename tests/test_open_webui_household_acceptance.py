@@ -3677,6 +3677,20 @@ class EvidenceTests(unittest.TestCase):
             void = kit_module.build_evidence(kit, trial, 0, True)
             self.assertTrue(void["disposition"].startswith("void"))
 
+    def test_evidence_with_a_plural_credential_field_is_withheld_by_the_kit_backstop(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit, trial = self.trial(directory, rehearsal=False)
+            trial.steps[0].values = {"provider_api_keys": ["s3cret-V4LUE"]}
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as errors:
+                code = trial.finish()
+            self.assertEqual(code, sc.EXIT_FAIL)
+            recorded = trial.steps[-1]
+            self.assertEqual((recorded.id, recorded.result), (kit_module.TRIAL_STEPS[-1], sc.FAIL))
+            self.assertIn("secret-valued field", recorded.detail)
+            self.assertIn("NOT public-safe", errors.getvalue())
+            self.assertFalse(kit.path("evidence", "public").exists())
+            self.assertTrue((kit.raw / "trial-evidence.json").is_file())
+
     def test_the_0400_fallback_is_a_trial_condition_not_a_failure(self):
         with tempfile.TemporaryDirectory() as directory:
             kit, trial = self.trial(directory, rehearsal=False)
