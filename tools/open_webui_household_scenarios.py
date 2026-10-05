@@ -1009,12 +1009,31 @@ def public_detail(text: str, limit: int = ERROR_DETAIL_LIMIT) -> str:
 # Field names whose values are credentials.  The public-safety check's own
 # rule (``_contains_secret_field``: api_key, authorization, bearer, cookie,
 # password, secret, set_cookie, token, and the *_password, *_secret,
-# *_api_key, and *_token suffixes) plus the other names this module's
-# credential-line redaction treats as secrets.
+# *_api_key, and *_token suffixes) plus the names below, each whole or
+# after any ``<prefix>_``:
+# - the other names this module's credential-line redaction treats as
+#   secrets: passwd, apikey, access_key, private_key, client_secret,
+#   proxy_authorization, session, session_id, sid;
+# - plural forms, such as Open WebUI's OPENAI_API_KEYS-style lists:
+#   api_keys, apikeys, access_keys, private_keys, secret_keys, tokens,
+#   secrets, passwords, cookies, and keys as a whole name;
+# - common credential names: access_key_id (aws_access_key_id),
+#   auth_config (docker_auth_config), auth_sock (ssh_auth_sock), and
+#   credentials, plus credential as a whole name.
+# A bare ``*_keys`` suffix and a ``*_credential`` suffix are not matched:
+# the kit records environment key names under ``env_keys`` and a request
+# count under ``stub_requests_with_credential``.
 _CREDENTIAL_FIELD = re.compile(
-    r"(?:\w+_)?(?:passwd|apikey|access_key|private_key|client_secret|proxy_authorization|session|session_?id|sid)"
+    r"(?:\w+_)?(?:passwd|apikeys?|access_keys?|private_keys?|client_secret|proxy_authorization|session|session_?id"
+    r"|sid|api_keys|secret_keys|tokens|secrets|passwords|cookies|access_key_id|auth_config|auth_sock"
+    r"|credentials)"
+    r"|keys|credential"
 )
+# Measurement keys that only look credential-named: ``runtime_credentials``
+# lists the names of the credentials a unit loads, never their values.
+_NOT_CREDENTIAL_FIELDS = frozenset({"runtime_credentials"})
 REDACTED_FIELD = "redacted_credential_field"
+REDACTED_VALUE = "<redacted credential>"
 
 
 def credential_field(key: Any) -> bool:
@@ -1023,7 +1042,17 @@ def credential_field(key: Any) -> bool:
     if not isinstance(key, str):
         return False
     normalized = key.strip().lower().replace("-", "_").replace(" ", "_")
+    if normalized in _NOT_CREDENTIAL_FIELDS:
+        return False
     return v1._contains_secret_field({key: None}) or bool(_CREDENTIAL_FIELD.fullmatch(normalized))
+
+
+def redacted_value(value: Any) -> Any:
+    """A credential field's value with nothing of it left: a list keeps its length."""
+
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [REDACTED_VALUE] * len(value)
+    return REDACTED_VALUE
 
 
 def public_values(value: Any, limit: int = RESULT_DETAIL_LIMIT) -> Any:
@@ -1034,8 +1063,9 @@ def public_values(value: Any, limit: int = RESULT_DETAIL_LIMIT) -> Any:
     ``_finite`` records one; tuples and sets become lists, and any other
     object its redacted text.
 
-    A credential-named field (``credential_field``) is renamed, not kept:
-    its value, empty or not, becomes ``<redacted credential>`` under the
+    A credential-named field (``credential_field``), plural forms
+    included, is renamed, not kept: its value, empty or not, becomes
+    ``<redacted credential>`` (a list, one marker per element) under the
     neutral key ``redacted_credential_field`` (``..._2``, ``..._3`` for
     more in the same mapping), so neither its name nor its value reaches a
     receipt.  ``assert_public_safe`` still checks every receipt after this.
@@ -1059,7 +1089,7 @@ def public_values(value: Any, limit: int = RESULT_DETAIL_LIMIT) -> Any:
                 while name in value or name in public:
                     redacted += 1
                     name = f"{REDACTED_FIELD}_{redacted}"
-                public[name] = "<redacted credential>"
+                public[name] = redacted_value(item)
             else:
                 public[name] = public_values(item, limit)
         return public
@@ -1355,37 +1385,42 @@ def vector_record(vector: Sequence[float]) -> dict[str, Any]:
 
 
 def zembed_canary(ctx: Context) -> dict[str, Any]:
-    query = lemond_embed(ctx, ctx.settings.query_prefix + CANARY_QUERY)
-    relevant = lemond_embed(ctx, ctx.settings.content_prefix + CANARY_RELEVANT)
-    unrelated = lemond_embed(ctx, ctx.settings.content_prefix + CANARY_UNRELATED)
-    to_relevant, to_unrelated = _cosine_or_none(query, relevant), _cosine_or_none(query, unrelated)
-    vectors = {"query": vector_record(query), "relevant": vector_record(relevant), "unrelated": vector_record(unrelated)}
+    vectors: dict[str, Any] = {}
+    # Filled as the canary measures, so a failed or malformed embedding at
+    # any point keeps every vector record taken before it.
     values: dict[str, Any] = {
         "texts": {"query": CANARY_QUERY, "relevant": CANARY_RELEVANT, "unrelated": CANARY_UNRELATED},
-        "dimensions": len(query),
         "vectors": vectors,
-        "margin": _finite(to_relevant - to_unrelated, 6)
-        if to_relevant is not None and to_unrelated is not None
-        else None,
         "prefix_source": ctx.settings.source,
     }
-    if not v1.embedding_canary_passes(query, relevant, unrelated):
-        raise Escalation("ESCALATE: zembed canary", values)
-    if ctx.stored_chunk is not None:
-        # The margin is measured; a failed chunk read or embedding keeps it.
-        with keeping(values, SCENARIO_FAILURES):
+    with keeping(values, SCENARIO_FAILURES):
+        query = lemond_embed(ctx, ctx.settings.query_prefix + CANARY_QUERY)
+        vectors["query"] = vector_record(query)
+        values["dimensions"] = len(query)
+        relevant = lemond_embed(ctx, ctx.settings.content_prefix + CANARY_RELEVANT)
+        vectors["relevant"] = vector_record(relevant)
+        unrelated = lemond_embed(ctx, ctx.settings.content_prefix + CANARY_UNRELATED)
+        vectors["unrelated"] = vector_record(unrelated)
+        to_relevant, to_unrelated = _cosine_or_none(query, relevant), _cosine_or_none(query, unrelated)
+        values["margin"] = (
+            _finite(to_relevant - to_unrelated, 6) if to_relevant is not None and to_unrelated is not None else None
+        )
+        # An escalation is not a step failure, so it passes through with its values.
+        if not v1.embedding_canary_passes(query, relevant, unrelated):
+            raise Escalation("ESCALATE: zembed canary", values)
+        if ctx.stored_chunk is not None:
             chunk, stored = ctx.stored_chunk()
             vectors["stored_chunk"] = vector_record(stored)
             direct = lemond_embed(ctx, ctx.settings.content_prefix + chunk)
             vectors["direct_chunk"] = vector_record(direct)
             similarity = _cosine_or_none(stored, direct)
             values["stored_vector_cosine"] = _finite(similarity, 6)
-        if similarity is None or not similarity >= STORED_VECTOR_MINIMUM_COSINE:
-            raise Escalation(
-                "ESCALATE: zembed canary (stored vector differs from the settings-prefixed embedding)", values
-            )
-    else:
-        values["stored_vector_cosine"] = "not-applicable"
+            if similarity is None or not similarity >= STORED_VECTOR_MINIMUM_COSINE:
+                raise Escalation(
+                    "ESCALATE: zembed canary (stored vector differs from the settings-prefixed embedding)", values
+                )
+        else:
+            values["stored_vector_cosine"] = "not-applicable"
     return values
 
 

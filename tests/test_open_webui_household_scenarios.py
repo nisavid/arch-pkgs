@@ -1268,6 +1268,37 @@ class ScenarioMeasurementTests(unittest.TestCase):
         self.assertEqual(sorted(outcome.values["vectors"]), ["query", "relevant", "unrelated"])
         self.assert_receipt_safe(outcome)
 
+    def test_a_failed_initial_embedding_keeps_the_vectors_before_it(self):
+        canary = ZembedCanaryTests()
+        cases = (
+            # The relevant embedding's transport fails after the query's.
+            ({scenarios.CANARY_RELEVANT: OSError("connection refused")}, "OSError: connection refused",
+             ["query"]),
+            # The unrelated embedding comes back malformed.
+            ({scenarios.CANARY_UNRELATED: scenarios.ScenarioFailure("Lemonade embeddings returned malformed data")},
+             "ScenarioFailure: Lemonade embeddings returned malformed data", ["query", "relevant"]),
+        )
+        for failures, detail, recorded in cases:
+            with self.subTest(detail=detail):
+                def embed(_ctx, text, failures=failures):
+                    for canary_text, vector in ((scenarios.CANARY_QUERY, canary.QUERY),
+                                                (scenarios.CANARY_RELEVANT, canary.RELEVANT),
+                                                (scenarios.CANARY_UNRELATED, canary.UNRELATED)):
+                        if text.endswith(canary_text):
+                            if canary_text in failures:
+                                raise failures[canary_text]
+                            return vector
+                    raise AssertionError(text)
+
+                with mock.patch.object(scenarios, "lemond_embed", side_effect=embed):
+                    outcome = scenarios.run_scenario(canary.context(), "open-webui.resmoke.zembed-canary")
+                self.assertEqual((outcome.result, outcome.detail), (scenarios.FAIL, detail))
+                self.assertEqual(sorted(outcome.values["vectors"]), recorded)
+                self.assertEqual(outcome.values["vectors"]["query"]["dimensions"], 2560)
+                self.assertEqual(outcome.values["dimensions"], 2560)
+                self.assertNotIn("margin", outcome.values)
+                self.assert_receipt_safe(outcome)
+
 
 class CredentialFieldTests(unittest.TestCase):
     """A credential-named field never reaches a receipt, by name or by value."""
@@ -1298,8 +1329,37 @@ class CredentialFieldTests(unittest.TestCase):
 
     def test_ordinary_fields_are_kept(self):
         value = {"selected_token": "kept", "runtime_credentials": ["openai-api-key"], "token_count": 3,
-                 "health_status": 200}
+                 "health_status": 200, "env_keys": ["HAYSTACK_TELEMETRY_ENABLED"],
+                 "stub_requests_with_credential": 0, "nonempty_key_fields": []}
         self.assertEqual(scenarios.public_values(value), value)
+
+    def test_plural_credential_fields_redact_every_element(self):
+        cases = (
+            ({"provider_api_keys": [self.SECRET]}, {"redacted_credential_field": ["<redacted credential>"]}),
+            ({"OPENAI_API_KEYS": [self.SECRET, ""]},
+             {"redacted_credential_field": ["<redacted credential>", "<redacted credential>"]}),
+            ({"api_keys": []}, {"redacted_credential_field": []}),
+            ({"tokens": [self.SECRET]}, {"redacted_credential_field": ["<redacted credential>"]}),
+            ({"passwords": (self.SECRET,)}, {"redacted_credential_field": ["<redacted credential>"]}),
+            ({"secrets": {"a": self.SECRET}}, {"redacted_credential_field": "<redacted credential>"}),
+            ({"keys": [self.SECRET]}, {"redacted_credential_field": ["<redacted credential>"]}),
+            ({"outer": [{"session_tokens": [self.SECRET]}]},
+             {"outer": [{"redacted_credential_field": ["<redacted credential>"]}]}),
+        )
+        for value, expected in cases:
+            with self.subTest(value=value):
+                public = scenarios.public_values(value)
+                self.assertEqual(public, expected)
+                scenarios.v1.assert_public_safe(public)
+                self.assertNotIn(self.SECRET, json.dumps(public))
+
+    def test_common_credential_names_are_redacted(self):
+        for name in ("aws_access_key_id", "aws_secret_access_key", "docker_auth_config", "ssh_auth_sock",
+                     "credentials", "aws_credentials", "credential", "CLIENT-SECRET"):
+            with self.subTest(name=name):
+                public = scenarios.public_values({name: self.SECRET})
+                self.assertEqual(public, {"redacted_credential_field": "<redacted credential>"})
+                scenarios.v1.assert_public_safe(public)
 
     def test_a_failure_carrying_a_credential_field_still_writes_a_receipt(self):
         def failing(_ctx):
