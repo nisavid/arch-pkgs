@@ -1766,8 +1766,8 @@ def effective_models(kit: Kit) -> tuple[str, str]:
 # Service control
 
 
-def snapshot_resources(kit: Kit, label: str) -> None:
-    """Read memory.peak, memory.events, NRestarts, and CPU before a planned change."""
+def snapshot_resources(kit: Kit, label: str) -> dict[str, Any]:
+    """Read memory.peak, memory.events, NRestarts, and CPU before a planned change; return the record."""
 
     record: dict[str, Any] = {"label": label, "t": time.time(), "units": {}}
     for unit in kit.units():
@@ -1801,6 +1801,7 @@ def snapshot_resources(kit: Kit, label: str) -> None:
     kit.raw.mkdir(parents=True, exist_ok=True)
     with (kit.raw / "resources.jsonl").open("a", encoding="utf-8") as sink:
         sink.write(json.dumps(record, sort_keys=True) + "\n")
+    return record
 
 
 def resource_gates(records: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
@@ -3534,49 +3535,47 @@ class Trial:
 
     def restore_drill(self) -> dict[str, Any]:
         kit = self.kit
-        systemctl("stop", UNITS["caddy"])
-        self.pre_backup_session = admin_token(kit)
-        sentinel = secrets.token_hex(16)
-        kit.save_state(sentinel=sentinel)
-        valkey_command(PORTS["valkey"], VALKEY_USER, valkey_password(kit), "SET", "owui-acc:sentinel", sentinel)
-        qdrant = kit.qdrant()
-        self.anchor = backup_anchor(kit, qdrant)
-        try:
-            # Before the marker change, so a damaged anchor stops the drill
-            # with the live state as the backup left it.
-            verify_anchor(kit)
-        except sc.ScenarioFailure:
+        # Filled as the drill measures, from its first step, so a failure at
+        # any point, the setup included, keeps everything measured before it.
+        values: dict[str, Any] = {"ceiling_s": LIMITS["restore_s"]}
+        with keeping(values):
+            systemctl("stop", UNITS["caddy"])
+            self.pre_backup_session = admin_token(kit)
+            sentinel = secrets.token_hex(16)
+            kit.save_state(sentinel=sentinel)
+            valkey_command(PORTS["valkey"], VALKEY_USER, valkey_password(kit), "SET", "owui-acc:sentinel", sentinel)
+            qdrant = kit.qdrant()
+            self.anchor = backup_anchor(kit, qdrant)
+            try:
+                # Before the marker change, so a damaged anchor stops the drill
+                # with the live state as the backup left it.
+                verify_anchor(kit)
+            except sc.ScenarioFailure:
+                systemctl("start", UNITS["valkey"])
+                start_open_webui(kit)
+                start_caddy(kit)
+                raise
             systemctl("start", UNITS["valkey"])
             start_open_webui(kit)
-            start_caddy(kit)
-            raise
-        systemctl("start", UNITS["valkey"])
-        start_open_webui(kit)
-        token = admin_token(kit)
-        # The marker change touches every tuple member, so A-D3 proves the
-        # restore rather than passing on unchanged state: the uploaded file
-        # (SQLite and uploads, Qdrant), the Valkey sentinel, and a harmless
-        # extra credential.
-        deleted = kit.uds().request("DELETE", sc.API["file"].format(id=self.seed_file), token=token).status
-        if deleted != 200:
-            raise sc.ScenarioFailure(f"the marker change returned HTTP {deleted}")
-        valkey_command(PORTS["valkey"], VALKEY_USER, valkey_password(kit), "SET", "owui-acc:sentinel",
-                       secrets.token_hex(16))
-        kit.store_credential(MARKER_CREDENTIAL, secrets.token_hex(16))
-        pre_restore = marker_divergence(kit)
-        snapshot_resources(kit, "before restore")
-        epoch = ledger(kit, "reserve")
-        started = time.monotonic()
-        clock = PhaseClock()
-        # Filled as the drill measures, so a failure at any point keeps the
-        # phases and everything measured before it.
-        values: dict[str, Any] = {
-            "ceiling_s": LIMITS["restore_s"],
-            "phases_s": clock.phases,
-            "reserved_epoch_above_bound": epoch > self.anchor["epoch_bound"],
-            "pre_restore_divergence": pre_restore,
-        }
-        with keeping(values):
+            token = admin_token(kit)
+            # The marker change touches every tuple member, so A-D3 proves the
+            # restore rather than passing on unchanged state: the uploaded file
+            # (SQLite and uploads, Qdrant), the Valkey sentinel, and a harmless
+            # extra credential.
+            deleted = kit.uds().request("DELETE", sc.API["file"].format(id=self.seed_file), token=token).status
+            if deleted != 200:
+                raise sc.ScenarioFailure(f"the marker change returned HTTP {deleted}")
+            valkey_command(PORTS["valkey"], VALKEY_USER, valkey_password(kit), "SET", "owui-acc:sentinel",
+                           secrets.token_hex(16))
+            kit.store_credential(MARKER_CREDENTIAL, secrets.token_hex(16))
+            pre_restore = marker_divergence(kit)
+            values["pre_restore_divergence"] = pre_restore
+            values["resources_before"] = snapshot_resources(kit, "before restore")
+            epoch = ledger(kit, "reserve")
+            values["reserved_epoch_above_bound"] = epoch > self.anchor["epoch_bound"]
+            started = time.monotonic()
+            clock = PhaseClock()
+            values["phases_s"] = clock.phases
             systemctl("stop", UNITS["open-webui"])
             systemctl("stop", UNITS["valkey"])
             clock.lap("stop")
@@ -3610,36 +3609,33 @@ class Trial:
         if not self.anchor.get("archives") or not (kit.anchor / "anchor.json").is_file():
             # Nothing destructive happens without an anchor to roll back to.
             raise sc.ScenarioFailure("no anchor backup exists; the rollback drill cannot run")
-        verify_anchor(kit)
-        legacy_before = legacy_service_state()
-        snapshot_resources(kit, "before rollback")
-        window = time.monotonic()
-        pre_backup_session = self.pre_backup_session
-        systemctl("stop", UNITS["caddy"])
-        for unit in reversed(kit.units()):
-            systemctl("stop", unit, check=False)
-        # The wipe below removes every containment cache, so the end-of-trial
-        # inventory alone would miss anything the trial added before it.
-        snapshot_pre_rollback_inventory(kit)
-        remove_tree(kit.tree)
-        remove_tree(kit.path("state"))
-        restage_trees(kit, self.anchor["archives"])
-        create_state_directories(kit)
-        place_whisper(kit)
-        epoch = ledger(kit, "reserve")
-        started = time.monotonic()
-        clock = PhaseClock()
-        # Filled as the drill measures, so a failure at any point keeps the
-        # phases and everything measured before it.
-        values: dict[str, Any] = {
-            "ceiling_s": LIMITS["rollback_state_s"],
-            "phases_s": clock.phases,
-            "before_clock_s": round(started - window, 3),
-            "archives_match_anchor": True,
-            "reserved_epoch_above_bound": epoch > self.anchor["epoch_bound"],
-            "legacy_service": {"before": legacy_before},
-        }
+        # Filled as the drill measures, from before its destructive setup, so a
+        # failure at any point keeps everything measured before it.
+        values: dict[str, Any] = {"ceiling_s": LIMITS["rollback_state_s"]}
         with keeping(values):
+            verify_anchor(kit)
+            values["archives_match_anchor"] = True
+            legacy_before = legacy_service_state()
+            values["legacy_service"] = {"before": legacy_before}
+            values["resources_before"] = snapshot_resources(kit, "before rollback")
+            window = time.monotonic()
+            pre_backup_session = self.pre_backup_session
+            systemctl("stop", UNITS["caddy"])
+            for unit in reversed(kit.units()):
+                systemctl("stop", unit, check=False)
+            # The wipe below removes every containment cache, so the end-of-trial
+            # inventory alone would miss anything the trial added before it.
+            snapshot_pre_rollback_inventory(kit)
+            remove_tree(kit.tree)
+            remove_tree(kit.path("state"))
+            restage_trees(kit, self.anchor["archives"])
+            create_state_directories(kit)
+            place_whisper(kit)
+            epoch = ledger(kit, "reserve")
+            values["reserved_epoch_above_bound"] = epoch > self.anchor["epoch_bound"]
+            started = time.monotonic()
+            clock = PhaseClock()
+            values.update(phases_s=clock.phases, before_clock_s=round(started - window, 3))
             qdrant = start_qdrant(kit)
             clock.lap("qdrant_start")
             restored = restore_tuple(kit, qdrant)
@@ -3683,12 +3679,13 @@ class Trial:
 
     def resources(self) -> dict[str, Any]:
         kit = self.kit
-        snapshot_resources(kit, "end of trial")
-        gates = resource_gates(read_jsonl(kit.raw / "resources.jsonl"))
-        # The gates are measured; a storage or Qdrant read that fails after
-        # them keeps them (and anything read before it).
-        values: dict[str, Any] = {**gates}
+        # Filled as the step measures, so a failure keeps the end-of-trial
+        # snapshot, the gates, and anything read before it.
+        values: dict[str, Any] = {}
         with keeping(values):
+            values["end_of_trial_snapshot"] = snapshot_resources(kit, "end of trial")
+            gates = resource_gates(read_jsonl(kit.raw / "resources.jsonl"))
+            values.update(gates)
             qdrant = kit.qdrant()
             values["qdrant_storage"] = tree_sizes(kit.path("state", "qdrant", "storage"))
             values["points"] = {name: shape.get("points") for name, shape in qdrant.shapes().items()}

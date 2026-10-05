@@ -1952,6 +1952,75 @@ class FailedStepValuesTests(unittest.TestCase):
             self.assertEqual(step.values["memory_peak_max_bytes"][unit], 10)
             self.assert_public_values(kit, trial, step)
 
+    SNAPSHOT = {"label": "snapshot", "units": {}, "slice": {"oom_kill": 0}}
+    # Each setup call that runs before a drill's clock, in order, with the
+    # measurements taken before it.
+    ROLLBACK_SETUP = (
+        ("verify_anchor", set()),
+        ("legacy_service_state", {"archives_match_anchor"}),
+        ("snapshot_resources", {"archives_match_anchor", "legacy_service"}),
+        ("systemctl", {"archives_match_anchor", "legacy_service", "resources_before"}),
+        ("snapshot_pre_rollback_inventory", {"archives_match_anchor", "legacy_service", "resources_before"}),
+        ("remove_tree", {"archives_match_anchor", "legacy_service", "resources_before"}),
+        ("restage_trees", {"archives_match_anchor", "legacy_service", "resources_before"}),
+        ("create_state_directories", {"archives_match_anchor", "legacy_service", "resources_before"}),
+        ("place_whisper", {"archives_match_anchor", "legacy_service", "resources_before"}),
+        ("ledger", {"archives_match_anchor", "legacy_service", "resources_before"}),
+    )
+    RESTORE_SETUP = (
+        ("systemctl", set()),
+        ("admin_token", set()),
+        ("valkey_command", set()),
+        ("backup_anchor", set()),
+        ("verify_anchor", set()),
+        ("start_open_webui", set()),
+        ("marker_divergence", set()),
+        ("snapshot_resources", {"pre_restore_divergence"}),
+        ("ledger", {"pre_restore_divergence", "resources_before"}),
+    )
+
+    def test_a_failing_rollback_setup_call_keeps_what_was_measured_before_it(self):
+        for target, measured in self.ROLLBACK_SETUP:
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as directory:
+                kit, trial = self.drill_trial(directory)
+                with self.drill_mocks(kit, self.LAPS), \
+                        mock.patch.object(kit_module, "legacy_service_state", return_value={"state": "inactive"}), \
+                        mock.patch.object(kit_module, "snapshot_resources", return_value=self.SNAPSHOT), \
+                        mock.patch.object(kit_module, target, side_effect=OSError(f"{target} failed")):
+                    step = self.run_step(trial, kit_module.ROLLBACK_DRILL, trial.rollback_drill)
+                self.assertEqual((step.result, step.detail), (sc.FAIL, f"OSError: {target} failed"))
+                self.assertEqual(set(step.values), {"ceiling_s"} | measured)
+                if "legacy_service" in measured:
+                    self.assertEqual(step.values["legacy_service"], {"before": {"state": "inactive"}})
+                if "resources_before" in measured:
+                    self.assertEqual(step.values["resources_before"], self.SNAPSHOT)
+                self.assert_public_values(kit, trial, step)
+
+    def test_a_failing_restore_setup_call_keeps_what_was_measured_before_it(self):
+        for target, measured in self.RESTORE_SETUP:
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as directory:
+                kit, trial = self.drill_trial(directory)
+                with self.drill_mocks(kit, self.LAPS), \
+                        mock.patch.object(kit_module, "snapshot_resources", return_value=self.SNAPSHOT), \
+                        mock.patch.object(kit_module, target, side_effect=OSError(f"{target} failed")):
+                    step = self.run_step(trial, kit_module.RESTORE_DRILL, trial.restore_drill)
+                self.assertEqual((step.result, step.detail), (sc.FAIL, f"OSError: {target} failed"))
+                self.assertEqual(set(step.values), {"ceiling_s"} | measured)
+                if "resources_before" in measured:
+                    self.assertEqual(step.values["resources_before"], self.SNAPSHOT)
+                self.assert_public_values(kit, trial, step)
+
+    def test_a_failed_gate_read_keeps_the_end_of_trial_snapshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit = make_kit(directory)
+            trial = kit_module.Trial(kit)
+            with mock.patch.object(kit_module, "snapshot_resources", return_value=self.SNAPSHOT), \
+                    mock.patch.object(kit_module, "read_jsonl", side_effect=ValueError("resources.jsonl is malformed")):
+                step = self.run_step(trial, "open-webui.acceptance.resources", trial.resources)
+            self.assertEqual((step.result, step.detail), (sc.FAIL, "ValueError: resources.jsonl is malformed"))
+            self.assertEqual(step.values, {"end_of_trial_snapshot": self.SNAPSHOT})
+            self.assert_public_values(kit, trial, step)
+
     def test_record_check_keeps_the_steps_values_for_any_step_failure(self):
         values: dict[str, Any] = {"restore_s": 12.5}
         for error in (TimeoutError("timed out"), OSError("refused"), KeyError("x")):

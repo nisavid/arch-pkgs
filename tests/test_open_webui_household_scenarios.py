@@ -1433,7 +1433,7 @@ class KitBackstopTests(unittest.TestCase):
 
 
 def spellings(*segments):
-    """One field name in each separator style: snake, dotted, dashed, camelCase, and upper case."""
+    """One field name in each separator style: snake, dotted, dashed, camelCase, upper case, and spaced."""
 
     words = list(segments)
     return {
@@ -1442,6 +1442,7 @@ def spellings(*segments):
         "dashed": "-".join(words),
         "camel": words[0] + "".join(word.capitalize() for word in words[1:]),
         "upper": "_".join(words).upper(),
+        "spaced": " ".join(words),
     }
 
 
@@ -1557,7 +1558,7 @@ class CredentialSpellingGridTests(unittest.TestCase):
                     for form in ("bare =", "bare : spaced", "JSON string", "JSON list"):
                         text = "measured " + self.TEXT_FORMS[form].format(name=name, value="3")
                         with self.subTest(form=form):
-                            if segments == ("selected", "token") and style in ("dotted", "dashed") \
+                            if segments == ("selected", "token") and style in ("dotted", "dashed", "spaced") \
                                     and form.startswith("bare"):
                                 # v1's unchanged singular assignment rule, which the
                                 # backstop runs first, matches a bare ``token=`` or
@@ -1603,6 +1604,82 @@ class CredentialSpellingGridTests(unittest.TestCase):
             scenarios.assert_kit_public_safe({"secret": False})
         self.assertEqual(scenarios.public_values({"secret": False}),
                          {"redacted_credential_field": "<redacted credential>"})
+
+    PROSE_JSON_FORMS = {
+        "embedded object": lambda name, secret: "upstream 400: " + json.dumps({name: [secret], "ok": 1}) + " (retry)",
+        "embedded nested": lambda name, secret: "error " + json.dumps({"outer": [{"inner": {name: secret}}]}) + ".",
+        "embedded list": lambda name, secret: "got " + json.dumps([1, {name: secret}]) + " then stop",
+        "two embedded": lambda name, secret: 'a {"n": 1} b ' + json.dumps({name: secret}) + " c",
+        "truncated": lambda name, secret: "upstream 400: " + json.dumps({name: [secret, "x"]})[:-3],
+        "malformed unquoted": lambda name, secret: f'upstream 400: {{"ok": 1, "{name}": "{secret}", bad}}',
+        "single-quoted dict": lambda name, secret: f"upstream 400: {{'{name}': '{secret}'}}",
+    }
+
+    def test_every_embedded_json_form_is_redacted_and_rejected(self):
+        # r4185383096, literally.
+        literal = 'upstream 400: {"aws access key id": ["s3cretV4LUE"]}'
+        with self.assertRaises(ValueError):
+            scenarios.assert_kit_public_safe({"detail": literal})
+        self.assertEqual(scenarios.public_detail(literal),
+                         'upstream 400: {"redacted_credential_field": ["<redacted credential>"]}')
+        self.assertEqual(scenarios.credential_term("aws access key id"), "access_key_id")
+        for segments in self.CREDENTIALS:
+            for style, name in spellings(*segments).items():
+                for form, build in self.PROSE_JSON_FORMS.items():
+                    text = build(name, self.SECRET)
+                    with self.subTest(name=name, style=style, form=form):
+                        detail = scenarios.public_detail(text, scenarios.RESULT_DETAIL_LIMIT)
+                        self.assertNotIn(self.SECRET, detail)
+                        scenarios.assert_kit_public_safe({"detail": detail})
+                        for where, document in nestings({"detail": text}).items():
+                            with self.subTest(where=where), self.assertRaises(ValueError):
+                                scenarios.assert_kit_public_safe(document)
+
+    def test_embedded_json_keeps_prose_and_exemptions(self):
+        text = 'upstream 400: {"api_keys": ["s3cretV4LUE"], "status": 400} (retry later)'
+        self.assertEqual(scenarios.public_detail(text),
+                         'upstream 400: {"redacted_credential_field": ["<redacted credential>"], "status": 400}'
+                         " (retry later)")
+        for segments, value in self.EXEMPT.items():
+            for style, name in spellings(*segments).items():
+                text = "measured " + json.dumps({name: value}) + " and " + json.dumps([{name: value}])
+                with self.subTest(name=name, style=style):
+                    self.assertEqual(scenarios.public_detail(text, scenarios.RESULT_DETAIL_LIMIT), text)
+                    scenarios.assert_kit_public_safe({"detail": text})
+
+    def test_embedded_json_work_is_bounded(self):
+        # Unbalanced openers and an over-long fragment never decode; the pattern still cuts.
+        for text in ("[" * 50000 + ' "tokens": ["s3cretV4LUE"]', "{" * 100 + json.dumps({"tokens": ["s3cretV4LUE"]}),
+                     "x" + json.dumps({"pad": "a" * (scenarios.JSON_SPAN + 10), "tokens": ["s3cretV4LUE"]})):
+            with self.subTest(text=text[:20]):
+                started = time.monotonic()
+                detail = scenarios.public_detail(text, scenarios.RESULT_DETAIL_LIMIT)
+                with self.assertRaises(ValueError):
+                    scenarios.assert_kit_public_safe({"detail": text})
+                self.assertLess(time.monotonic() - started, 5.0)
+                self.assertNotIn("s3cretV4LUE", detail)
+
+    def test_a_long_run_before_an_assignment_is_redacted_in_bounded_time(self):
+        blob = "QUJD" * 50000  # 200,000 characters of unbroken base64-like text
+        for text in (blob + " token=s3cretV4LUE", "x." + blob + ".token=s3cretV4LUE", blob + " api_keys=s3cretV4LUE"):
+            with self.subTest(text=text[-30:]):
+                started = time.monotonic()
+                redacted = scenarios._redact_credential_lines(text)
+                detail = scenarios.public_detail(text, len(text) + 100)
+                found = scenarios.first_secret_assignment(text)
+                with self.assertRaises(ValueError):
+                    scenarios.assert_kit_public_safe({"detail": text})
+                self.assertLess(time.monotonic() - started, 5.0)
+                if "token=" in text:  # the line redaction covers singular names
+                    self.assertNotIn("s3cretV4LUE", redacted)
+                self.assertNotIn("s3cretV4LUE", detail)
+                self.assertIsNotNone(found)
+
+    def test_a_name_longer_than_the_lookback_is_never_exempt(self):
+        short = "x.selected.token: 3"
+        self.assertEqual(scenarios._redact_assignment(short), short)
+        long = "x" * (scenarios.NAME_LOOKBACK + 10) + ".selected.token: 3"
+        self.assertTrue(scenarios._redact_assignment(long).endswith("<redacted credential>"))
 
     def test_descriptive_nouns_in_prose_pass_but_not_as_assignments(self):
         condition = "credentials: 0400-file fallback; systemd-creds --user unavailable"

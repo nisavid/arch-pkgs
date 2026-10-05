@@ -958,9 +958,13 @@ _CREDENTIAL_ASSIGNMENT = re.compile(
     r"(?i)\b(?P<word>password|passwd|secret|client[_-]?secret|token|key|api[_-]?key|access[_-]?key|session(?:id)?|sid)"
     r"[\"']?\s*[=:]"
 )
-_NAME_PREFIX = re.compile(r"[\w.\-]*$")
+# How far ``_redact_assignment`` looks back for the rest of a dotted or
+# dashed name before a credential word.  A longer run is a blob, not a
+# name, so it is not exempt.
+NAME_LOOKBACK = 256
 # An HTTP auth scheme with its credential, wherever it appears in a line.
-_AUTH_SCHEME = re.compile(r"(?i)\b(?:bearer|basic|digest|negotiate|ntlm|hoba|mutual|token)\s+\S+.*")
+_AUTH_SCHEME = re.compile(r"(?i)\b(?P<scheme>bearer|basic|digest|negotiate|ntlm|hoba|mutual|token)\s+(?P<credential>\S+)")
+_LEADING_NAME = re.compile(r"[A-Za-z][\w.\-]*")
 _KEY_MATERIAL = re.compile(r"-----BEGIN [A-Z0-9 ]+-----.*?(?:-----END [A-Z0-9 ]+-----|\Z)", re.DOTALL)
 _DETAIL_REDACTIONS = (
     (re.compile(r"\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b"), "<email>"),
@@ -982,31 +986,65 @@ def _redact_credential_lines(text: str) -> str:
     for line in text.splitlines():
         line = _CREDENTIAL_HEADER.sub("<redacted credential>", line)
         line = _redact_assignment(line)
-        lines.append(_AUTH_SCHEME.sub("<redacted credential>", line))
+        lines.append(_redact_auth_scheme(line))
     return "\n".join(lines)
+
+
+def _redact_auth_scheme(line: str) -> str:
+    """The line up to its first auth scheme with a credential, then a marker.
+
+    An exempt measurement name that only reads like a scheme, such as
+    ``token count``, is kept.
+    """
+
+    for match in _AUTH_SCHEME.finditer(line):
+        word = _LEADING_NAME.match(match.group("credential"))
+        if word and exempt_field(f"{match.group('scheme')} {word.group(0)}"):
+            continue
+        return line[: match.start()] + "<redacted credential>"
+    return line
 
 
 def _redact_assignment(line: str) -> str:
     """The line up to its first credential assignment, then a marker; an exempt name is kept."""
 
     for match in _CREDENTIAL_ASSIGNMENT.finditer(line):
-        prefix = _NAME_PREFIX.search(line[: match.start()])
-        name = (prefix.group(0) if prefix else "") + match.group("word")
-        if exempt_field(name):
+        # A backward walk bounded by NAME_LOOKBACK, so a long unbroken run
+        # (a base64 body) costs at most that much per match.
+        start = match.start()
+        floor = max(0, start - NAME_LOOKBACK)
+        begin = start
+        while begin > floor and (line[begin - 1].isalnum() or line[begin - 1] in "_.-"):
+            begin -= 1
+        truncated = begin == floor and begin > 0 and (line[begin - 1].isalnum() or line[begin - 1] in "_.-")
+        if truncated:
+            # The whole name is unknown: never exempt it or read it as a flag.
+            return line[:start] + "<redacted credential>"
+        own = line[begin:start] + match.group("word")
+        quoted = _QUOTED_NAME_HEAD.search(line, floor, begin)
+        if quoted:
+            # Inside a quoted name, spaces included: the quotes bound it.
+            own = quoted.group("inner") + own
+            names = (own,)
+        else:
+            before = _PRECEDING_WORDS.search(line, floor, begin)
+            names = (own, " ".join(before.group("words").split() + [own])) if before else (own,)
+        if any(exempt_field(name) for name in names):
             continue
-        if _FLAG_VALUE.match(line, match.end()) and not v1._contains_secret_field({name: None}):
+        if _FLAG_VALUE.match(line, match.end()) and not v1._contains_secret_field({own: None}):
             continue  # a flag, not a credential (see ``credential_entry``)
-        return line[: match.start()] + "<redacted credential>"
+        return line[:start] + "<redacted credential>"
     return line
 
 
 def public_detail(text: str, limit: int = ERROR_DETAIL_LIMIT) -> str:
     """One line of error text, bounded and redacted for public evidence and receipts.
 
-    Text that is wholly one JSON object or list, as ``response_detail``
-    serializes a structured upstream error, is redacted structurally first
-    (``public_values``: credential-named fields renamed, their values
-    redacted).  Then credential material goes first and whole: header
+    Every JSON object or list embedded in the text, or the whole text when
+    it is one, as ``response_detail`` serializes a structured upstream
+    error, is redacted structurally first (``embedded_json`` and
+    ``public_values``: credential-named fields renamed, their values
+    redacted) and spliced back in.  Then credential material goes first and whole: header
     values, auth-scheme tokens, cookies, and secret assignments, each to the
     end of its line.  Anything the kit backstop would still refuse as
     credential material (v1's guards and the quote-tolerant credential
@@ -1015,7 +1053,7 @@ def public_detail(text: str, limit: int = ERROR_DETAIL_LIMIT) -> str:
     still checks every receipt after this.
     """
 
-    line = " ".join(_redact_credential_lines(_redact_json_text(text)).split())
+    line = " ".join(_redact_credential_lines(_redact_embedded_json(text)).split())
     for pattern, token in _DETAIL_REDACTIONS:
         line = pattern.sub(token, line)
     for guard in (v1._AUTHENTICATION_MATERIAL, v1._SECRET_ASSIGNMENT):
@@ -1029,23 +1067,51 @@ def public_detail(text: str, limit: int = ERROR_DETAIL_LIMIT) -> str:
     return line if len(line) <= limit else line[: limit - 1] + "…"
 
 
-def _redact_json_text(text: str) -> str:
-    """Text that is wholly one JSON object or list, with its credential fields redacted; else unchanged.
+# Embedded JSON.  ``embedded_json`` decodes the JSON objects and lists in
+# a text with ``json.JSONDecoder.raw_decode`` at each ``{`` or ``[``.  The
+# work is bounded: at most JSON_ATTEMPTS decode attempts, each over at most
+# JSON_SPAN characters.  A fragment that does not decode within those
+# bounds (malformed, truncated, or too long) is left to the quote-tolerant
+# text pattern, which cuts at the first credential assignment it finds.
+JSON_ATTEMPTS = 64
+JSON_SPAN = 65536
+_JSON_OPENER = re.compile(r"[\[{]")
+_JSON_DECODER = json.JSONDecoder()
 
-    Only whole-text JSON is parsed: embedded JSON in prose is left to the
-    quote-tolerant text rule, which needs no parse to cut at a credential.
+
+def embedded_json(text: str) -> Iterator[tuple[int, int, Any]]:
+    """Yield ``(start, end, value)`` for each JSON object or list embedded in ``text``."""
+
+    position, attempts = 0, 0
+    while attempts < JSON_ATTEMPTS:
+        opener = _JSON_OPENER.search(text, position)
+        if opener is None:
+            return
+        start = opener.start()
+        attempts += 1
+        try:
+            value, length = _JSON_DECODER.raw_decode(text[start:start + JSON_SPAN])
+        except (ValueError, RecursionError):
+            position = start + 1
+            continue
+        yield start, start + length, value
+        position = start + length
+
+
+def _redact_embedded_json(text: str) -> str:
+    """``text`` with every embedded JSON object or list that holds anything to redact redacted structurally.
+
+    A fragment ``public_values`` leaves unchanged keeps its original text.
     """
 
-    stripped = text.strip()
-    if stripped[:1] not in ("{", "["):
-        return text
-    try:
-        parsed = json.loads(stripped)
-    except ValueError:
-        return text
-    if not isinstance(parsed, (dict, list)):
-        return text
-    return json.dumps(public_values(parsed), sort_keys=True, ensure_ascii=False)
+    pieces, position = [], 0
+    for start, end, value in embedded_json(text):
+        public = public_values(value)
+        if public == value:
+            continue
+        pieces += [text[position:start], json.dumps(public, sort_keys=True, ensure_ascii=False)]
+        position = end
+    return "".join(pieces) + text[position:] if pieces else text
 
 
 # The kit's one widened public-safety rule.  ``v1.assert_public_safe``
@@ -1151,18 +1217,27 @@ def credential_entry(key: Any, value: Any) -> bool:
     return credential_term(text) is not None and not isinstance(value, (bool, type(None)))
 
 
-# Text.  One quote-tolerant assignment: an optional opening quote (JSON
-# escaped or not), a name that may be dotted or dashed, an optional closing
-# quote, optional whitespace, ``:`` or ``=``, then optional whitespace and
-# a value: a quoted string, a bare token, or the start of a JSON list or
+# Text.  One quote-tolerant assignment: a quoted name (JSON-escaped or
+# not, and up to 128 characters, spaces included, for malformed JSON such
+# as ``{"aws access key id": [...`` that does not decode), or a bare name
+# that may be dotted or dashed with an optional closing quote; then
+# optional whitespace, ``:`` or ``=``, then optional whitespace and a
+# value: a quoted string, a bare token, or the start of a JSON list or
 # object.  The value is a lookahead, so a non-credential name never
 # consumes a credential assignment that follows it.  It is a credential
 # assignment when the name is a credential field name, except a bare
 # ``<descriptive noun>: …`` (see ``_DESCRIPTIVE_TERMS``).
 _ASSIGNMENT = re.compile(
-    r"""(?<![\w.\-])(?P<open>\\?["'])?(?P<name>[A-Za-z][\w.\-]*?)(?P<close>\\?["'])?\s*(?P<sep>[:=])"""
+    r"""(?<![\w.\-])(?:(?P<open>\\?["'])(?P<qname>[A-Za-z][^"'\\\r\n]{0,127}?)(?P<qclose>\\?["'])"""
+    r"""|(?P<name>[A-Za-z][\w.\-]*?)(?P<close>\\?["'])?)\s*(?P<sep>[:=])"""
     r"""(?=\s*(?:\\?["']|[\[{]|[^\s,;]))"""
 )
+
+
+_PRECEDING_WORDS = re.compile(r"(?P<words>(?:[A-Za-z][\w.\-]*[ \t]+){1,3})$")
+# The head of a quoted name that ends where a credential word starts:
+# ``"selected `` before ``token": …``.
+_QUOTED_NAME_HEAD = re.compile(r"""\\?["'](?P<inner>[A-Za-z][^"'\\\r\n]{0,126}[ \t])$""")
 
 
 # A boolean or null after the separator: a flag, not a credential (see
@@ -1174,12 +1249,21 @@ def first_secret_assignment(text: str) -> int | None:
     """Where the first credential assignment in ``text`` starts, or None."""
 
     for match in _ASSIGNMENT.finditer(text):
-        name = match.group("name")
+        own = match.group("qname") or match.group("name")
+        name = own
+        if match.group("name"):
+            # A bare name in prose may be the last word of a spaced one
+            # (``aws access key id=…``): read up to three words before it.
+            before = _PRECEDING_WORDS.search(text, max(0, match.start() - 128), match.start())
+            if before:
+                name = " ".join(before.group("words").split() + [own])
+            if exempt_field(own):
+                continue
         term = credential_term(name)
-        if term is None and not v1._contains_secret_field({name: None}):
+        v1_named = v1._contains_secret_field({own: None})
+        if term is None and not v1_named:
             continue
-        if term is not None and not v1._contains_secret_field({name: None}) \
-                and _FLAG_VALUE.match(text, match.end()):
+        if term is not None and not v1_named and _FLAG_VALUE.match(text, match.end()):
             continue
         bare_colon = match.group("sep") == ":" and not (match.group("open") or match.group("close"))
         if bare_colon and term in _DESCRIPTIVE_TERMS:
@@ -1196,6 +1280,10 @@ def _first_secret(value: Any) -> str | None:
     """The first reason ``value`` holds credential material by the widened rules, or None."""
 
     if isinstance(value, str):
+        for _start, _end, embedded in embedded_json(value):
+            found = _first_secret(embedded)
+            if found:
+                return found
         return "public evidence contains secret-like material" if first_secret_assignment(value) is not None else None
     if isinstance(value, Mapping):
         for key, item in value.items():
