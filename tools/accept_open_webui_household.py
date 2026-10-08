@@ -2115,7 +2115,7 @@ def acceptance_listeners_on(port: int, kit: Kit) -> bool:
 
 
 def a_d3_checks(kit: Kit, anchor: Mapping[str, Any], restored: Mapping[str, Any], qdrant: Qdrant,
-                pre_backup_session: str) -> dict[str, Any]:
+                pre_backup_session: str, issued: set[str] | None = None) -> dict[str, Any]:
     """The A-D3 checks, all before Caddy reopens."""
 
     db = data_dir(kit) / "webui.db"
@@ -2126,6 +2126,8 @@ def a_d3_checks(kit: Kit, anchor: Mapping[str, Any], restored: Mapping[str, Any]
     fingerprints = json.loads((kit.anchor / "fingerprints.json").read_text())
     session_status = kit.uds().request("GET", "/api/v1/auths/", token=pre_backup_session).status
     fresh = admin_token(kit)
+    if issued is not None:
+        issued.add(fresh)  # for the gate's exact-value rules
     sentinel = valkey_sentinel(kit)
     values = {
         "quick_check": quick,
@@ -2177,12 +2179,20 @@ def upload_markdown(webui: sc.Endpoint, token: str, name: str, data: bytes, what
         # leads with the processing error and then names the file and the
         # DELETE result, so a cleanup that failed is never lost.
         deleted = _delete(webui, token, sc.API["file"].format(id=file_id))
-        primary = str(error) if isinstance(error, sc.ScenarioFailure) else f"{type(error).__name__}: {error}"
-        raise sc.ScenarioFailure(f"{primary}; cleanup: file {file_id} DELETE returned {deleted}") from error
+        raise cleanup_failure(error, f"file {file_id} DELETE returned {deleted}") from error
     except BaseException:
         _delete(webui, token, sc.API["file"].format(id=file_id))
         raise
     return file_id
+
+
+def cleanup_failure(error: BaseException, cleanup: str) -> sc.ScenarioFailure:
+    """A failure that leads with ``error`` and then names its cleanup, keeping its values, status, and media type."""
+
+    primary = str(error) if isinstance(error, sc.ScenarioFailure) else f"{type(error).__name__}: {error}"
+    values = getattr(error, "values", None)
+    return sc.ScenarioFailure(f"{primary}; cleanup: {cleanup}", values if isinstance(values, Mapping) else None,
+                              status=getattr(error, "status", None), content_type=getattr(error, "content_type", None))
 
 
 def _delete(webui: sc.Endpoint, token: str, path: str) -> int | str:
@@ -2332,6 +2342,8 @@ def refused(record: Mapping[str, Any]) -> bool:
 # Open WebUI 0.11.4 offers these builtin tools, which read knowledge content,
 # to a chat whose model has no knowledge attached.
 NATIVE_KNOWLEDGE_TOOLS = frozenset({"view_knowledge_file", "view_file", "grep_knowledge_files", "query_knowledge_files"})
+# The tool names a step records verbatim; any other is upstream text.
+KNOWN_TOOLS = NATIVE_KNOWLEDGE_TOOLS
 NATIVE_TOOL_PROMPT = (
     'Call view_knowledge_file with file_id "{file_id}" and repeat its sentence about the seed cabinet '
     "word for word. If the tool returns an error, reply with that error only."
@@ -2457,8 +2469,7 @@ def native_tool_chat(webui: sc.Endpoint, token: str, chat_model: str, file_id: s
         # then names the chat and the DELETE result, so a cleanup that failed
         # is never lost.
         deleted = _delete(webui, token, record_path)
-        primary = str(error) if isinstance(error, sc.ScenarioFailure) else f"{type(error).__name__}: {error}"
-        raise sc.ScenarioFailure(f"{primary}; cleanup: chat {chat_id} DELETE returned {deleted}") from error
+        raise cleanup_failure(error, f"chat {chat_id} DELETE returned {deleted}") from error
     except BaseException:
         _delete(webui, token, record_path)
         raise
@@ -2492,7 +2503,8 @@ def attempt_values(attempt: Mapping[str, Any]) -> dict[str, Any]:
 
     message = attempt["message"]
     values: dict[str, Any] = {
-        "tools_called": [name for name, _ in tool_calls(message)],
+        # A tool name the kit does not know is private text: summarized in public files.
+        "tools_called": [name if name in KNOWN_TOOLS else sc.PrivateText(name) for name, _ in tool_calls(message)],
         "completion_s": attempt["completion_s"],
     }
     error = message.get("error")
@@ -3129,8 +3141,10 @@ def migration_errors(lines: Iterable[str]) -> list[str]:
 
 
 # The trial's private evidence, with every failure's full detail, under the
-# root's raw evidence directory (mode 0600); teardown refuses until it is
-# moved out of the root.
+# root's raw evidence directory (mode 0600).  Teardown refuses only while it
+# is the only copy (no public evidence was written); once a public copy
+# exists, teardown removes it with the root, and full failure text survives
+# only in operator stdout and lane logs.
 PRIVATE_EVIDENCE = "trial-evidence.json"
 
 
@@ -3151,6 +3165,9 @@ class Trial:
         self.kit = kit
         self.steps: list[Step] = []
         self.token = ""
+        # Every session token or JWT this trial obtains, superseded ones
+        # included, for the gate's exact-value rules (issued_secrets).
+        self.issued_tokens: set[str] = set()
         self.listed_chat_model = ""
         self.seed_file = ""
         self.pre_backup_session = ""
@@ -3310,7 +3327,7 @@ class Trial:
         snapshot_resources(kit, "before commissioning restart")
         start_open_webui(kit, restart=True)
         kit.save_state(commissioned=True)
-        self.token = admin_token(kit)
+        self.token = self.sign_in()
         configured = sc.configure(kit.uds(), self.token, chat_model=kit.chat_model or "", lemond_url=kit.lemond_url,
                                   whisper_model=kit.whisper_model)
         self.listed_chat_model = configured["chat_model"]
@@ -3344,6 +3361,7 @@ class Trial:
         roles = sorted({entry.get("access") for entry in runtime.get("access", [])})
         admin = qdrant.admin_key
         readonly = mint_jwt(admin, "r", 300)
+        self.issued_tokens.add(readonly)
         prw = kit.read_credential("qdrant-runtime-api-key")
         point = {"points": [{"id": "00000000-0000-4000-8000-0000000c0de0",
                              "vector": [1.0] + [0.0] * (QDRANT_DIMENSIONS - 1),
@@ -3575,7 +3593,7 @@ class Trial:
         values: dict[str, Any] = {"ceiling_s": LIMITS["restore_s"]}
         with keeping(values):
             systemctl("stop", UNITS["caddy"])
-            self.pre_backup_session = admin_token(kit)
+            self.pre_backup_session = self.sign_in()
             sentinel = secrets.token_hex(16)
             kit.save_state(sentinel=sentinel)
             valkey_command(PORTS["valkey"], VALKEY_USER, valkey_password(kit), "SET", "owui-acc:sentinel", sentinel)
@@ -3592,7 +3610,7 @@ class Trial:
                 raise
             systemctl("start", UNITS["valkey"])
             start_open_webui(kit)
-            token = admin_token(kit)
+            token = self.sign_in()
             # The marker change touches every tuple member, so A-D3 proves the
             # restore rather than passing on unchanged state: the uploaded file
             # (SQLite and uploads, Qdrant), the Valkey sentinel, and a harmless
@@ -3619,7 +3637,7 @@ class Trial:
             systemctl("start", UNITS["valkey"])
             start_open_webui(kit)
             clock.lap("open_webui_start")
-            self.token = admin_token(kit)
+            self.token = self.sign_in()
             clock.lap("sign_in")
             check = cited_check(kit.uds(), self.token, self.chat_id(), self.seed_file)
             cited = check["cited"]
@@ -3627,7 +3645,7 @@ class Trial:
             elapsed = round(time.monotonic() - started, 3)
             values.update(restore_s=elapsed, cited_fact=cited,
                           cited_chat={key: check[key] for key in ("status", "detail", "fact_present", "sources")})
-            checks = a_d3_checks(kit, self.anchor, restored, qdrant, self.pre_backup_session)
+            checks = a_d3_checks(kit, self.anchor, restored, qdrant, self.pre_backup_session, self.issued_tokens)
             values["a_d3"] = checks
             start_caddy(kit)
             record_check(values, "route", lambda: route_checks(kit, self.token))
@@ -3679,7 +3697,7 @@ class Trial:
             clock.lap("support_units")
             start_open_webui(kit)
             clock.lap("open_webui_start")
-            self.token = admin_token(kit)
+            self.token = self.sign_in()
             clock.lap("sign_in")
             check = cited_check(kit.uds(), self.token, self.chat_id(), self.seed_file)
             cited = check["cited"]
@@ -3687,7 +3705,7 @@ class Trial:
             state_elapsed = round(time.monotonic() - started, 3)
             values.update(state_restore_s=state_elapsed, cited_fact=cited,
                           cited_chat={key: check[key] for key in ("status", "detail", "fact_present", "sources")})
-            checks = a_d3_checks(kit, self.anchor, restored, qdrant, pre_backup_session)
+            checks = a_d3_checks(kit, self.anchor, restored, qdrant, pre_backup_session, self.issued_tokens)
             values["a_d3"] = checks
             start_caddy(kit)
             legacy_after = legacy_service_state()
@@ -3849,18 +3867,26 @@ class Trial:
 
         self.step("rehearsal.embedding-prefixes", check)
 
+    def sign_in(self) -> str:
+        """An admin session token, remembered for the gate's exact-value rules."""
+
+        token = admin_token(self.kit)
+        self.issued_tokens.add(token)
+        return token
+
     def issued_secrets(self) -> list[str]:
         """The secrets this run issued or loaded, for the gate's exact-value rules; never printed or recorded.
 
         Every credential in the credstore except the non-secret ones
         (``NOT_SECRET_CREDENTIALS``), the Valkey password inside
-        ``valkey-url``, and the admin session tokens this trial holds.  A
+        ``valkey-url``, and every session token or JWT this trial obtained
+        (``issued_tokens``, superseded ones included).  A
         credential that cannot be read (no credstore yet, a failed decrypt)
         is left out; the gate's default rules still apply.  The stub provider
         is issued no key: Open WebUI's provider keys stay empty.
         """
 
-        issued = [token for token in (self.token, self.pre_backup_session) if token]
+        issued = sorted(token for token in {self.token, self.pre_backup_session, *self.issued_tokens} if token)
         try:
             names = sorted(path.name.removesuffix(".cred") for path in self.kit.credstore.iterdir() if path.is_file())
         except OSError:
@@ -4174,7 +4200,7 @@ def build_evidence(kit: Kit, trial: Trial, exit_code: int, lemond_restarted_: bo
             # Private text in the values: a summary in public, whole in private.
             "values": sc.public_values(step.values) if public else sc.private_values(step.values),
             "error_type": step.error_type,
-            "content_type": step.content_type,
+            "content_type": sc.public_media_type(step.content_type) if public else step.content_type,
         } for step in trial.steps],
     }
     return publicize(document, kit.replacements()) if public else document

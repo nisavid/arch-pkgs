@@ -184,10 +184,17 @@ WHISPER_PINS: Mapping[str, Mapping[str, Any]] = MappingProxyType({"base": WHISPE
 
 
 def whisper_pin_record(model: str) -> dict[str, Any]:
-    """One Whisper pin as plain JSON-ready data, for evidence and receipts."""
+    """One Whisper pin as plain JSON-ready data, for evidence and receipts.
+
+    ``files`` is a list of ``{"name", "sha256"}`` records, never a mapping
+    from file name to digest: a name such as ``tokenizer.json`` keyed to a
+    high-entropy value reads to gitleaks's default generic-api-key rule as a
+    credential assignment, and the public gate would withhold the evidence.
+    """
 
     pin = WHISPER_PINS[model]
-    return {"repository": pin["repository"], "revision": pin["revision"], "files": dict(pin["files"])}
+    files = [{"name": name, "sha256": digest} for name, digest in sorted(pin["files"].items())]
+    return {"repository": pin["repository"], "revision": pin["revision"], "files": files}
 
 
 JFK_FLAC_SHA256 = "63a4b1e4c1dc655ac70961ffbf518acd249df237e5a0152faae9a4a836949715"
@@ -612,9 +619,40 @@ def summarize_sources(sources: Sequence[dict[str, Any]]) -> dict[str, Any]:
                 names.append(name)
     return {
         "count": len(documents),
-        "names": names,
-        "scores": [score for entry in documents.values() for score in entry["scores"]],
+        "names": [constrained_name(name) for name in names],
+        "scores": [constrained_score(score) for entry in documents.values() for score in entry["scores"]],
     }
+
+
+# Upstream identifiers reach public files only in a kit-constrained form:
+# a value outside the form is kept as private text (PrivateText), which a
+# public copy renders as public_detail's summary and a private copy keeps
+# whole.  Comparisons are unchanged: PrivateText is a str.
+_LANGUAGE_CODE = re.compile(r"[a-z]{2,3}(?:[-_][A-Za-z0-9]{2,8})?")
+
+
+def constrained_name(name: Any) -> Any:
+    """A cited source name: the kit's handbook name (or no name) verbatim, any other as private text."""
+
+    if name is None or name == HANDBOOK_NAME:
+        return name
+    return PrivateText(str(name))
+
+
+def constrained_score(score: Any) -> Any:
+    """A source score: a finite number verbatim, anything else as private text."""
+
+    if isinstance(score, (int, float)) and not isinstance(score, bool) and math.isfinite(score):
+        return score
+    return PrivateText(json.dumps(score) if not isinstance(score, str) else score)
+
+
+def constrained_language(language: str | None) -> str | None:
+    """A transcription language: a short language code verbatim, anything else as private text."""
+
+    if language is None or _LANGUAGE_CODE.fullmatch(language):
+        return language
+    return PrivateText(language)
 
 
 def cited_answer_passes(text: str, summary: Mapping[str, Any], expected_name: str) -> bool:
@@ -963,6 +1001,18 @@ _ERROR_TYPE = re.compile(r"[A-Za-z_][\w.]{0,63}")
 _CONTENT_TYPE = re.compile(r"[\w.+-]{1,64}/[\w.+-]{1,64}")
 
 
+def public_media_type(content_type: str | None) -> str | None:
+    """The bare media type of a Content-Type header for public files, lower-cased; None when it is not one.
+
+    Parameters (``; charset=…``, a quoted note) and anything that is not a
+    plain ``type/subtype`` token never reach a public file; the private copy
+    keeps the raw header.
+    """
+
+    media = _CONTENT_TYPE.match(content_type.strip()) if content_type else None
+    return media.group(0).lower() if media else None
+
+
 def public_detail(text: str, *, error_type: str | None = None, status: int | None = None,
                   content_type: str | None = None) -> str:
     """A fixed public summary of a failure detail; no part of the text is copied.
@@ -984,9 +1034,9 @@ def public_detail(text: str, *, error_type: str | None = None, status: int | Non
         parts.append(error_type)
     if status is not None:
         parts.append(f"HTTP {status}")
-    media = _CONTENT_TYPE.match(content_type.strip()) if content_type else None
+    media = public_media_type(content_type)
     if media:
-        parts.append(media.group(0).lower())
+        parts.append(media)
     parts += [f"{len(raw)} bytes", f"sha256:{hashlib.sha256(raw).hexdigest()[:16]}", PRIVATE_DETAIL_NOTE]
     return "; ".join(parts)
 
@@ -1121,18 +1171,23 @@ def go_quote_meta(value: str) -> str:
 def gitleaks_config(secrets: Iterable[str]) -> str:
     """A gitleaks config: the default rules, plus one exact-value rule per secret of at least 8 characters.
 
-    Rule ids are ``owui-kit-secret-<n>`` and say nothing about the secret.
-    The config holds the secrets themselves, so it lives only in the gate's
-    private directory.
+    Each rule matches the secret as the gated JSON document spells it
+    (``json.dumps(secret, ensure_ascii=False)`` without its quotes), so a
+    quote, a backslash, or a newline in the secret still matches.  Rule ids
+    are ``owui-kit-secret-<n>`` and say nothing about the secret.  The config
+    holds the secrets themselves, so it lives only in the gate's private
+    directory.
     """
 
     lines = ["[extend]", "useDefault = true"]
     kept = sorted({secret for secret in secrets if len(secret) >= GITLEAKS_SECRET_MINIMUM})
     for number, secret in enumerate(kept, 1):
+        serialized = json.dumps(secret, ensure_ascii=False)[1:-1]
         lines += ["", "[[rules]]", f'id = "owui-kit-secret-{number}"',
                   'description = "a secret the kit issued or loaded in this run"',
-                  # A JSON string is a valid TOML basic string.
-                  f"regex = {json.dumps(go_quote_meta(secret))}"]
+                  # A JSON string written with ensure_ascii=False is a valid TOML
+                  # basic string, astral characters included.
+                  f"regex = {json.dumps(go_quote_meta(serialized), ensure_ascii=False)}"]
     return "\n".join(lines) + "\n"
 
 
@@ -1731,6 +1786,7 @@ def stt(ctx: Context) -> dict[str, Any]:
         language = result.get("language")
         if not isinstance(language, str):
             language = None
+        language = constrained_language(language)
         values.update(language=language, word_count=len(normalize_words(text).split()))
         if not transcription_passes(text, language):
             raise ScenarioFailure(f"transcription did not match: {normalize_words(text)[:120]}", values)
@@ -1869,15 +1925,6 @@ def private_receipt_path(path: Path) -> Path:
     """Where the private receipt, with the full failure details, sits beside the public one."""
 
     return path.with_name(f"{path.stem}.private{path.suffix or '.json'}")
-
-
-def write_receipt(path: Path, receipt: Mapping[str, Any], secrets: Iterable[str] = ()) -> None:
-    """Write the public receipt, or raise ``ValueError`` and write nothing when it must be withheld."""
-
-    reason = public_withhold_reason(receipt, secrets)
-    if reason is not None:
-        raise ValueError(reason)
-    write_public(path, receipt)
 
 
 def publish_receipt(path: Path, public: dict[str, Any], private: dict[str, Any],

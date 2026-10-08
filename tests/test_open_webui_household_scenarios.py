@@ -833,16 +833,22 @@ class SpeechTests(unittest.TestCase):
         base = scenarios.whisper_pin_record("base")
         self.assertEqual(base["repository"], "Systran/faster-whisper-base")
         self.assertEqual(base["revision"], "ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66")
+        def digests(record):
+            return {item["name"]: item["sha256"] for item in record["files"]}
+
         self.assertEqual(
-            base["files"]["model.bin"], "d01c3014881c9c6f3133c182f3d2887eb6ca1c789a7538c5c007196857a0a6a9"
+            digests(base)["model.bin"], "d01c3014881c9c6f3133c182f3d2887eb6ca1c789a7538c5c007196857a0a6a9"
         )
         tiny = scenarios.whisper_pin_record("tiny")
         self.assertEqual(
-            tiny["files"]["model.bin"], "dcb76c6586fc06cbdac6dd21f14cfd129cc4cdd9dce19bf4ffa62e59cbe6e6d1"
+            digests(tiny)["model.bin"], "dcb76c6586fc06cbdac6dd21f14cfd129cc4cdd9dce19bf4ffa62e59cbe6e6d1"
         )
         for record in (base, tiny):
-            self.assertEqual(set(record["files"]), {"config.json", "model.bin", "tokenizer.json", "vocabulary.txt"})
-            for digest in record["files"].values():
+            # A list of {name, sha256} records, never a name-to-digest mapping (gitleaks generic-api-key).
+            self.assertEqual([sorted(item) for item in record["files"]], [["name", "sha256"]] * 4)
+            self.assertEqual([item["name"] for item in record["files"]],
+                             ["config.json", "model.bin", "tokenizer.json", "vocabulary.txt"])
+            for digest in digests(record).values():
                 self.assertRegex(digest, r"^[0-9a-f]{64}$")
             json.dumps(record)
 
@@ -997,26 +1003,38 @@ class ReceiptTests(unittest.TestCase):
         self.assertEqual(blocked["exit_code"], 75)
         self.assertTrue(blocked["precondition"].startswith("Blocked; "))
 
-    def test_write_receipt_writes_only_past_the_gate(self):
+    def receipts(self):
         settings = scenarios.settings_from_environ(candidate_env())
-        receipt = scenarios.build_receipt(target="production", mode="record", settings=settings, chat_model="chat",
-                                          health=None, results=self.results())
+        return tuple(scenarios.build_receipt(target="production", mode="record", settings=settings,
+                                             chat_model="chat", health=None, results=self.results(), public=flag)
+                     for flag in (True, False))
+
+    def test_publish_receipt_writes_the_public_receipt_only_past_the_gate(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "receipt.json"
-            scenarios.write_receipt(path, receipt)
+            private_path = scenarios.private_receipt_path(path)
+            self.assertEqual(private_path, Path(directory) / "receipt.private.json")
+            public, private = self.receipts()
+            self.assertEqual(scenarios.publish_receipt(path, public, private), (1, None))
             self.assertEqual(json.loads(path.read_text())["exit_code"], 1)
+            written = json.loads(private_path.read_text())
+            self.assertEqual((written["exit_code"], written["public_withheld"]), (1, None))
+            self.assertIn(self.UNSAFE, written["scenarios"][1]["detail"])
+            self.assertEqual(private_path.stat().st_mode & 0o777, 0o600)
             path.unlink()
-            with mock.patch.dict(os.environ, {"OWUI_GITLEAKS_STUB_EXIT": str(scenarios.GITLEAKS_FINDINGS_EXIT)}), \
-                    self.assertRaisesRegex(ValueError, r"^gitleaks finding \(redacted\)$"):
-                scenarios.write_receipt(path, receipt)
+            public, private = self.receipts()
+            with mock.patch.dict(os.environ, {"OWUI_GITLEAKS_STUB_EXIT": str(scenarios.GITLEAKS_FINDINGS_EXIT)}):
+                self.assertEqual(scenarios.publish_receipt(path, public, private), (1, "gitleaks finding (redacted)"))
             self.assertFalse(path.exists())
+            self.assertEqual(json.loads(private_path.read_text())["public_withheld"], "gitleaks finding (redacted)")
             # v1's check still runs first.
-            with self.assertRaisesRegex(ValueError, "absolute private path"):
-                scenarios.write_receipt(path, {**receipt, "values": "/home/someone/x"})
+            public, private = self.receipts()
+            public["values"] = "/home/someone/x"
+            self.assertEqual(scenarios.publish_receipt(path, public, private),
+                             (1, "public evidence contains an absolute private path"))
             self.assertFalse(path.exists())
-            private = scenarios.write_private(scenarios.private_receipt_path(path), receipt)
-            self.assertEqual(private, Path(directory) / "receipt.private.json")
-            self.assertEqual(private.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(json.loads(private_path.read_text())["public_withheld"],
+                             "public evidence contains an absolute private path")
 
     def resmoke_through_the_gate(self, tmp, environment):
         """A re-smoke whose preconditions and scenarios all pass, so it reaches the gate."""
@@ -1120,16 +1138,20 @@ class ReceiptTests(unittest.TestCase):
         with mock.patch.object(scenarios, "SCENARIOS", {"open-webui.resmoke.zerank-qualification": failing}):
             result = scenarios.run_scenario(object(), "open-webui.resmoke.zerank-qualification")
         self.assertEqual(result.result, scenarios.FAIL)
-        receipt = scenarios.build_receipt(target="production", mode="record",
-                                          settings=scenarios.settings_from_environ(candidate_env()),
-                                          chat_model="chat", health=None, results=[result])
+        settings = scenarios.settings_from_environ(candidate_env())
+        public, private = (scenarios.build_receipt(target="production", mode="record", settings=settings,
+                                                   chat_model="chat", health=None, results=[result], public=flag)
+                           for flag in (True, False))
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "receipt.json"
-            scenarios.write_receipt(path, receipt)
+            self.assertEqual(scenarios.publish_receipt(path, public, private), (1, None))
             written = path.read_text(encoding="utf-8")
+            kept = scenarios.private_receipt_path(path).read_text(encoding="utf-8")
         for secret in (token, session, "tok3n", "s3ssion", "Bad Gateway"):
             self.assertNotIn(secret, written)
-        self.assertIn("ScenarioFailure; HTTP 502; ", written)
+        self.assertIn("ScenarioFailure; HTTP 502; text/plain; ", written)
+        self.assertIn("Bad Gateway", kept)
+        self.assertIsNone(json.loads(kept)["public_withheld"])
 
 
 class PrivateTextTests(unittest.TestCase):
@@ -1194,6 +1216,70 @@ class PrivateTextTests(unittest.TestCase):
             raise error
         self.assertEqual((raised.exception.content_type, raised.exception.status), ("text/html", 502))
         self.assertEqual(raised.exception.values, {"measured": 1})
+
+
+class PublicMediaTypeTests(unittest.TestCase):
+    def test_only_the_bare_media_type_reaches_public_files(self):
+        header = 'Text/HTML; charset="utf-8"; note="a; b=c"'
+        self.assertEqual(scenarios.public_media_type(header), "text/html")
+        self.assertEqual(scenarios.public_media_type("application/problem+json"), "application/problem+json")
+        for header in (None, "", "not a media type", "<html>", "text"):
+            with self.subTest(header=header):
+                self.assertIsNone(scenarios.public_media_type(header))
+        summary = scenarios.public_detail("x", content_type='Text/HTML; charset="utf-8"; note="a; b=c"')
+        self.assertEqual(summary.split("; ")[0], "text/html")
+        self.assertNotIn("note", summary)
+
+
+class ConstrainedIdentifierTests(unittest.TestCase):
+    """Upstream identifiers reach public copies only in a kit-constrained form; private copies keep them."""
+
+    def render(self, values):
+        return scenarios.public_values(values), scenarios.private_values(values)
+
+    def test_source_names_and_scores(self):
+        summary = scenarios.summarize_sources([
+            {"source": {"id": "a", "name": scenarios.HANDBOOK_NAME}, "distances": [0.9, "0.5", float("nan")]},
+            {"source": {"id": "b", "name": "someone-elses-notes.md"}, "distances": [True]},
+        ])
+        public, private = self.render(summary)
+        self.assertEqual(public["names"][0], scenarios.HANDBOOK_NAME)
+        self.assertTrue(public["names"][1].endswith(scenarios.PRIVATE_DETAIL_NOTE))
+        self.assertNotIn("someone-elses", json.dumps(public))
+        self.assertEqual(public["scores"][0], 0.9)
+        for summarized in public["scores"][1:]:
+            self.assertTrue(summarized.endswith(scenarios.PRIVATE_DETAIL_NOTE), summarized)
+        self.assertEqual(private["names"], [scenarios.HANDBOOK_NAME, "someone-elses-notes.md"])
+        self.assertEqual(private["scores"], [0.9, "0.5", "NaN", "true"])
+        # Comparisons are unchanged: a string or non-finite score still fails the cited-answer check.
+        self.assertFalse(scenarios.cited_answer_passes(scenarios.CANONICAL_FACT, summary, scenarios.HANDBOOK_NAME))
+
+    def test_language(self):
+        for language, kept in (("en", True), ("en-US", True), ("zh_Hant", True), (None, True),
+                               ("English (detected with 0.98 confidence)", False), ("EN", False)):
+            with self.subTest(language=language):
+                value = scenarios.constrained_language(language)
+                public, private = self.render({"language": value})
+                self.assertEqual(private["language"], language)
+                if kept:
+                    self.assertEqual(public["language"], language)
+                else:
+                    self.assertTrue(public["language"].endswith(scenarios.PRIVATE_DETAIL_NOTE))
+
+    def test_stt_records_an_arbitrary_language_as_private_text(self):
+        with tempfile.TemporaryDirectory() as directory:
+            audio = Path(directory) / "jfk.flac"
+            audio.write_bytes(b"flac")
+            body = json.dumps({"text": "ask not", "language": "detected: klingon"}).encode()
+            webui = mock.Mock(request=mock.Mock(return_value=scenarios.Response(200, "application/json", body)))
+            ctx = scenarios.Context(target="acceptance", webui=webui, lemond=mock.Mock(), token="t",
+                                    settings=scenarios.settings_from_environ(candidate_env()), chat_model="chat",
+                                    audio=audio)
+            with mock.patch.object(scenarios.v1, "_file_sha256", return_value=scenarios.JFK_FLAC_SHA256):
+                result = scenarios.run_scenario(ctx, "open-webui.resmoke.stt")
+        public, private = self.render(result.values)
+        self.assertEqual(private["language"], "detected: klingon")
+        self.assertNotIn("klingon", json.dumps(public))
 
 
 class PublicDetailTests(unittest.TestCase):
@@ -1351,6 +1437,51 @@ class GitleaksGateTests(unittest.TestCase):
         self.assertIn(json.dumps(r"a\.b-c_d\+e\$f\(g\)"), config)
         self.assertEqual(scenarios.go_quote_meta(r"a-b_c.d\e+f*g?h(i)j|k[l]m{n}o^p$q r"),
                          r"a-b_c\.d\\e\+f\*g\?h\(i\)j\|k\[l\]m\{n\}o\^p\$q r")
+
+    @unittest.skipIf(shutil.which("gitleaks") is None, "gitleaks is not installed")
+    def test_the_real_gitleaks_passes_a_full_passing_resmoke_receipt(self):
+        settings = scenarios.settings_from_environ(candidate_env())
+        vector = {"dimensions": 2560, "norm": 1.0}
+        summary = scenarios.summarize_sources([{
+            "source": {"type": "file", "id": "2b6f3c7e-9a51-4c38-8d1e-5b0f4e7a1c92"}, "document": ["chunk"],
+            "metadata": [{"file_id": "2b6f3c7e-9a51-4c38-8d1e-5b0f4e7a1c92", "name": scenarios.HANDBOOK_NAME,
+                          "source": scenarios.HANDBOOK_NAME}], "distances": [0.2778]}])
+        results = [
+            scenarios.ScenarioResult(scenarios.SCENARIO_IDS[0], "PASS", "ok", 1.2, {
+                "texts": {"query": scenarios.CANARY_QUERY, "relevant": scenarios.CANARY_RELEVANT,
+                          "unrelated": scenarios.CANARY_UNRELATED},
+                "vectors": {"query": vector, "relevant": vector, "unrelated": vector, "stored_chunk": vector,
+                            "direct_chunk": vector},
+                "prefix_source": "process-environ", "dimensions": 2560, "margin": 0.412305,
+                "stored_vector_cosine": 0.999998}),
+            scenarios.ScenarioResult(scenarios.SCENARIO_IDS[1], "PASS", "ok", 0.4,
+                                     {"health": "qualified", "scores": [0.981204, 0.013377]}),
+            scenarios.ScenarioResult(scenarios.SCENARIO_IDS[2], "PASS", "ok", 9.8, {
+                "timings": {"upload_s": 0.21, "index_s": 3.4, "chat_s": 6.1}, "sources": summary,
+                "expected_source_name": scenarios.HANDBOOK_NAME, "fact_present": True}),
+            scenarios.ScenarioResult(scenarios.SCENARIO_IDS[3], "PASS", "ok", 2.9, {
+                "transcription_s": 2.874, "language": "en", "word_count": 22,
+                "whisper": {"model": "base", **scenarios.whisper_pin_record("base")}}),
+        ]
+        receipt = scenarios.build_receipt(target="production", mode="record", settings=settings,
+                                          chat_model="resident-chat", results=results,
+                                          health={"version": "10.0.0", "start_time": "2026-10-04T08:00:00Z"})
+        receipt["whisper_model"] = "base"
+        with mock.patch.object(scenarios, "GITLEAKS", "gitleaks"):
+            self.assertIsNone(scenarios.public_withhold_reason(receipt, ["smoke-password-for-the-gate"]))
+            # The record shape that tripped the rehearsal's generic-api-key rule.
+            legacy = {"files": {"tokenizer.json": scenarios.WHISPER_BASE["files"]["tokenizer.json"]}}
+            self.assertRegex(scenarios.public_withhold_reason(legacy) or "", r"generic-api-key")
+
+    @unittest.skipIf(shutil.which("gitleaks") is None, "gitleaks is not installed")
+    def test_the_real_gitleaks_matches_secrets_as_json_spells_them(self):
+        secrets = ['quote"inside-1', "back\\slash-inside-2", "new\nline-inside-3", "emoji-\U0001F511-inside-4"]
+        with mock.patch.object(scenarios, "GITLEAKS", "gitleaks"):
+            for secret in secrets:
+                with self.subTest(secret=secret):
+                    self.assertRegex(scenarios.public_withhold_reason({"observed": f"got {secret} back"}, secrets) or "",
+                                     r"^gitleaks finding \(redacted\): owui-kit-secret-\d at line \d+$")
+            self.assertIsNone(scenarios.public_withhold_reason({"observed": "nothing secret here"}, secrets))
 
     @unittest.skipIf(shutil.which("gitleaks") is None, "gitleaks is not installed")
     def test_the_real_gitleaks_catches_an_openai_style_key(self):

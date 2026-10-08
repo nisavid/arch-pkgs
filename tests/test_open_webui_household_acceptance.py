@@ -1432,12 +1432,12 @@ class ProductionDocTests(unittest.TestCase):
     def test_both_runbooks_carry_the_base_whisper_pin(self):
         pin = sc.whisper_pin_record(sc.DEFAULT_WHISPER_MODEL)
         self.assertIn(f"rev={pin['revision']}", self.doc)
-        for name, digest in pin["files"].items():
+        for name, digest in ((item["name"], item["sha256"]) for item in pin["files"]):
             self.assertIn(f"| `{name}` | `{digest}` |", self.doc)
             self.assertIn(f'"$src/{name}"', self.doc)
         acceptance = (REPO_ROOT / "docs" / "maintainers" / "open-webui-household-acceptance.md").read_text(encoding="utf-8")
         self.assertIn(f"`{pin['revision']}`", acceptance)
-        for name, digest in pin["files"].items():
+        for name, digest in ((item["name"], item["sha256"]) for item in pin["files"]):
             self.assertIn(f"| `{name}` | `{digest}` |", acceptance)
         self.assertIn(f"`{sc.JFK_FLAC_SHA256}`", acceptance)
 
@@ -3914,6 +3914,221 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(trial.steps[0].content_type, "text/html; charset=utf-8")
         self.assertTrue(evidence["steps"][0]["detail"].startswith("ScenarioFailure; HTTP 502; text/html; "))
         self.assertNotIn("bad gateway", evidence["steps"][0]["detail"])
+
+    def representative_trial(self, directory):
+        """A record-mode trial whose every step carries values shaped like the kit's real ones (all PASS)."""
+
+        kit, trial = self.trial(directory, rehearsal=False)
+        candidate = json.loads(CANDIDATE_SET.read_text(encoding="utf-8"))
+        deployed = [entry for entry in candidate["archives"] if entry["role"] == "deployed"]
+        digest = hashlib.sha256(b"representative").hexdigest()
+        handbook_reply = kit_module.ChatReply(200, sc.CANONICAL_FACT, [], None, b"", "text/event-stream")
+        summary = sc.summarize_sources([{
+            "source": {"type": "file", "id": "2b6f3c7e-9a51-4c38-8d1e-5b0f4e7a1c92"}, "document": ["chunk"],
+            "metadata": [{"name": sc.HANDBOOK_NAME, "source": sc.HANDBOOK_NAME}], "distances": [0.2778, 0.0556]}])
+        cited = {"status": 200, "detail": kit_module.reply_detail(200, None), "fact_present": True, "sources": summary}
+        refusal = kit_module.refusal_record(kit_module.ChatReply(503, "", [], kit_module._rag_unavailable_detail(), b""))
+        attempt = {"message": {"output": [{"type": "function_call", "name": "view_knowledge_file", "call_id": "c1"},
+                                          {"type": "function_call_output", "call_id": "c1",
+                                           "output": '{"error": "x", "status": 503}'}]}, "completion_s": 4.2}
+        unit = {"oom_kill": 0, "NRestarts": 0, "memory_peak": 812_000_000, "CPUUsageNSec": 91_000_000_000,
+                "state": "active"}
+        snapshot = {"label": "before restore", "t": 1_791_000_000.0, "units": {u: dict(unit) for u in kit.units()},
+                    "slice": {"unit": kit.slice, "state": "active", "oom_kill": 0}}
+        gates = kit_module.resource_gates([snapshot])
+        phases = {"stop": 1.2, "restore_tuple": 14.9, "open_webui_start": 11.0, "sign_in": 0.3, "chat": 5.1}
+        a_d3 = {"quick_check": "ok", "alembic_head": kit_module.ALEMBIC_HEAD, "digests_match": True,
+                "collections_match": True, "tuple_match": True, "epoch_above_bound": True,
+                "pre_backup_session_status": 401, "fresh_login": True, "valkey_sentinel_present": True, "passes": True}
+        route = {"https_status": 200, "websocket_status": 101, "listener_findings": []}
+        admin = {"enable_signup": False, "admin_count": 1, "user_count": 1}
+        shapes = {name: {"present": True, "size": kit_module.QDRANT_DIMENSIONS, "distance": "Cosine", "points": 12,
+                         "indexes": ["metadata.file_id", "metadata.hash", "tenant_id"]} for name in kit_module.COLLECTIONS}
+        drill = {"ceiling_s": 40.0, "phases_s": phases, "pre_restore_divergence": {"sentinel": True, "file": True},
+                 "resources_before": snapshot, "reserved_epoch_above_bound": True, "restore_s": 32.5,
+                 "cited_fact": True, "cited_chat": cited, "a_d3": a_d3, "route": route, "one_admin": admin}
+        values = {
+            "open-webui.acceptance.identity.archives": {
+                "manifest": {"schema": candidate["schema"], "candidate_set": candidate["candidate_set"],
+                             "adoption_main_commit": candidate["adoption_main_commit"], "sha256": digest},
+                "archives": [{"name": e["archive"]["filename"], "size": e["archive"]["size"],
+                              "sha256": e["archive"]["sha256"], "source_commit": e["archive"]["source_commit"],
+                              "source_commit_basis": e["source_commit_basis"]} for e in deployed],
+                "bound_not_deployed": [], "external_inputs_declared": candidate["external_inputs"],
+                "supporting": [{"package": "valkey", "version": "8.1.4-1", "source": "host"}],
+                "host_providers": {name: "1.0-1" for name in kit_module.HOST_PROVIDERS},
+                "providers_of_record": {"note": kit_module.PROVIDERS_OF_RECORD_NOTE, "absent": [],
+                                        "packages": [{"package": "python-ctranslate2-gfx1151", "version": "4.7.2-1",
+                                                      "source": "host", "foreign": True}]},
+                "module_origins": {"open_webui": "<root>/tree/open-webui/opt/open-webui/lib/python3.14/site-packages"},
+                "whisper": {"model": "base", **sc.whisper_pin_record("base")},
+                "jfk_flac_sha256": sc.JFK_FLAC_SHA256,
+                "speech": {"provider": "python-ctranslate2-gfx1151 4.7.2-1", "device": "cpu",
+                           "compute_type": "int8 (upstream default)", "hf_hub_offline": "1"},
+            },
+            "open-webui.acceptance.identity.unit-properties": {
+                "rows": [{"unit": "open-webui.service", "property": "credentials", "packaged": "systemd-creds (system)",
+                          "acceptance": "systemd-creds", "status": "rewritten", "reason": "user credentials"},
+                         {"unit": "open-webui.service", "property": "acceptance.env OPENAI_API_KEYS",
+                          "packaged": "", "acceptance": "", "status": "overlay",
+                          "reason": "allowlisted acceptance overlay key"}],
+                "effective": {"IPAddressAllow": "loopback/8 loopback/128", "IPAddressDeny": "0.0.0.0/0 ::/0"},
+                "journal_warning": None},
+            "open-webui.acceptance.ready.first-start": {"ready_s": 41.2, "alembic_head": kit_module.ALEMBIC_HEAD,
+                                                        "migration_errors": 0, "qdrant_fresh": True},
+            "open-webui.acceptance.profile.persisted": {
+                "persisted_keys": sorted(kit_module.PROFILE_PERSISTENT_KEYS), "overlay_keys": ["RAG_OPENAI_API_BASE_URL"],
+                "environment_keys": ["WEBUI_URL"], "unclassified": [], "absent": [], "mismatched": []},
+            "open-webui.acceptance.auth.one-admin": admin,
+            "open-webui.acceptance.ready.restart": {"restart_to_ready_s": 18.4, "ceiling_s": 25.0},
+            "open-webui.acceptance.qdrant.g4": {"version": kit_module.QDRANT_VERSION, "fresh_state": True,
+                                                "collections": shapes, "runtime_roles": ["prw"],
+                                                "runtime_holds_admin_key": False,
+                                                "negative_probes": {"r_upsert": 403, "prw_create": 403, "prw_delete": 403}},
+            "open-webui.acceptance.connections.no-stored-secret": {
+                "runtime_credentials": sorted(kit_module.OPEN_WEBUI_SECRETS + ("session-epoch",)),
+                "nonempty_key_fields": []},
+            "open-webui.resmoke.zembed-canary": {"dimensions": 2560, "margin": 0.412305, "prefix_source": "process-environ",
+                                                 "stored_vector_cosine": 0.999998,
+                                                 "vectors": {"query": {"dimensions": 2560, "norm": 1.0}}},
+            "open-webui.resmoke.zerank-qualification": {"health": "qualified", "scores": [0.981204, 0.013377]},
+            "open-webui.acceptance.route.caddy-uds": route,
+            "open-webui.resmoke.cited-answer": {"timings": {"upload_s": 0.2, "index_s": 3.4, "chat_s": 6.1},
+                                                "sources": summary, "expected_source_name": sc.HANDBOOK_NAME,
+                                                "fact_present": True},
+            "open-webui.acceptance.failclosed.reranker-down": {
+                "latching_retrieval_status": 503, "plain_chat_status": 200, "retrieval_status": 503,
+                "file_chat_status": 503, "health_status": 503, "fixed_detail": True, "file_chat_sources": 0,
+                "plain_chat_detail": None, "file_chat_detail": None},
+            "open-webui.acceptance.failclosed.full-context": {"health_before": 503, "health_after": 503,
+                                                              "chats": {"mixed": refusal, "all-full": refusal}},
+            "open-webui.acceptance.failclosed.native-tools": {
+                **kit_module.native_values({"attempts": [attempt], "mode": kit_module.NATIVE_MODE_PLAIN}),
+                "health_before": 503, "health_after": 503, "knowledge_tool_outputs": ['{"error": "x", "status": 503}'],
+                "handbook_text": False},
+            "open-webui.acceptance.failclosed.recovery": {"latched_status": 503, "health_after_resave": 200,
+                                                          "cited_fact": True, "cited_chat": cited},
+            "open-webui.acceptance.gate.explicit-reads": {
+                **kit_module.native_values({"attempts": [attempt], "mode": kit_module.NATIVE_MODE_PLAIN}),
+                "health": 200, "view_knowledge_file_calls": 1, "view_knowledge_file_holds_fact": True,
+                "chats": {"mixed": {"status": 200, "sources": 1, "fact_in_sources": True,
+                                    "detail": kit_module.reply_detail(handbook_reply.status, None)}}},
+            "open-webui.resmoke.stt": {"transcription_s": 2.874, "language": "en", "word_count": 22,
+                                       "whisper": {"model": "base", **sc.whisper_pin_record("base")}},
+            "open-webui.acceptance.privacy": {
+                "ip_address_policy": {"IPAddressAllow": "loopback/8", "IPAddressDeny": "0.0.0.0/0 ::/0"},
+                "ip_address_policy_enforced": False, "peer_samples": 412, "remote_provider_peers": None,
+                "peer_violations": [], "telemetry": dict(sc.TELEMETRY_EXPECTED),
+                "haystack": {"unit_in_slice": False, "module_mapped": False, "env_keys": [],
+                             "host_service_active": False, "host_service_enabled": False}},
+            kit_module.RESTORE_DRILL: drill,
+            kit_module.ROLLBACK_DRILL: {**drill, "state_restore_s": 35.1, "before_clock_s": 52.0, "window_s": 101.3,
+                                        "archives_match_anchor": True,
+                                        "legacy_service": {"before": {"ActiveState": "inactive"},
+                                                           "after": {"ActiveState": "inactive"}},
+                                        "legacy_service_touched": False, "acceptance_listener_on_8080": False},
+            "open-webui.acceptance.qdrant.paging": {
+                "corpus": {"name": kit_module.PAGING_CORPUS_NAME, "bytes": 715_000, "sha256": digest,
+                           "sections": kit_module.PAGING_SECTIONS, "planted_section": kit_module.PAGING_PLANTED_SECTION},
+                "rag_settings": {"ENABLE_RAG_HYBRID_SEARCH": True, "HYBRID_BM25_WEIGHT": 0.5, "CHUNK_SIZE": 1000},
+                "scroll_page": kit_module.QDRANT_SCROLL_PAGE, "timings": {"index_s": 61.2},
+                "points": {"file": 1100, "knowledge": 1100}, "retrieved": {"sources": 1, "chunks": 3, "planted": True},
+                "bm25": {"section": 417, "query": "0417", "documents": 3, "found": True}},
+            "open-webui.acceptance.failclosed.hybrid-error": {
+                "health_before": 200, "timings": {"knowledge_add_s": 2.0}, "points": {"file": 4, "knowledge": 4},
+                "fault_point": {"id": kit_module.HYBRID_FAULT_POINT, "in_knowledge_tenant": True,
+                                "metadata_null": True, "tenant_points_with_fault": 5},
+                "fault": {**refusal, "sentinel": False}, "health_after_fault": 200, "fallback_refusal_logged": True,
+                "tenant_points_after_fault_delete": 4,
+                "recovery": {"status": 200, "sources": 1, "fact_in_sources": True, "finite_scores": True},
+                "health_after_recovery": 200, "cleanup": {"knowledge_delete": 200, "knowledge_points_after_delete": 0}},
+            "open-webui.acceptance.resources": {
+                "end_of_trial_snapshot": snapshot, **gates, "qdrant_storage": {"apparent_bytes": 9_000_000,
+                                                                              "allocated_bytes": 9_400_000},
+                "points": {name: 12 for name in kit_module.COLLECTIONS}, "anchor": {"apparent_bytes": 52_000_000},
+                "snapshot_bytes": {name: 400_000 for name in kit_module.COLLECTIONS},
+                "cache_inventory": kit_module.cache_inventory_record(
+                    ["state/open-webui/cache/whisper/models/x"], None,
+                    ["state/open-webui/cache/tiktoken/9b5ad71b2ce5302211f9c61530b329a4922fc6a4"])},
+        }
+        for step in trial.steps:
+            step.values = values.get(step.id, {})
+            step.duration_s = 1.0
+        return kit, trial
+
+    @unittest.skipIf(shutil.which("gitleaks") is None, "gitleaks is not installed")
+    def test_the_real_gitleaks_passes_a_full_record_mode_evidence_document(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit, trial = self.representative_trial(directory)
+            trial.steps.append(kit_module.Step(kit_module.TRIAL_STEPS[-1], sc.PASS, "ok", 0.0,
+                                               {"trial_set_count": 1, "restore_drills": 1, "rollback_drills": 1}))
+            evidence = kit_module.build_evidence(kit, trial, sc.EXIT_PASS, False)
+            self.assertEqual({step["id"] for step in evidence["steps"]}, set(kit_module.TRIAL_STEPS))
+            with mock.patch.object(sc, "GITLEAKS", "gitleaks"):
+                self.assertIsNone(sc.public_withhold_reason(evidence, ["issued-secret-not-in-the-document"]))
+
+    def test_the_trial_collects_every_token_it_obtains(self):
+        with tempfile.TemporaryDirectory() as directory:
+            trial = kit_module.Trial(make_kit(directory))
+            tokens = iter(["session-a-0000", "session-b-1111"])
+            with mock.patch.object(kit_module, "admin_token", side_effect=lambda _kit: next(tokens)):
+                trial.token = trial.sign_in()
+                trial.token = trial.sign_in()  # supersedes the first
+            trial.issued_tokens.add("readonly-jwt-2222")
+            self.assertEqual(trial.issued_secrets(), ["readonly-jwt-2222", "session-a-0000", "session-b-1111"])
+            issued: set[str] = set()
+            kit = trial.kit
+            with mock.patch.object(kit_module, "admin_token", return_value="fresh-a-d3-3333"), \
+                    mock.patch.object(kit_module, "data_dir", return_value=Path(directory)), \
+                    mock.patch.object(kit_module.sqlite3, "connect") as connect, \
+                    mock.patch.object(kit_module, "credential_fingerprints", return_value={}), \
+                    mock.patch.object(kit_module, "valkey_sentinel", return_value=None), \
+                    mock.patch.object(kit_module, "ledger", return_value=1), \
+                    mock.patch.object(kit_module.Kit, "uds"):
+                connect.return_value.__enter__.return_value.execute.return_value.fetchone.return_value = ("ok",)
+                (kit.anchor).mkdir(parents=True)
+                (kit.anchor / "fingerprints.json").write_text("{}")
+                qdrant = mock.Mock()
+                qdrant.shapes.return_value = {}
+                kit_module.a_d3_checks(kit, {"epoch_bound": 0, "collections": {}, "data_digest": "", "rdb_sha256": "",
+                                             "credstore_digest": ""},
+                                       {"data_digest": "", "rdb_sha256": "", "credstore_digest": ""}, qdrant, "s",
+                                       issued)
+            self.assertEqual(issued, {"fresh-a-d3-3333"})
+
+    def test_a_native_tools_chat_failure_keeps_its_media_type_through_cleanup(self):
+        webui = mock.Mock()
+        webui.json.return_value = {"id": "c1"}
+        webui.request.return_value = sc.Response(502, "text/html; charset=utf-8", b"<html>bad gateway</html>")
+        with self.assertRaises(sc.ScenarioFailure) as raised:
+            kit_module.native_tool_chat(webui, "t", "chat", "f1")
+        error = raised.exception
+        self.assertEqual((error.status, error.content_type), (502, "text/html; charset=utf-8"))
+        self.assertIn("cleanup: chat c1 DELETE returned 502", str(error))
+        self.assertTrue(sc.public_detail(str(error), error_type="ScenarioFailure",
+                                         content_type=error.content_type).startswith("ScenarioFailure; HTTP 502; text/html; "))
+
+    def test_an_unknown_tool_name_is_private_text(self):
+        attempt = {"message": {"output": [{"type": "function_call", "name": "view_knowledge_file", "call_id": "1"},
+                                          {"type": "function_call", "name": "exfiltrate_everything", "call_id": "2"}]},
+                   "completion_s": 1.0}
+        values = kit_module.native_values({"attempts": [attempt], "mode": kit_module.NATIVE_MODE_PLAIN})
+        public, private = sc.public_values(values), sc.private_values(values)
+        self.assertEqual(public["tools_called"][0], "view_knowledge_file")
+        self.assertTrue(public["tools_called"][1].endswith(sc.PRIVATE_DETAIL_NOTE))
+        self.assertNotIn("exfiltrate", json.dumps(public))
+        self.assertEqual(private["tools_called"], ["view_knowledge_file", "exfiltrate_everything"])
+
+    def test_the_public_step_row_carries_only_the_bare_media_type(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit, trial = self.trial(directory, rehearsal=False)
+            header = 'text/html; charset="utf-8"; note="a; b"'
+            trial.steps[0] = kit_module.Step(trial.steps[0].id, sc.FAIL, "ScenarioFailure: x", 1.0, {},
+                                             "ScenarioFailure", header)
+            public = kit_module.build_evidence(kit, trial, sc.EXIT_FAIL, False)
+            private = kit_module.build_evidence(kit, trial, sc.EXIT_FAIL, False, public=False)
+        self.assertEqual(public["steps"][0]["content_type"], "text/html")
+        self.assertEqual(private["steps"][0]["content_type"], header)
 
     def test_a_clean_trial_writes_the_public_evidence(self):
         with tempfile.TemporaryDirectory() as directory:

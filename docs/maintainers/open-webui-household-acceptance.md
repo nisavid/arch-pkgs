@@ -808,16 +808,24 @@ instead.
   digits of the text's SHA-256, and a note that the full detail is kept
   privately. Free text copied from upstream into a step's values (a chat's
   error detail, a native-tools message error, a journal warning) gets the
-  same summary. The committed record holds only summaries; the full text is
-  in the private file below, where a summary matches its text by the digest.
-  The kit's stdout and the lane logs also print full details: they are
-  operator-private and never committed.
+  same summary. No upstream free text reaches a public file; upstream
+  identifiers appear only in a kit-constrained form: a cited source name
+  only when it is the handbook's name, a score only when it is a finite
+  number, a transcription language only when it is a short language code,
+  and a tool name only when the kit knows it; any other value is
+  summarized. Model ids and the Lemonade version and start time are kept as
+  deliberate measurements. The private file below keeps every value whole,
+  and a summary matches its text by the digest. The kit's stdout and the
+  lane logs also print full details: they are operator-private and never
+  committed.
 - Before the public copy is written, the kit runs the public-safety check and
   then `gitleaks stdin` on the serialized document, with gitleaks's default
   rules plus one exact-value rule for each secret the run issued or loaded
   (every credstore credential except the admin email and name, the Valkey
-  password, and the admin session tokens; a value under 8 characters gets no
-  rule). The rules live in a temporary config inside the gate's own
+  password, and every session token or JWT the trial obtained; a value under
+  8 characters gets no rule, and a credential the kit cannot read gets no
+  exact rule, so only the default rules cover it). Each rule matches the
+  value as the JSON document spells it. The rules live in a temporary config inside the gate's own
   directory (mode 0700, removed afterwards), and `gitleaks:allow` comments
   are ignored. A finding, a gitleaks error, or a missing `gitleaks`
   withholds the public copy and records the evidence step as FAIL. A
@@ -837,8 +845,11 @@ instead.
   private path with the reason, so the one trial's values survive. A
   rehearsal writes neither copy. Never commit the private file
   (`docs/maintainers/.gitignore` ignores `trial-evidence.json` and
-  `*.private.json` where evidence is committed). Teardown
-  refuses until it is moved out of the root.
+  `*.private.json` where evidence is committed). Teardown refuses only while
+  the private file is the only copy, that is, while no public evidence was
+  written; move it out of the root first. Once a public copy exists,
+  teardown removes the private file with the root, and full failure text
+  otherwise survives only in operator stdout and lane logs.
 - It records `production_expectation`, the frozen production-settings entry
   for the deployed `open-webui` archive (for this trial, the `0.11.4-2`
   entry), and the trial prints it. The evidence commit adds that entry to
@@ -1014,7 +1025,9 @@ no receipt in rehearsal mode.
   a secret. Every run past argument parsing writes one, including a
   precondition failure (a missing `--root` or `--origin`, or an unreachable
   Lemonade or Open WebUI, exits 75 with a receipt) and a malformed response (a
-  FAIL row). A non-PASS detail, a precondition, and upstream text in the
+  FAIL row). No upstream free text reaches the public receipt; upstream
+  identifiers appear only in the same kit-constrained form as in the trial
+  evidence. A non-PASS detail, a precondition, and upstream text in the
   values appear only as the same fixed summary the trial evidence uses; the
   full text goes to a private receipt beside it, `<out>.private.json` (mode
   0600, never committed). The gate runs first and uses the same rules as the
