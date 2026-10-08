@@ -145,7 +145,7 @@ CANDIDATE_ARCHIVES = (
     "qdrant-1.19.1-1-x86_64.pkg.tar.zst",
     "qdrant-migration-1.18.3-1-x86_64.pkg.tar.zst",
     "qdrant-web-ui-0.2.18-1-any.pkg.tar.zst",
-    "python-faster-whisper-1.2.1-1-any.pkg.tar.zst",
+    "python-faster-whisper-1.2.1-2-any.pkg.tar.zst",
 )
 
 

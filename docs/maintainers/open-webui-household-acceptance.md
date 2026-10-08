@@ -71,7 +71,7 @@ rehearsal may run earlier.
    | `qdrant-1.19.1-1-x86_64.pkg.tar.zst` | 28289048 | `56208d6725771df687563b9d12e3c963b39c63120b1412f2335411f32c21ed85` |
    | `qdrant-migration-1.18.3-1-x86_64.pkg.tar.zst` | 26721008 | `591f16328fcff0fc0193353a65f4c783afc1d24258ae251d3a8927283276ce9e` |
    | `qdrant-web-ui-0.2.18-1-any.pkg.tar.zst` | 5728430 | `962d2b7659fb66bd2eb3b2f425ef90a91cbe7701a66c31b4fd622caeb0e0f283` |
-   | `python-faster-whisper-1.2.1-1-any.pkg.tar.zst` | 1087994 | `9b052be890fd7f21135ca2ebc090ff140432e0e8493dd484b44585386ae8d1cb` |
+   | `python-faster-whisper-1.2.1-2-any.pkg.tar.zst` | 1088665 | `9d8bdab118453c3a3cfded8a0430a526784e2ee4c9bce5038171f4de3a29f89b` |
 
    Open WebUI 0.11.4-2 is the trial candidate, built from `main` at
    `2059571`. It re-bases the package on Open WebUI 0.11.4 with patches 0001
@@ -95,18 +95,19 @@ rehearsal may run earlier.
    [candidate build](https://github.com/nisavid/arch-pkgs/issues/88#issuecomment-5957006596)
    that the build ticket recorded. The Qdrant trio's values are the ones the Qdrant 1.19.1
    re-baseline's G0-G3 evidence accepted
-   (`docs/maintainers/evidence/qdrant-1.19.1-1/`), and
-   `python-faster-whisper`'s are the speech G0-G2 evidence's
-   (`docs/maintainers/evidence/speech-providers-4.8.2-1.2.1/`);
-   `qdrant-migration`, `python-rapidocr`, and `python-faster-whisper` are
-   unchanged.
+   (`docs/maintainers/evidence/qdrant-1.19.1-1/`).
+   `python-faster-whisper` 1.2.1-2's are those of its own G0-G2 evidence
+   (`docs/maintainers/evidence/python-faster-whisper-1.2.1-2/`). It replaces
+   1.2.1-1, whose speech-to-text fails on PyAV 19
+   ([#124](https://github.com/nisavid/arch-pkgs/issues/124)).
+   `qdrant-migration` and `python-rapidocr` are unchanged.
 
    The manifest's `publication-identity-only` archives, the generic
    `ctranslate2` and `python-ctranslate2` 4.8.2-1, are bound but never
    deployed. Each archive record carries its own `source_commit`, and the kit
    copies each one into A-ID1; the manifest has no top-level source commit,
-   and its `adoption_main_commit` is only the `main` commit that the build
-   ticket's tree check ran against. The kit records the manifest's `external_inputs`
+   and its `adoption_main_commit` is only the `main` commit that the tree
+   check (#88's tree-equality rule) ran against. The kit records the manifest's `external_inputs`
    verbatim as declared inputs, next to the host providers it observes; they
    are evidence, not gates. The kit refuses a manifest of any other schema
    with exit 75.
