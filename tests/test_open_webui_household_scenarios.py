@@ -1,10 +1,12 @@
 import contextlib
+import hashlib
 import importlib.util
 import io
 import json
 import math
 import os
 import re
+import shutil
 import sys
 import tempfile
 import threading
@@ -38,6 +40,25 @@ def load(name, path):
 
 scenarios = load("open_webui_household_scenarios", SCENARIOS)
 stub = load("open_webui_household_stub_provider", STUB)
+
+# The gitleaks gate runs a stub by default, so the tests need no gitleaks and
+# stay fast; OWUI_GITLEAKS_STUB_EXIT sets its exit code.  The integration test
+# runs the real gitleaks when the host has it.
+GITLEAKS_STUB = "#!/bin/sh\ncat >/dev/null\nexit \"${OWUI_GITLEAKS_STUB_EXIT:-0}\"\n"
+_gitleaks_stub = tempfile.TemporaryDirectory(prefix="owui-gitleaks-stub-")
+_gitleaks_patch = mock.patch.object(scenarios, "GITLEAKS", str(Path(_gitleaks_stub.name) / "gitleaks"))
+
+
+def setUpModule():
+    path = Path(_gitleaks_stub.name) / "gitleaks"
+    path.write_text(GITLEAKS_STUB)
+    path.chmod(0o755)
+    _gitleaks_patch.start()
+
+
+def tearDownModule():
+    _gitleaks_patch.stop()
+    _gitleaks_stub.cleanup()
 
 
 @contextlib.contextmanager
@@ -164,9 +185,9 @@ class ExitCodeTests(unittest.TestCase):
                 mock.patch.object(scenarios, "signin") as signin:
             code = scenarios.main(["resmoke", "--target", "production", "--origin", "http://household.invalid",
                                    "--chat-model", "m", "--receipt", f"{tmp}/r.json"])
-            receipt = json.loads(Path(f"{tmp}/r.json").read_text())
+            private = json.loads(Path(f"{tmp}/r.private.json").read_text())
         self.assertEqual(code, 75)
-        self.assertIn("https", receipt["precondition"])
+        self.assertIn("https", private["precondition"])
         signin.assert_not_called()
 
     def test_an_unreachable_lemonade_is_a_precondition_with_a_receipt(self):
@@ -174,9 +195,16 @@ class ExitCodeTests(unittest.TestCase):
                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             code = scenarios.main(self.resmoke_args(tmp, "--lemond-url", "http://127.0.0.1:9"))
             receipt = json.loads(Path(f"{tmp}/r.json").read_text())
+            private_path = Path(f"{tmp}/r.private.json")
+            private = json.loads(private_path.read_text())
+            mode = private_path.stat().st_mode & 0o777
         self.assertEqual(code, 75)
         self.assertEqual(receipt["exit_code"], 75)
-        self.assertIn("Lemonade is unreachable", receipt["precondition"])
+        # The public receipt names only a summary; the private one keeps the text.
+        self.assertTrue(receipt["precondition"].startswith("Blocked; "))
+        self.assertNotIn("Lemonade", receipt["precondition"])
+        self.assertIn("Lemonade is unreachable", private["precondition"])
+        self.assertEqual(mode, 0o600)
 
     def test_an_unreachable_open_webui_is_a_precondition_with_a_receipt(self):
         env = candidate_env()
@@ -190,9 +218,9 @@ class ExitCodeTests(unittest.TestCase):
             (Path(tmp) / "resmoke-email").write_text("smoke@household.invalid")
             (Path(tmp) / "resmoke-password").write_text("pw")
             code = scenarios.main(self.resmoke_args(tmp))
-            receipt = json.loads(Path(f"{tmp}/r.json").read_text())
+            private = json.loads(Path(f"{tmp}/r.private.json").read_text())
         self.assertEqual(code, 75)
-        self.assertIn("Open WebUI is unreachable", receipt["precondition"])
+        self.assertIn("Open WebUI is unreachable", private["precondition"])
 
     def test_a_rehearsal_resmoke_writes_no_receipt(self):
         with tempfile.TemporaryDirectory() as tmp, self.acceptance_process(), \
@@ -805,16 +833,22 @@ class SpeechTests(unittest.TestCase):
         base = scenarios.whisper_pin_record("base")
         self.assertEqual(base["repository"], "Systran/faster-whisper-base")
         self.assertEqual(base["revision"], "ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66")
+        def digests(record):
+            return {item["name"]: item["sha256"] for item in record["files"]}
+
         self.assertEqual(
-            base["files"]["model.bin"], "d01c3014881c9c6f3133c182f3d2887eb6ca1c789a7538c5c007196857a0a6a9"
+            digests(base)["model.bin"], "d01c3014881c9c6f3133c182f3d2887eb6ca1c789a7538c5c007196857a0a6a9"
         )
         tiny = scenarios.whisper_pin_record("tiny")
         self.assertEqual(
-            tiny["files"]["model.bin"], "dcb76c6586fc06cbdac6dd21f14cfd129cc4cdd9dce19bf4ffa62e59cbe6e6d1"
+            digests(tiny)["model.bin"], "dcb76c6586fc06cbdac6dd21f14cfd129cc4cdd9dce19bf4ffa62e59cbe6e6d1"
         )
         for record in (base, tiny):
-            self.assertEqual(set(record["files"]), {"config.json", "model.bin", "tokenizer.json", "vocabulary.txt"})
-            for digest in record["files"].values():
+            # A list of {name, sha256} records, never a name-to-digest mapping (gitleaks generic-api-key).
+            self.assertEqual([sorted(item) for item in record["files"]], [["name", "sha256"]] * 4)
+            self.assertEqual([item["name"] for item in record["files"]],
+                             ["config.json", "model.bin", "tokenizer.json", "vocabulary.txt"])
+            for digest in digests(record).values():
                 self.assertRegex(digest, r"^[0-9a-f]{64}$")
             json.dumps(record)
 
@@ -904,7 +938,7 @@ class ZembedCanaryTests(unittest.TestCase):
 
 
 class ErrorDetailTests(unittest.TestCase):
-    """Failure messages carry the HTTP status and Open WebUI's detail, bounded and public-safe."""
+    """Private failure messages carry the HTTP status and Open WebUI's detail, bounded; public files carry a summary."""
 
     def response(self, status, body, content_type="application/json"):
         return scenarios.Response(status, content_type, body)
@@ -920,15 +954,9 @@ class ErrorDetailTests(unittest.TestCase):
         self.assertEqual(scenarios.error_detail(self.response(500, b"")), "")
         self.assertEqual(scenarios.error_detail(self.response(400, b'{"detail":"Model not found"}')), ": Model not found")
 
-    def test_the_detail_is_bounded_and_redacted(self):
-        text = ("failed reading /var/lib/example/data/webui.db for admin@example.org "
-                "from 203.0.113.7 with Bearer abc123 token=xyz")
-        detail = scenarios.public_detail(text)
-        for private in ("/var/lib/example", "admin@example.org", "203.0.113.7", "abc123", "xyz"):
-            self.assertNotIn(private, detail)
-        self.assertIn("<path>", detail)
-        self.assertLessEqual(len(scenarios.public_detail("x" * 1000)), scenarios.ERROR_DETAIL_LIMIT)
-        scenarios.v1.assert_public_safe({"detail": detail})
+    def test_the_private_detail_is_bounded(self):
+        long = scenarios.response_detail(self.response(500, b"x" * 10000, "text/plain"))
+        self.assertEqual(long, "x" * scenarios.RESULT_DETAIL_LIMIT)
 
     def test_a_failed_json_call_names_the_status_and_the_detail(self):
         endpoint = scenarios.Endpoint(origin="http://127.0.0.1:9")
@@ -939,69 +967,146 @@ class ErrorDetailTests(unittest.TestCase):
 
 
 class ReceiptTests(unittest.TestCase):
-    def test_receipt_is_public_safe_and_carries_the_exit_code(self):
-        settings = scenarios.settings_from_environ(candidate_env())
-        results = [
-            scenarios.ScenarioResult("open-webui.resmoke.zembed-canary", "PASS", "ok", 1.0, {"margin": 0.3}),
-            scenarios.ScenarioResult("open-webui.resmoke.zerank-qualification", "FAIL", "HTTP 500", 0.1),
-        ]
-        receipt = scenarios.build_receipt(
-            target="production",
-            mode="record",
-            settings=settings,
-            chat_model="chat",
-            health={"version": "10.0.0", "all_models_loaded": []},
-            results=results,
-        )
-        self.assertEqual(receipt["schema"], "open-webui-household-resmoke/v1")
-        self.assertEqual(receipt["exit_code"], 1)
-        self.assertEqual(receipt["lemonade"], {"version": "10.0.0"})
-        self.assertIsNone(receipt["open_webui_archive_sha256"])
-        self.assertIsNone(receipt["open_webui_archive_binding"])
-        blocked = scenarios.build_receipt(
-            target="acceptance", mode="rehearsal", settings=None, chat_model="chat",
-            health=None, results=[], precondition="NEEDS LEAD: Lemonade has not loaded chat",
-        )
-        self.assertEqual(blocked["exit_code"], 75)
-        with self.assertRaises(ValueError):
-            scenarios.build_receipt(
-                target="production", mode="record", settings=settings, chat_model="chat",
-                health=None, results=[scenarios.ScenarioResult("x", "FAIL", "token=abc", 0.0)],
-            )
-
-
     UNSAFE = ("cannot read /home/someone/handbook.md from 192.168.1.20 or fd12:3456::7 for admin@example.org "
               "with api_key=k1 at nas.lan")
+    PRIVATE_PARTS = ("/home/someone", "192.168.1.20", "fd12:3456::7", "admin@example.org", "k1", "nas.lan")
 
-    def assert_redacted(self, text):
-        for private in ("/home/someone", "192.168.1.20", "fd12:3456::7", "admin@example.org", "k1", "nas.lan"):
-            self.assertNotIn(private, text)
-        scenarios.v1.assert_public_safe({"detail": text})
+    def results(self):
+        return [
+            scenarios.ScenarioResult("open-webui.resmoke.zembed-canary", "PASS", "ok", 1.0, {"margin": 0.3}),
+            scenarios.ScenarioResult("open-webui.resmoke.zerank-qualification", "FAIL",
+                                     f"ScenarioFailure: GET /x returned HTTP 502: {self.UNSAFE}", 0.1,
+                                     error_type="ScenarioFailure"),
+        ]
 
-    def test_an_unsafe_failure_still_writes_a_public_safe_receipt(self):
+    def test_the_public_receipt_summarizes_and_the_private_one_keeps_the_detail(self):
         settings = scenarios.settings_from_environ(candidate_env())
+        public = scenarios.build_receipt(target="production", mode="record", settings=settings, chat_model="chat",
+                                         health={"version": "10.0.0", "all_models_loaded": []}, results=self.results())
+        private = scenarios.build_receipt(target="production", mode="record", settings=settings, chat_model="chat",
+                                          health={"version": "10.0.0", "all_models_loaded": []}, results=self.results(),
+                                          public=False)
+        self.assertEqual(public["schema"], "open-webui-household-resmoke/v1")
+        self.assertEqual((public["exit_code"], private["exit_code"]), (1, 1))
+        self.assertEqual(public["lemonade"], {"version": "10.0.0"})
+        self.assertIsNone(public["open_webui_archive_sha256"])
+        self.assertEqual(public["scenarios"][0]["detail"], "ok")
+        summary = public["scenarios"][1]["detail"]
+        self.assertTrue(summary.startswith("ScenarioFailure; HTTP 502; "), summary)
+        self.assertIn(scenarios.PRIVATE_DETAIL_NOTE, summary)
+        for part in self.PRIVATE_PARTS:
+            self.assertNotIn(part, json.dumps(public))
+        self.assertIn(self.UNSAFE, private["scenarios"][1]["detail"])
+        scenarios.v1.assert_public_safe(public)
+        blocked = scenarios.build_receipt(target="acceptance", mode="rehearsal", settings=None, chat_model="chat",
+                                          health=None, results=[], precondition="NEEDS LEAD: " + self.UNSAFE)
+        self.assertEqual(blocked["exit_code"], 75)
+        self.assertTrue(blocked["precondition"].startswith("Blocked; "))
 
-        def failing(_ctx):
-            raise scenarios.ScenarioFailure(self.UNSAFE)
+    def receipts(self):
+        settings = scenarios.settings_from_environ(candidate_env())
+        return tuple(scenarios.build_receipt(target="production", mode="record", settings=settings,
+                                             chat_model="chat", health=None, results=self.results(), public=flag)
+                     for flag in (True, False))
 
-        def blocked(_ctx):
-            raise scenarios.Blocked("NEEDS OWNER: " + self.UNSAFE)
-
-        table = {"open-webui.resmoke.zembed-canary": failing, "open-webui.resmoke.zerank-qualification": blocked}
-        with mock.patch.object(scenarios, "SCENARIOS", table):
-            results = [scenarios.run_scenario(object(), scenario_id) for scenario_id in table]
-        for result in results:
-            self.assert_redacted(result.detail)
-        self.assertTrue(results[0].detail.startswith("ScenarioFailure: cannot read <path>"))
-        receipt = scenarios.build_receipt(target="production", mode="record", settings=settings, chat_model="chat",
-                                          health=None, results=results)
+    def test_publish_receipt_writes_the_public_receipt_only_past_the_gate(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "receipt.json"
-            scenarios.write_receipt(path, receipt)
-            self.assert_redacted(path.read_text(encoding="utf-8"))
-            self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["exit_code"], 75)
+            private_path = scenarios.private_receipt_path(path)
+            self.assertEqual(private_path, Path(directory) / "receipt.private.json")
+            public, private = self.receipts()
+            self.assertEqual(scenarios.publish_receipt(path, public, private), (1, None))
+            self.assertEqual(json.loads(path.read_text())["exit_code"], 1)
+            written = json.loads(private_path.read_text())
+            self.assertEqual((written["exit_code"], written["public_withheld"]), (1, None))
+            self.assertIn(self.UNSAFE, written["scenarios"][1]["detail"])
+            self.assertEqual(private_path.stat().st_mode & 0o777, 0o600)
+            path.unlink()
+            public, private = self.receipts()
+            with mock.patch.dict(os.environ, {"OWUI_GITLEAKS_STUB_EXIT": str(scenarios.GITLEAKS_FINDINGS_EXIT)}):
+                self.assertEqual(scenarios.publish_receipt(path, public, private), (1, "gitleaks finding (redacted)"))
+            self.assertFalse(path.exists())
+            self.assertEqual(json.loads(private_path.read_text())["public_withheld"], "gitleaks finding (redacted)")
+            # v1's check still runs first.
+            public, private = self.receipts()
+            public["values"] = "/home/someone/x"
+            self.assertEqual(scenarios.publish_receipt(path, public, private),
+                             (1, "public evidence contains an absolute private path"))
+            self.assertFalse(path.exists())
+            self.assertEqual(json.loads(private_path.read_text())["public_withheld"],
+                             "public evidence contains an absolute private path")
 
-    def test_a_failed_files_stored_error_is_redacted(self):
+    def resmoke_through_the_gate(self, tmp, environment):
+        """A re-smoke whose preconditions and scenarios all pass, so it reaches the gate."""
+
+        env = candidate_env()
+        loaded = (env["RAG_EMBEDDING_MODEL"], env["RAG_RERANKING_MODEL"], "m")
+        health = {"all_models_loaded": [{"model_name": item} for item in loaded]}
+        models = {"data": [{"id": item} for item in loaded]}
+        (Path(tmp) / "resmoke-email").write_text("smoke@household.invalid")
+        (Path(tmp) / "resmoke-password").write_text("smoke-password-for-the-gate")
+        table = {scenario_id: (lambda _ctx: {"measured": 1}) for scenario_id in scenarios.SCENARIO_IDS}
+        with mock.patch.object(scenarios, "open_webui_pid", return_value=1), \
+                mock.patch.object(scenarios, "read_process_environ", return_value=env), \
+                mock.patch.object(scenarios, "lemond_snapshot", return_value=(health, models)), \
+                mock.patch.object(scenarios, "signin", return_value="session-token-for-the-gate"), \
+                mock.patch.object(scenarios, "webui_chat_model", return_value="m"), \
+                mock.patch.object(scenarios, "SCENARIOS", table), \
+                mock.patch.dict(os.environ, environment), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as errors:
+            code = scenarios.main(["resmoke", "--target", "acceptance", "--root", tmp, "--chat-model", "m",
+                                   "--receipt", f"{tmp}/r.json", "--credentials-dir", tmp,
+                                   "--socket", f"{tmp}/absent.sock"])
+        return code, errors.getvalue()
+
+    def test_a_passing_resmoke_writes_both_receipts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            code, _ = self.resmoke_through_the_gate(tmp, {})
+            public = json.loads(Path(f"{tmp}/r.json").read_text())
+            private = json.loads(Path(f"{tmp}/r.private.json").read_text())
+        self.assertEqual((code, public["exit_code"], private["exit_code"]), (0, 0, 0))
+        self.assertIsNone(private["public_withheld"])
+        self.assertEqual([item["result"] for item in public["scenarios"]], ["PASS"] * len(scenarios.SCENARIO_IDS))
+
+    def test_a_gate_finding_turns_a_passing_resmoke_into_a_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            code, errors = self.resmoke_through_the_gate(
+                tmp, {"OWUI_GITLEAKS_STUB_EXIT": str(scenarios.GITLEAKS_FINDINGS_EXIT)})
+            self.assertFalse(Path(f"{tmp}/r.json").exists())
+            private = json.loads(Path(f"{tmp}/r.private.json").read_text())
+        self.assertEqual(code, 1)
+        self.assertEqual((private["exit_code"], private["public_withheld"]), (1, "gitleaks finding (redacted)"))
+        self.assertEqual([item["result"] for item in private["scenarios"]], ["PASS"] * len(scenarios.SCENARIO_IDS))
+        self.assertIn("NOT written publicly (gitleaks finding (redacted))", errors)
+
+    def test_the_resmoke_gate_gets_the_secrets_it_loaded_or_was_issued(self):
+        seen = []
+
+        def gate(document, secrets=()):
+            seen.append(list(secrets))
+            return None
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(scenarios, "public_withhold_reason", gate):
+            code, _ = self.resmoke_through_the_gate(tmp, {})
+        self.assertEqual(code, 0)
+        self.assertEqual(seen, [["smoke-password-for-the-gate", "session-token-for-the-gate"]])
+
+    def test_a_withheld_precondition_receipt_keeps_exit_75_and_the_private_one(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(scenarios, "open_webui_pid", return_value=1), \
+                mock.patch.object(scenarios, "read_process_environ", return_value=candidate_env()), \
+                mock.patch.dict(os.environ, {"OWUI_GITLEAKS_STUB_EXIT": str(scenarios.GITLEAKS_FINDINGS_EXIT)}), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as errors:
+            code = scenarios.main(["resmoke", "--target", "acceptance", "--root", tmp, "--chat-model", "m",
+                                   "--receipt", f"{tmp}/r.json", "--credentials-dir", tmp,
+                                   "--socket", f"{tmp}/absent.sock", "--lemond-url", "http://127.0.0.1:9"])
+            self.assertFalse(Path(f"{tmp}/r.json").exists())
+            private = json.loads(Path(f"{tmp}/r.private.json").read_text())
+        self.assertEqual(code, 75)
+        self.assertEqual((private["exit_code"], private["public_withheld"]), (75, "gitleaks finding (redacted)"))
+        self.assertIn("gitleaks finding (redacted)", errors.getvalue())
+
+    def test_a_failed_files_stored_error_stays_private(self):
         class Webui:
             def request(self, method, path, **_):
                 if path.endswith("/process/status"):
@@ -1013,16 +1118,15 @@ class ReceiptTests(unittest.TestCase):
                                 settings=scenarios.settings_from_environ(candidate_env()), chat_model="chat")
         with self.assertRaises(scenarios.ScenarioFailure) as raised:
             scenarios._wait_for_file(ctx, "f1")
-        self.assertIn("status failed: cannot read <path>", str(raised.exception))
-        self.assert_redacted(str(raised.exception))
+        # The private message keeps the stored error; the public summary carries none of it.
+        self.assertIn("status failed: cannot read /home/someone", str(raised.exception))
+        summary = scenarios.public_detail(str(raised.exception), error_type="ScenarioFailure")
+        for part in self.PRIVATE_PARTS:
+            self.assertNotIn(part, summary)
 
-
-    TOKEN, SESSION = "eyJhbGciOiJIUzI1NiJ9.tok3n-value", "s3ssion-value-42"
-
-    def test_credentials_in_an_http_error_never_reach_the_receipt(self):
-        # The Greptile reproduction: an upstream 502 whose body echoes the
-        # request's Authorization and Cookie headers.
-        body = (f"Bad Gateway\nAuthorization: Bearer {self.TOKEN}\nCookie: session={self.SESSION}; theme=dark\n"
+    def test_credentials_in_an_http_error_never_reach_the_public_receipt(self):
+        token, session = "eyJhbGciOiJIUzI1NiJ9.tok3n-value", "s3ssion-value-42"
+        body = (f"Bad Gateway\nAuthorization: Bearer {token}\nCookie: session={session}; theme=dark\n"
                 "Via: proxy").encode()
         endpoint = scenarios.Endpoint(origin="http://127.0.0.1:9")
 
@@ -1034,50 +1138,597 @@ class ReceiptTests(unittest.TestCase):
         with mock.patch.object(scenarios, "SCENARIOS", {"open-webui.resmoke.zerank-qualification": failing}):
             result = scenarios.run_scenario(object(), "open-webui.resmoke.zerank-qualification")
         self.assertEqual(result.result, scenarios.FAIL)
-        self.assertIn("HTTP 502", result.detail)
+        settings = scenarios.settings_from_environ(candidate_env())
+        public, private = (scenarios.build_receipt(target="production", mode="record", settings=settings,
+                                                   chat_model="chat", health=None, results=[result], public=flag)
+                           for flag in (True, False))
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "receipt.json"
+            self.assertEqual(scenarios.publish_receipt(path, public, private), (1, None))
+            written = path.read_text(encoding="utf-8")
+            kept = scenarios.private_receipt_path(path).read_text(encoding="utf-8")
+        for secret in (token, session, "tok3n", "s3ssion", "Bad Gateway"):
+            self.assertNotIn(secret, written)
+        self.assertIn("ScenarioFailure; HTTP 502; text/plain; ", written)
+        self.assertIn("Bad Gateway", kept)
+        self.assertIsNone(json.loads(kept)["public_withheld"])
+
+
+class PrivateTextTests(unittest.TestCase):
+    """Upstream free text in values: a summary in public copies, whole in private ones, with matching digests."""
+
+    TEXT = "upstream said: Authorization: Bearer abc.def at /home/someone/db"
+
+    def digest(self, text):
+        return hashlib.sha256(text.encode()).hexdigest()[:16]
+
+    def test_public_and_private_receipts_render_private_text(self):
+        note = scenarios.PrivateText(self.TEXT, 502, "text/plain; charset=utf-8")
+        results = [
+            scenarios.ScenarioResult("open-webui.resmoke.zembed-canary", "PASS", "ok", 1.0, {"note": note}),
+            scenarios.ScenarioResult("open-webui.resmoke.zerank-qualification", "FAIL", "ScenarioFailure: x", 0.1,
+                                     {"nested": [{"detail": note}]}, "ScenarioFailure"),
+        ]
+        settings = scenarios.settings_from_environ(candidate_env())
+        public, private = (scenarios.build_receipt(target="production", mode="record", settings=settings,
+                                                   chat_model="chat", health=None, results=results, public=flag)
+                           for flag in (True, False))
+        summary = public["scenarios"][0]["values"]["note"]
+        self.assertEqual(summary, f"HTTP 502; text/plain; {len(self.TEXT.encode())} bytes; "
+                                  f"sha256:{self.digest(self.TEXT)}; {scenarios.PRIVATE_DETAIL_NOTE}")
+        self.assertEqual(public["scenarios"][1]["values"]["nested"][0]["detail"], summary)
+        self.assertNotIn("Bearer", json.dumps(public))
+        scenarios.v1.assert_public_safe(public)
+        self.assertEqual(private["scenarios"][0]["values"]["note"], self.TEXT)
+        self.assertEqual(private["scenarios"][1]["values"]["nested"][0]["detail"], self.TEXT)
+        self.assertIn(self.digest(private["scenarios"][0]["values"]["note"]), summary)
+
+    def test_private_text_is_a_string_for_private_messages(self):
+        note = scenarios.PrivateText("raw upstream text", 400)
+        self.assertEqual(json.dumps({"detail": note}), '{"detail": "raw upstream text"}')
+        captured = scenarios.failure_values(scenarios.ScenarioFailure("x", {"detail": note}))
+        self.assertIsInstance(captured["detail"], scenarios.PrivateText)
+        self.assertEqual(captured["detail"].status, 400)
+
+    def test_an_http_failure_carries_its_media_type_to_the_public_summary(self):
+        body = b"<html>upstream proxy error page</html>"
+        endpoint = scenarios.Endpoint(origin="http://127.0.0.1:9")
+
+        def failing(_ctx):
+            with mock.patch.object(endpoint, "request",
+                                   return_value=scenarios.Response(502, "Text/HTML; charset=utf-8", body)):
+                endpoint.json("GET", "/api/v1/retrieval/health")
+            return {}
+
+        with mock.patch.object(scenarios, "SCENARIOS", {"open-webui.resmoke.zerank-qualification": failing}):
+            result = scenarios.run_scenario(object(), "open-webui.resmoke.zerank-qualification")
+        self.assertEqual((result.result, result.content_type), (scenarios.FAIL, "Text/HTML; charset=utf-8"))
         receipt = scenarios.build_receipt(target="production", mode="record",
                                           settings=scenarios.settings_from_environ(candidate_env()),
                                           chat_model="chat", health=None, results=[result])
+        detail = receipt["scenarios"][0]["detail"]
+        self.assertTrue(detail.startswith("ScenarioFailure; HTTP 502; text/html; "), detail)
+        self.assertNotIn("proxy error", detail)
+        # The media type survives a failure re-raised with more values.
+        error = scenarios.response_failure("GET /x returned HTTP 502", scenarios.Response(502, "text/html", body))
+        with self.assertRaises(scenarios.ScenarioFailure) as raised, \
+                scenarios.keeping({"measured": 1}, scenarios.SCENARIO_FAILURES):
+            raise error
+        self.assertEqual((raised.exception.content_type, raised.exception.status), ("text/html", 502))
+        self.assertEqual(raised.exception.values, {"measured": 1})
+
+
+class PublicMediaTypeTests(unittest.TestCase):
+    def test_only_the_bare_media_type_reaches_public_files(self):
+        header = 'Text/HTML; charset="utf-8"; note="a; b=c"'
+        self.assertEqual(scenarios.public_media_type(header), "text/html")
+        self.assertEqual(scenarios.public_media_type("application/problem+json"), "application/problem+json")
+        for header in (None, "", "not a media type", "<html>", "text"):
+            with self.subTest(header=header):
+                self.assertIsNone(scenarios.public_media_type(header))
+        summary = scenarios.public_detail("x", content_type='Text/HTML; charset="utf-8"; note="a; b=c"')
+        self.assertEqual(summary.split("; ")[0], "text/html")
+        self.assertNotIn("note", summary)
+
+
+class ConstrainedIdentifierTests(unittest.TestCase):
+    """Upstream identifiers reach public copies only in a kit-constrained form; private copies keep them."""
+
+    def render(self, values):
+        return scenarios.public_values(values), scenarios.private_values(values)
+
+    def test_source_names_and_scores(self):
+        summary = scenarios.summarize_sources([
+            {"source": {"id": "a", "name": scenarios.HANDBOOK_NAME}, "distances": [0.9, "0.5", float("nan")]},
+            {"source": {"id": "b", "name": "someone-elses-notes.md"}, "distances": [True]},
+        ])
+        public, private = self.render(summary)
+        self.assertEqual(public["names"][0], scenarios.HANDBOOK_NAME)
+        self.assertTrue(public["names"][1].endswith(scenarios.PRIVATE_DETAIL_NOTE))
+        self.assertNotIn("someone-elses", json.dumps(public))
+        self.assertEqual(public["scores"][0], 0.9)
+        for summarized in public["scores"][1:]:
+            self.assertTrue(summarized.endswith(scenarios.PRIVATE_DETAIL_NOTE), summarized)
+        self.assertEqual(private["names"], [scenarios.HANDBOOK_NAME, "someone-elses-notes.md"])
+        self.assertEqual(private["scores"], [0.9, "0.5", "NaN", "true"])
+        # Comparisons are unchanged: a string or non-finite score still fails the cited-answer check.
+        self.assertFalse(scenarios.cited_answer_passes(scenarios.CANONICAL_FACT, summary, scenarios.HANDBOOK_NAME))
+
+    def test_language(self):
+        for language, kept in (("en", True), ("en-US", True), ("zh_Hant", True), (None, True),
+                               ("English (detected with 0.98 confidence)", False), ("EN", False)):
+            with self.subTest(language=language):
+                value = scenarios.constrained_language(language)
+                public, private = self.render({"language": value})
+                self.assertEqual(private["language"], language)
+                if kept:
+                    self.assertEqual(public["language"], language)
+                else:
+                    self.assertTrue(public["language"].endswith(scenarios.PRIVATE_DETAIL_NOTE))
+
+    def test_stt_records_an_arbitrary_language_as_private_text(self):
         with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "receipt.json"
-            scenarios.write_receipt(path, receipt)
-            written = path.read_text(encoding="utf-8")
-        for secret in (self.TOKEN, self.SESSION, "tok3n", "s3ssion"):
-            self.assertNotIn(secret, written)
-        self.assertIn("<redacted credential>", written)
+            audio = Path(directory) / "jfk.flac"
+            audio.write_bytes(b"flac")
+            body = json.dumps({"text": "ask not", "language": "detected: klingon"}).encode()
+            webui = mock.Mock(request=mock.Mock(return_value=scenarios.Response(200, "application/json", body)))
+            ctx = scenarios.Context(target="acceptance", webui=webui, lemond=mock.Mock(), token="t",
+                                    settings=scenarios.settings_from_environ(candidate_env()), chat_model="chat",
+                                    audio=audio)
+            with mock.patch.object(scenarios.v1, "_file_sha256", return_value=scenarios.JFK_FLAC_SHA256):
+                result = scenarios.run_scenario(ctx, "open-webui.resmoke.stt")
+        public, private = self.render(result.values)
+        self.assertEqual(private["language"], "detected: klingon")
+        self.assertNotIn("klingon", json.dumps(public))
 
-    def test_every_credential_form_is_redacted_value_included(self):
-        secret = "V4LUE-9f8e7d"
-        forms = (
-            f"Authorization: Basic {secret}",
-            f"proxy-authorization: Digest username=x, response={secret}",
-            f"Cookie: a=1; sid={secret}",
-            f"Set-Cookie: sid={secret}; Path=/; HttpOnly",
-            f"X-Api-Key: {secret}",
-            f"x-goog-api-key: {secret}",
-            f"X-Auth-Token: {secret}",
-            f'{{"headers": {{"Authorization": "Bearer {secret}", "Accept": "*/*"}}}}',
-            f"{{'cookie': 'session={secret}'}}",
-            f"request failed with token {secret}",
-            f"password = {secret} and more",
-            f"api_key={secret}",
-            f"-----BEGIN PRIVATE KEY-----\n{secret}\n-----END PRIVATE KEY-----",
+
+class PublicDetailTests(unittest.TestCase):
+    """A public failure detail is a fixed summary: no part of the upstream text is copied."""
+
+    TEXT = "ScenarioFailure: GET /x returned HTTP 503: Authorization: Bearer abc.def; /home/someone/db"
+
+    def test_the_summary_names_type_status_media_length_and_digest(self):
+        raw = self.TEXT.encode()
+        summary = scenarios.public_detail(self.TEXT, error_type="ScenarioFailure",
+                                          content_type="Text/Plain; charset=utf-8")
+        digest = hashlib.sha256(raw).hexdigest()[:16]
+        self.assertEqual(summary, f"ScenarioFailure; HTTP 503; text/plain; {len(raw)} bytes; sha256:{digest}; "
+                                  f"{scenarios.PRIVATE_DETAIL_NOTE}")
+        for part in ("Authorization", "Bearer", "abc.def", "/home/someone", "GET /x"):
+            self.assertNotIn(part, summary)
+        scenarios.v1.assert_public_safe({"detail": summary})
+
+    def test_unknown_or_untrusted_parts_are_left_out(self):
+        summary = scenarios.public_detail("no status here")
+        self.assertRegex(summary, r"^14 bytes; sha256:[0-9a-f]{16}; ")
+        # A content type or error type that is not a plain token is dropped, never copied.
+        odd = scenarios.public_detail("x", error_type="Bearer abc", content_type="text/plain\nX-Api-Key: k1", status=500)
+        self.assertTrue(odd.startswith("HTTP 500; text/plain; 1 bytes; "), odd)
+        self.assertNotIn("abc", odd)
+        self.assertNotIn("k1", odd)
+        self.assertEqual(scenarios.public_detail("é", status=400).split("; ")[1], "2 bytes")
+
+    def test_a_measured_failure_names_its_original_type(self):
+        try:
+            try:
+                raise TimeoutError("timed out")
+            except TimeoutError as cause:
+                raise scenarios.MeasuredFailure("TimeoutError: timed out", {"a": 1}) from cause
+        except scenarios.MeasuredFailure as error:
+            self.assertEqual(scenarios.failure_type(error), "TimeoutError")
+        self.assertEqual(scenarios.failure_type(KeyError("x")), "KeyError")
+
+    def test_run_scenario_keeps_the_detail_private_and_its_type(self):
+        def failing(_ctx):
+            raise ScenarioDetail("upstream said " + ReceiptTests.UNSAFE)
+
+        class ScenarioDetail(scenarios.ScenarioFailure):
+            pass
+
+        with mock.patch.object(scenarios, "SCENARIOS", {"x": failing}):
+            result = scenarios.run_scenario(object(), "x")
+        self.assertEqual((result.result, result.error_type), (scenarios.FAIL, "ScenarioDetail"))
+        self.assertIn(ReceiptTests.UNSAFE, result.detail)
+
+
+class PublicValuesTests(unittest.TestCase):
+    """Failure values are made JSON-safe; only v1's own credential fields are renamed."""
+
+    def test_values_are_json_safe_and_v1_fields_renamed(self):
+        values = {"scores": [0.9, float("nan"), float("-inf")], "pair": (1, "a"), "margin": float("inf"),
+                  "api_key": "s3cret", "nested": [{"password": "", "kept": {1: "x"}}], "tags": {"b", "a"}}
+        public = scenarios.public_values(values)
+        json.dumps(public, allow_nan=False)
+        self.assertEqual(public["scores"], [0.9, None, None])
+        self.assertEqual((public["pair"], public["margin"], public["tags"]), ([1, "a"], None, ["a", "b"]))
+        self.assertEqual(public["redacted_credential_field"], "<redacted credential>")
+        self.assertEqual(public["nested"], [{"redacted_credential_field": "<redacted credential>", "kept": {"1": "x"}}])
+        self.assertNotIn("s3cret", json.dumps(public))
+        scenarios.v1.assert_public_safe(public)
+
+    def test_strings_are_not_rewritten(self):
+        # Secrets in text are the gitleaks gate's job; public_values adds no name or text rules.
+        values = {"provider_api_keys": ["x"], "note": "token count: 3", "path": "<root>/state"}
+        self.assertEqual(scenarios.public_values(values), values)
+
+
+FAKE_OPENAI_KEY = "sk-" + "a1B2c3D4e5F6g7H8i9J0" + "T3BlbkFJ" + "k1L2m3N4o5P6q7R8s9T0"
+
+
+class GitleaksGateTests(unittest.TestCase):
+    """The public-file gate: v1's check, then gitleaks; a finding or a missing gitleaks withholds."""
+
+    def test_a_clean_document_passes(self):
+        self.assertIsNone(scenarios.public_withhold_reason({"detail": "ok", "count": 3}))
+
+    def test_a_finding_withholds_without_echoing_the_match(self):
+        with mock.patch.dict(os.environ, {"OWUI_GITLEAKS_STUB_EXIT": str(scenarios.GITLEAKS_FINDINGS_EXIT)}):
+            self.assertEqual(scenarios.public_withhold_reason({"detail": "anything"}), "gitleaks finding (redacted)")
+
+    def test_a_gitleaks_error_withholds(self):
+        with mock.patch.dict(os.environ, {"OWUI_GITLEAKS_STUB_EXIT": "1"}):
+            self.assertEqual(scenarios.public_withhold_reason({"detail": "ok"}), "gitleaks failed (exit 1)")
+
+    def test_a_missing_gitleaks_fails_closed_naming_the_package(self):
+        with mock.patch.object(scenarios, "GITLEAKS", "owui-no-such-gitleaks"):
+            reason = scenarios.public_withhold_reason({"detail": "ok"})
+        self.assertEqual(reason, scenarios.GITLEAKS_MISSING)
+        self.assertIn("Arch package gitleaks (extra)", reason)
+
+    def test_v1_runs_first(self):
+        self.assertEqual(scenarios.public_withhold_reason({"api_key": "x"}),
+                         "public evidence contains a secret-valued field")
+
+    def test_the_gate_scans_the_serialized_document_with_its_own_config(self):
+        with tempfile.TemporaryDirectory() as directory:
+            capture = Path(directory) / "capture"
+            script = Path(directory) / "gitleaks"
+            script.write_text(
+                f'#!/bin/sh\nprintf "%s\\n" "$@" > {capture}.args\npwd > {capture}.cwd\n'
+                f'stat -c %a . > {capture}.mode\n'
+                f'env | grep -c "^GITLEAKS_" > {capture}.env\ncat > {capture}.in\n'
+                f'while [ $# -gt 0 ]; do [ "$1" = --config ] && cp "$2" {capture}.toml '
+                f'&& stat -c %a "$2" > {capture}.toml.mode; shift; done\nexit 0\n')
+            script.chmod(0o755)
+            with mock.patch.object(scenarios, "GITLEAKS", str(script)), \
+                    mock.patch.dict(os.environ, {"GITLEAKS_CONFIG": "/tmp/custom.toml"}):
+                self.assertIsNone(scenarios.public_withhold_reason({"b": 1, "a": "x"}, ["issued-secret-value"]))
+            args = Path(f"{capture}.args").read_text().split()
+            work = Path(f"{capture}.cwd").read_text().strip()
+            self.assertEqual(args, ["stdin", "--no-banner", "--redact", "--log-level", "error",
+                                    "--ignore-gitleaks-allow", "--config", f"{work}/gitleaks.toml",
+                                    "--report-format", "json", "--report-path", f"{work}/report.json",
+                                    "--exit-code", str(scenarios.GITLEAKS_FINDINGS_EXIT)])
+            self.assertEqual(json.loads(Path(f"{capture}.in").read_text()), {"a": "x", "b": 1})
+            self.assertNotEqual(work, os.getcwd())
+            # The private directory is 0700 and gone afterwards; the config inside it is 0600.
+            self.assertEqual(Path(f"{capture}.mode").read_text().strip(), "700")
+            self.assertEqual(Path(f"{capture}.toml.mode").read_text().strip(), "600")
+            self.assertFalse(Path(work).exists())
+            self.assertEqual(Path(f"{capture}.env").read_text().strip(), "0")
+            self.assertEqual(Path(f"{capture}.toml").read_text(),
+                             scenarios.gitleaks_config(["issued-secret-value"]))
+
+    def test_the_withhold_reason_names_rules_and_lines_never_a_secret(self):
+        report = json.dumps([
+            {"RuleID": "owui-kit-secret-2", "StartLine": 30, "Secret": "REDACTED", "Match": "k=REDACTED"},
+            {"RuleID": "generic-api-key", "StartLine": 12, "Secret": "leaked-value", "Match": "token=leaked-value"},
+            {"RuleID": "owui-kit-secret-2", "StartLine": 41, "Secret": "x"},
+            {"RuleID": "bad rule id; drop it", "StartLine": 1},
+        ])
+        with tempfile.TemporaryDirectory() as directory:
+            script = Path(directory) / "gitleaks"
+            script.write_text('#!/bin/sh\nwhile [ $# -gt 0 ]; do [ "$1" = --report-path ] && report=$2; shift; done\n'
+                              f"cat >/dev/null\nprintf '%s' '{report}' > \"$report\"\nexit 42\n")
+            script.chmod(0o755)
+            with mock.patch.object(scenarios, "GITLEAKS", str(script)):
+                reason = scenarios.public_withhold_reason({"a": 1})
+        self.assertEqual(reason, "gitleaks finding (redacted): generic-api-key at line 12; "
+                                 "owui-kit-secret-2 at lines 30, 41")
+        self.assertNotIn("leaked-value", reason or "")
+
+    def test_the_config_extends_the_defaults_with_exact_issued_secrets(self):
+        config = scenarios.gitleaks_config(["short", "a.b-c_d+e$f(g)", "a.b-c_d+e$f(g)", "second-secret"])
+        self.assertTrue(config.startswith("[extend]\nuseDefault = true\n"))
+        self.assertEqual(config.count("[[rules]]"), 2)  # deduplicated, and "short" is under 8 characters
+        self.assertIn('id = "owui-kit-secret-1"', config)
+        self.assertIn('id = "owui-kit-secret-2"', config)
+        self.assertNotIn("short", config)
+        self.assertIn(json.dumps(r"a\.b-c_d\+e\$f\(g\)"), config)
+        self.assertEqual(scenarios.go_quote_meta(r"a-b_c.d\e+f*g?h(i)j|k[l]m{n}o^p$q r"),
+                         r"a-b_c\.d\\e\+f\*g\?h\(i\)j\|k\[l\]m\{n\}o\^p\$q r")
+
+    @unittest.skipIf(shutil.which("gitleaks") is None, "gitleaks is not installed")
+    def test_the_real_gitleaks_passes_a_full_passing_resmoke_receipt(self):
+        settings = scenarios.settings_from_environ(candidate_env())
+        vector = {"dimensions": 2560, "norm": 1.0}
+        summary = scenarios.summarize_sources([{
+            "source": {"type": "file", "id": "2b6f3c7e-9a51-4c38-8d1e-5b0f4e7a1c92"}, "document": ["chunk"],
+            "metadata": [{"file_id": "2b6f3c7e-9a51-4c38-8d1e-5b0f4e7a1c92", "name": scenarios.HANDBOOK_NAME,
+                          "source": scenarios.HANDBOOK_NAME}], "distances": [0.2778]}])
+        results = [
+            scenarios.ScenarioResult(scenarios.SCENARIO_IDS[0], "PASS", "ok", 1.2, {
+                "texts": {"query": scenarios.CANARY_QUERY, "relevant": scenarios.CANARY_RELEVANT,
+                          "unrelated": scenarios.CANARY_UNRELATED},
+                "vectors": {"query": vector, "relevant": vector, "unrelated": vector, "stored_chunk": vector,
+                            "direct_chunk": vector},
+                "prefix_source": "process-environ", "dimensions": 2560, "margin": 0.412305,
+                "stored_vector_cosine": 0.999998}),
+            scenarios.ScenarioResult(scenarios.SCENARIO_IDS[1], "PASS", "ok", 0.4,
+                                     {"health": "qualified", "scores": [0.981204, 0.013377]}),
+            scenarios.ScenarioResult(scenarios.SCENARIO_IDS[2], "PASS", "ok", 9.8, {
+                "timings": {"upload_s": 0.21, "index_s": 3.4, "chat_s": 6.1}, "sources": summary,
+                "expected_source_name": scenarios.HANDBOOK_NAME, "fact_present": True}),
+            scenarios.ScenarioResult(scenarios.SCENARIO_IDS[3], "PASS", "ok", 2.9, {
+                "transcription_s": 2.874, "language": "en", "word_count": 22,
+                "whisper": {"model": "base", **scenarios.whisper_pin_record("base")}}),
+        ]
+        receipt = scenarios.build_receipt(target="production", mode="record", settings=settings,
+                                          chat_model="resident-chat", results=results,
+                                          health={"version": "10.0.0", "start_time": "2026-10-04T08:00:00Z"})
+        receipt["whisper_model"] = "base"
+        with mock.patch.object(scenarios, "GITLEAKS", "gitleaks"):
+            self.assertIsNone(scenarios.public_withhold_reason(receipt, ["smoke-password-for-the-gate"]))
+            # The record shape that tripped the rehearsal's generic-api-key rule.
+            legacy = {"files": {"tokenizer.json": scenarios.WHISPER_BASE["files"]["tokenizer.json"]}}
+            self.assertRegex(scenarios.public_withhold_reason(legacy) or "", r"generic-api-key")
+
+    @unittest.skipIf(shutil.which("gitleaks") is None, "gitleaks is not installed")
+    def test_the_real_gitleaks_matches_secrets_as_json_spells_them(self):
+        secrets = ['quote"inside-1', "back\\slash-inside-2", "new\nline-inside-3", "emoji-\U0001F511-inside-4"]
+        with mock.patch.object(scenarios, "GITLEAKS", "gitleaks"):
+            for secret in secrets:
+                with self.subTest(secret=secret):
+                    self.assertRegex(scenarios.public_withhold_reason({"observed": f"got {secret} back"}, secrets) or "",
+                                     r"^gitleaks finding \(redacted\): owui-kit-secret-\d at line \d+$")
+            self.assertIsNone(scenarios.public_withhold_reason({"observed": "nothing secret here"}, secrets))
+
+    @unittest.skipIf(shutil.which("gitleaks") is None, "gitleaks is not installed")
+    def test_the_real_gitleaks_catches_an_openai_style_key(self):
+        with mock.patch.object(scenarios, "GITLEAKS", "gitleaks"):
+            self.assertIsNone(scenarios.public_withhold_reason({"detail": "ok", "count": 3}))
+            reason = scenarios.public_withhold_reason({"scenarios": [{"values": {"note": FAKE_OPENAI_KEY}}]})
+        self.assertRegex(reason or "", r"^gitleaks finding \(redacted\): openai-api-key at line \d+$")
+
+    @unittest.skipIf(shutil.which("gitleaks") is None, "gitleaks is not installed")
+    def test_the_real_gitleaks_ignores_allow_comments(self):
+        with mock.patch.object(scenarios, "GITLEAKS", "gitleaks"):
+            reason = scenarios.public_withhold_reason({"note": f"{FAKE_OPENAI_KEY} gitleaks:allow"})
+        self.assertRegex(reason or "", r"^gitleaks finding \(redacted\): openai-api-key at line \d+$")
+
+    @unittest.skipIf(shutil.which("gitleaks") is None, "gitleaks is not installed")
+    def test_the_real_gitleaks_withholds_an_issued_secret(self):
+        issued = ["redis-pass_word.with-dots+plus$dollar(paren)", "x.y-z_w.v-u_t", "short"]
+        with mock.patch.object(scenarios, "GITLEAKS", "gitleaks"):
+            for secret in issued[:2]:
+                with self.subTest(secret=secret):
+                    document = {"steps": [{"values": {"observed": f"connected with {secret} then"}}]}
+                    self.assertRegex(scenarios.public_withhold_reason(document, issued) or "",
+                                     r"^gitleaks finding \(redacted\): owui-kit-secret-\d at line \d+$")
+                    self.assertIsNone(scenarios.public_withhold_reason({"steps": [{"values": {"observed": "then"}}]},
+                                                                       issued))
+            # A secret under 8 characters gets no rule.
+            self.assertIsNone(scenarios.public_withhold_reason({"note": "short"}, issued))
+            # Escaping keeps metacharacters literal: a near miss does not match.
+            self.assertIsNone(scenarios.public_withhold_reason({"note": "redis-pass_wordXwith-dots"}, issued))
+
+
+class FailureValuesTests(unittest.TestCase):
+    """A failed scenario keeps what it measured, JSON-safe; private text is rendered only in a public or private copy."""
+
+    def run_one(self, error, scenario_id="open-webui.resmoke.cited-answer"):
+        def failing(_ctx):
+            raise error
+
+        with mock.patch.object(scenarios, "SCENARIOS", {scenario_id: failing}):
+            return scenarios.run_scenario(object(), scenario_id)
+
+    def test_the_failure_message_stays_backward_compatible(self):
+        self.assertEqual(scenarios.ScenarioFailure("no").values, {})
+        self.assertEqual(str(scenarios.ScenarioFailure("no", {"a": 1})), "no")
+        self.assertEqual(scenarios.ScenarioFailure("no", {"a": 1}).values, {"a": 1})
+
+    def test_a_failed_scenario_records_its_values(self):
+        values = {"timings": {"upload_s": 0.5, "chat_s": 2.0}, "sources": {"count": 0, "names": [], "scores": []},
+                  "expected_source_name": scenarios.HANDBOOK_NAME, "fact_present": False}
+        result = self.run_one(scenarios.ScenarioFailure(json.dumps(values, sort_keys=True), values))
+        self.assertEqual(result.result, scenarios.FAIL)
+        self.assertEqual(result.values, values)
+
+    def test_failure_values_are_json_safe(self):
+        unsafe = {
+            "scores": [0.9, float("nan"), float("-inf")],
+            "pair": ("x", 1),
+            "margin": float("inf"),
+            "api_key": "s3cret",
+        }
+        result = self.run_one(scenarios.ScenarioFailure("measured", unsafe))
+        self.assertEqual(result.result, scenarios.FAIL)
+        text = json.dumps(result.values, allow_nan=False)
+        self.assertNotIn("s3cret", text)
+        self.assertEqual(result.values["scores"], [0.9, None, None])
+        self.assertIsNone(result.values["margin"])
+        receipt = scenarios.build_receipt(target="production", mode="record",
+                                          settings=scenarios.settings_from_environ(candidate_env()),
+                                          chat_model="chat", health=None, results=[result])
+        json.dumps(receipt, allow_nan=False)
+        self.assertEqual(receipt["scenarios"][0]["values"], result.values)
+
+    def test_other_failures_and_blocks_record_no_values(self):
+        for error, expected in ((KeyError("id"), scenarios.FAIL), (scenarios.Blocked("NEEDS OWNER: x"), scenarios.BLOCKED)):
+            with self.subTest(error=error):
+                result = self.run_one(error)
+                self.assertEqual((result.result, result.values), (expected, {}))
+
+    def test_an_escalation_keeps_its_values_unchanged(self):
+        values = {"margin": 0.1, "vectors": {"query": {"dimensions": 2560, "norm": None}},
+                  "texts": {"query": scenarios.CANARY_QUERY}}
+        result = self.run_one(scenarios.Escalation("ESCALATE: zembed canary", values),
+                              "open-webui.resmoke.zembed-canary")
+        self.assertEqual((result.result, result.values, result.detail),
+                         (scenarios.ESCALATE, values, "ESCALATE: zembed canary"))
+
+    def test_zerank_keeps_its_scores_when_the_relevant_document_is_not_first(self):
+        class Webui:
+            def request(self, *_args, **_kwargs):
+                return scenarios.Response(200, "application/json", b'{"status": "qualified"}')
+
+        class Lemond:
+            def json(self, *_args, **_kwargs):
+                return {"results": [{"index": 0, "relevance_score": 0.1}, {"index": 1, "relevance_score": 0.8}]}
+
+        ctx = scenarios.Context(target="acceptance", webui=Webui(), lemond=Lemond(), token="t",
+                                settings=scenarios.settings_from_environ(candidate_env()), chat_model="chat")
+        with mock.patch.object(scenarios, "rag_gate_constants", return_value=("q", ("relevant", "other"))):
+            result = scenarios.run_scenario(ctx, "open-webui.resmoke.zerank-qualification")
+        self.assertEqual(result.result, scenarios.FAIL)
+        self.assertIn("not ranked first", result.detail)
+        self.assertEqual(result.values, {"health": "qualified", "scores": [0.1, 0.8]})
+
+    def test_zerank_keeps_the_health_it_measured_on_every_failure(self):
+        class Webui:
+            def __init__(self, status):
+                self.status = status
+
+            def request(self, *_args, **_kwargs):
+                return scenarios.Response(self.status, "application/json", b'{"status": "qualified"}')
+
+        class Lemond:
+            def json(self, *_args, **_kwargs):
+                return {"results": [{"index": 0}]}
+
+        settings = scenarios.settings_from_environ(candidate_env())
+        with mock.patch.object(scenarios, "rag_gate_constants", return_value=("q", ("relevant", "other"))):
+            unhealthy = scenarios.run_scenario(
+                scenarios.Context(target="acceptance", webui=Webui(500), lemond=Lemond(), token="t",
+                                  settings=settings, chat_model="chat"), "open-webui.resmoke.zerank-qualification")
+            malformed = scenarios.run_scenario(
+                scenarios.Context(target="acceptance", webui=Webui(200), lemond=Lemond(), token="t",
+                                  settings=settings, chat_model="chat"), "open-webui.resmoke.zerank-qualification")
+        self.assertEqual((unhealthy.result, unhealthy.values), (scenarios.FAIL, {"health_status": 500}))
+        self.assertEqual((malformed.result, malformed.values), (scenarios.FAIL, {"health": "qualified"}))
+        self.assertIn("one result per document", malformed.detail)
+
+
+class ScenarioMeasurementTests(unittest.TestCase):
+    """Every failure path keeps the timings and records a scenario took before it."""
+
+    cited_context = CitedAnswerTests.cited_context
+
+    def cited(self, ctx, wait=None):
+        with mock.patch.object(scenarios, "_wait_for_file", side_effect=wait), \
+                mock.patch.object(scenarios, "SCENARIOS", {"cited": scenarios.cited_answer}):
+            return scenarios.run_scenario(ctx, "cited")
+
+    def assert_receipt_safe(self, result):
+        receipt = scenarios.build_receipt(target="production", mode="record",
+                                          settings=scenarios.settings_from_environ(candidate_env()),
+                                          chat_model="chat", health=None, results=[result])
+        json.dumps(receipt, allow_nan=False)
+
+    def test_failed_or_timed_out_processing_keeps_the_upload_timing(self):
+        for message in ("file processing ended with HTTP 200 status failed: embedding failed",
+                        "file processing did not complete in time"):
+            with self.subTest(message):
+                ctx, deletes = self.cited_context(200)
+                result = self.cited(ctx, scenarios.ScenarioFailure(message))
+                self.assertEqual((result.result, result.detail), (scenarios.FAIL, f"ScenarioFailure: {message}"))
+                self.assertEqual(set(result.values["timings"]), {"upload_s"})
+                self.assertEqual(result.values["expected_source_name"], scenarios.HANDBOOK_NAME)
+                self.assertEqual(len(deletes), 1)
+                self.assert_receipt_safe(result)
+
+    def test_a_failed_chat_keeps_every_timing_and_still_cleans_up(self):
+        ctx, deletes = self.cited_context(200, chat_status=502)
+        result = self.cited(ctx)
+        self.assertEqual(result.result, scenarios.FAIL)
+        self.assertIn("HTTP 502", result.detail)
+        self.assertEqual(set(result.values["timings"]), {"upload_s", "index_s", "chat_s"})
+        self.assertEqual(len(deletes), 1)
+        self.assert_receipt_safe(result)
+
+    def test_a_chat_transport_error_keeps_the_timings_and_its_detail(self):
+        ctx, deletes = self.cited_context(200)
+        fixed = ctx.webui.request.side_effect
+
+        def request(method, path, **kw):
+            if (method, path) == ("POST", scenarios.API["chat"]):
+                raise ConnectionResetError("connection reset by peer")
+            return fixed(method, path, **kw)
+
+        ctx.webui.request.side_effect = request
+        result = self.cited(ctx)
+        self.assertEqual((result.result, result.detail), (scenarios.FAIL, "ConnectionResetError: connection reset by peer"))
+        self.assertEqual(set(result.values["timings"]), {"upload_s", "index_s"})
+        self.assertEqual(len(deletes), 1)
+        self.assert_receipt_safe(result)
+
+    def test_a_failed_upload_keeps_its_timing(self):
+        ctx, deletes = self.cited_context(200)
+        ctx.webui.request.side_effect = lambda *_a, **_k: mock.Mock(status=500, body=b"", json=lambda: None)
+        result = self.cited(ctx)
+        self.assertEqual(result.result, scenarios.FAIL)
+        self.assertIn("handbook upload returned HTTP 500", result.detail)
+        self.assertEqual(set(result.values["timings"]), {"upload_s"})
+        self.assertEqual(deletes, [])
+
+    def test_a_failed_transcription_keeps_its_timing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            audio = Path(directory) / "jfk.flac"
+            audio.write_bytes(b"flac")
+            webui = mock.Mock(request=mock.Mock(return_value=scenarios.Response(500, "text/plain", b"boom")))
+            ctx = scenarios.Context(target="acceptance", webui=webui, lemond=mock.Mock(), token="t",
+                                    settings=scenarios.settings_from_environ(candidate_env()), chat_model="chat",
+                                    audio=audio)
+            with mock.patch.object(scenarios.v1, "_file_sha256", return_value=scenarios.JFK_FLAC_SHA256):
+                result = scenarios.run_scenario(ctx, "open-webui.resmoke.stt")
+        self.assertEqual(result.result, scenarios.FAIL)
+        self.assertIn("transcription returned HTTP 500", result.detail)
+        self.assertEqual(set(result.values), {"transcription_s", "whisper"})
+        self.assert_receipt_safe(result)
+
+    def test_a_failed_stored_chunk_read_keeps_the_canary_margin(self):
+        canary = ZembedCanaryTests()
+
+        def unreadable():
+            raise OSError("qdrant unreachable")
+
+        outcome = canary.run_canary(stored_chunk=unreadable)
+        self.assertEqual((outcome.result, outcome.detail), (scenarios.FAIL, "OSError: qdrant unreachable"))
+        self.assertEqual(outcome.values["margin"], 0.9)
+        self.assertEqual(sorted(outcome.values["vectors"]), ["query", "relevant", "unrelated"])
+        self.assert_receipt_safe(outcome)
+
+    def test_a_failed_initial_embedding_keeps_the_vectors_before_it(self):
+        canary = ZembedCanaryTests()
+        cases = (
+            # The relevant embedding's transport fails after the query's.
+            ({scenarios.CANARY_RELEVANT: OSError("connection refused")}, "OSError: connection refused",
+             ["query"]),
+            # The unrelated embedding comes back malformed.
+            ({scenarios.CANARY_UNRELATED: scenarios.ScenarioFailure("Lemonade embeddings returned malformed data")},
+             "ScenarioFailure: Lemonade embeddings returned malformed data", ["query", "relevant"]),
         )
-        for form in forms:
-            with self.subTest(form=form):
-                detail = scenarios.public_detail(f"upstream error: {form}", scenarios.RESULT_DETAIL_LIMIT)
-                self.assertNotIn(secret, detail)
-                self.assertTrue(detail.startswith("upstream error:"))
-                scenarios.v1.assert_public_safe({"detail": detail})
-        # Ordinary text is untouched.
-        for plain in ("Model not found", "the key brass opens the seed cabinet", "HTTP 400: taken"):
-            self.assertEqual(scenarios.public_detail(plain), plain)
+        for failures, detail, recorded in cases:
+            with self.subTest(detail=detail):
+                def embed(_ctx, text, failures=failures):
+                    for canary_text, vector in ((scenarios.CANARY_QUERY, canary.QUERY),
+                                                (scenarios.CANARY_RELEVANT, canary.RELEVANT),
+                                                (scenarios.CANARY_UNRELATED, canary.UNRELATED)):
+                        if text.endswith(canary_text):
+                            if canary_text in failures:
+                                raise failures[canary_text]
+                            return vector
+                    raise AssertionError(text)
 
-    def test_the_safety_check_still_refuses_raw_credential_text(self):
-        # public_detail never weakens the receipt's own check.
-        for raw in (f"Authorization: Bearer {self.TOKEN}", f"cookie: session={self.SESSION}", "token=abc"):
-            with self.assertRaises(ValueError):
-                scenarios.v1.assert_public_safe({"detail": raw})
+                with mock.patch.object(scenarios, "lemond_embed", side_effect=embed):
+                    outcome = scenarios.run_scenario(canary.context(), "open-webui.resmoke.zembed-canary")
+                self.assertEqual((outcome.result, outcome.detail), (scenarios.FAIL, detail))
+                self.assertEqual(sorted(outcome.values["vectors"]), recorded)
+                self.assertEqual(outcome.values["vectors"]["query"]["dimensions"], 2560)
+                self.assertEqual(outcome.values["dimensions"], 2560)
+                self.assertNotIn("margin", outcome.values)
+                self.assert_receipt_safe(outcome)
 
 
 class StubProviderTests(unittest.TestCase):

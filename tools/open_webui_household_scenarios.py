@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import contextlib
 import dataclasses
 import hashlib
 import http.client
@@ -28,14 +29,16 @@ import os
 import re
 import socket
 import ssl
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.parse
 import uuid
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Callable, Iterable, Mapping, Sequence
+from typing import Any, Callable, Iterable, Iterator, Mapping, Sequence
 
 TOOLS = Path(__file__).resolve().parent
 REPO_ROOT = TOOLS.parent
@@ -181,10 +184,17 @@ WHISPER_PINS: Mapping[str, Mapping[str, Any]] = MappingProxyType({"base": WHISPE
 
 
 def whisper_pin_record(model: str) -> dict[str, Any]:
-    """One Whisper pin as plain JSON-ready data, for evidence and receipts."""
+    """One Whisper pin as plain JSON-ready data, for evidence and receipts.
+
+    ``files`` is a list of ``{"name", "sha256"}`` records, never a mapping
+    from file name to digest: a name such as ``tokenizer.json`` keyed to a
+    high-entropy value reads to gitleaks's default generic-api-key rule as a
+    credential assignment, and the public gate would withhold the evidence.
+    """
 
     pin = WHISPER_PINS[model]
-    return {"repository": pin["repository"], "revision": pin["revision"], "files": dict(pin["files"])}
+    files = [{"name": name, "sha256": digest} for name, digest in sorted(pin["files"].items())]
+    return {"repository": pin["repository"], "revision": pin["revision"], "files": files}
 
 
 JFK_FLAC_SHA256 = "63a4b1e4c1dc655ac70961ffbf518acd249df237e5a0152faae9a4a836949715"
@@ -281,7 +291,27 @@ class Blocked(RuntimeError):
 
 
 class ScenarioFailure(RuntimeError):
-    """The scenario ran and its pass condition does not hold."""
+    """The scenario ran and its pass condition does not hold.
+
+    ``values`` carries what the check measured before it failed, so the
+    failed row keeps its structured values.  The message is private failure
+    text: public receipts and evidence carry only ``public_detail``'s summary
+    of it, and the private copies keep it whole.  ``status`` and
+    ``content_type`` are the HTTP response's, when the failure came from one
+    (``response_failure``), so the summary can name them.
+    """
+
+    def __init__(self, message: str, values: Mapping[str, Any] | None = None, *,
+                 status: int | None = None, content_type: str | None = None) -> None:
+        super().__init__(message)
+        self.values: dict[str, Any] = dict(values or {})
+        self.status = status
+        self.content_type = content_type
+
+    def with_values(self, values: Mapping[str, Any]) -> ScenarioFailure:
+        """The same failure (type, message, HTTP status and media type) with ``values``."""
+
+        return type(self)(str(self), values, status=self.status, content_type=self.content_type)
 
 
 class Escalation(RuntimeError):
@@ -294,6 +324,43 @@ class Escalation(RuntimeError):
     def __init__(self, message: str, values: Mapping[str, Any] | None = None) -> None:
         super().__init__(message)
         self.values: dict[str, Any] = dict(values or {})
+
+
+class MeasuredFailure(ScenarioFailure):
+    """A failure other than a check's, raised after a scenario or step measured values.
+
+    Its message is the detail recorded for the original error, ``<type>:
+    <text>``, so the detail reads as it would without the values; the
+    original error is its ``__cause__``.
+    """
+
+
+def failure_text(error: BaseException) -> str:
+    """A failure's detail as a FAIL row records it: ``<type>: <text>``."""
+
+    return str(error) if isinstance(error, MeasuredFailure) else f"{type(error).__name__}: {error}"
+
+
+@contextlib.contextmanager
+def keeping(values: dict[str, Any], failures: tuple[type[BaseException], ...]) -> Iterator[None]:
+    """Any of ``failures`` raised inside carries ``values``, what was measured so far.
+
+    A ``ScenarioFailure`` keeps its type and message, with its own values
+    merged over these; any other listed failure becomes a ``MeasuredFailure``.
+    The caller fills ``values`` as it measures, so a failure keeps every
+    measurement taken before it.  Anything not listed, such as ``Blocked``
+    or ``Escalation``, passes through unchanged.
+    """
+
+    try:
+        yield
+    except ScenarioFailure as error:
+        merged = {**values, **error.values}
+        if merged == error.values:
+            raise
+        raise error.with_values(merged) from error
+    except failures as error:
+        raise MeasuredFailure(failure_text(error), values) from error
 
 
 # ---------------------------------------------------------------------------
@@ -552,9 +619,40 @@ def summarize_sources(sources: Sequence[dict[str, Any]]) -> dict[str, Any]:
                 names.append(name)
     return {
         "count": len(documents),
-        "names": names,
-        "scores": [score for entry in documents.values() for score in entry["scores"]],
+        "names": [constrained_name(name) for name in names],
+        "scores": [constrained_score(score) for entry in documents.values() for score in entry["scores"]],
     }
+
+
+# Upstream identifiers reach public files only in a kit-constrained form:
+# a value outside the form is kept as private text (PrivateText), which a
+# public copy renders as public_detail's summary and a private copy keeps
+# whole.  Comparisons are unchanged: PrivateText is a str.
+_LANGUAGE_CODE = re.compile(r"[a-z]{2,3}(?:[-_][A-Za-z0-9]{2,8})?")
+
+
+def constrained_name(name: Any) -> Any:
+    """A cited source name: the kit's handbook name (or no name) verbatim, any other as private text."""
+
+    if name is None or name == HANDBOOK_NAME:
+        return name
+    return PrivateText(str(name))
+
+
+def constrained_score(score: Any) -> Any:
+    """A source score: a finite number verbatim, anything else as private text."""
+
+    if isinstance(score, (int, float)) and not isinstance(score, bool) and math.isfinite(score):
+        return score
+    return PrivateText(json.dumps(score) if not isinstance(score, str) else score)
+
+
+def constrained_language(language: str | None) -> str | None:
+    """A transcription language: a short language code verbatim, anything else as private text."""
+
+    if language is None or _LANGUAGE_CODE.fullmatch(language):
+        return language
+    return PrivateText(language)
 
 
 def cited_answer_passes(text: str, summary: Mapping[str, Any], expected_name: str) -> bool:
@@ -891,76 +989,292 @@ class Endpoint:
     def json(self, method: str, path: str, payload: Any = None, *, token: str | None = None, expected: tuple[int, ...] = (200,)) -> Any:
         response = self.request(method, path, payload=payload, token=token)
         if response.status not in expected:
-            raise ScenarioFailure(f"{method} {path.split('?')[0]} returned HTTP {response.status}{error_detail(response)}")
+            raise response_failure(f"{method} {path.split('?')[0]} returned HTTP {response.status}", response)
         return response.json()
 
 
-ERROR_DETAIL_LIMIT = 200
-# A scenario or step result's detail can carry the step's JSON values.
+# A private failure detail is bounded: an upstream body can be large.
 RESULT_DETAIL_LIMIT = 4000
-# Credential material is redacted value included: from a credential header
-# or assignment to the end of its line, since a header's value runs to the
-# line end.  Header names cover Authorization, Proxy-Authorization, Cookie,
-# Set-Cookie, and X-Api-Key-style names, also as JSON or Python-dict keys.
-_CREDENTIAL_HEADER = re.compile(
-    r"(?i)[\"']?\b(?:proxy-authorization|authorization|set-cookie|cookie"
-    r"|x-[\w-]*(?:api[_-]?key|token|secret|auth[\w-]*)|api[_-]?key|access[_-]?token|auth[_-]?token)"
-    r"\b[\"']?\s*[:=].*"
-)
-_CREDENTIAL_ASSIGNMENT = re.compile(
-    r"(?i)\b(?:password|passwd|secret|client[_-]?secret|token|key|api[_-]?key|access[_-]?key|session(?:id)?|sid)"
-    r"[\"']?\s*[=:].*"
-)
-# An HTTP auth scheme with its credential, wherever it appears in a line.
-_AUTH_SCHEME = re.compile(r"(?i)\b(?:bearer|basic|digest|negotiate|ntlm|hoba|mutual|token)\s+\S+.*")
-_KEY_MATERIAL = re.compile(r"-----BEGIN [A-Z0-9 ]+-----.*?(?:-----END [A-Z0-9 ]+-----|\Z)", re.DOTALL)
-_DETAIL_REDACTIONS = (
-    (re.compile(r"\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b"), "<email>"),
-    (re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b"), "<address>"),
-    # An absolute path, unless it follows an evidence token such as <root> or ~.
-    (re.compile(r"(?<![\w.:/>~])/(?:[\w.@+-]+/)+[\w.@+-]*"), "<path>"),
-    # Whatever else the public-safety check itself refuses.
-    (v1._PRIVATE_IPV6, "<address>"),
-    (v1._PRIVATE_HOSTNAME, "<host>"),
-    (v1._ABSOLUTE_PRIVATE_PATH, " <path>"),
-)
+PRIVATE_DETAIL_NOTE = "full detail kept in the private copy"
+_HTTP_STATUS = re.compile(r"\bHTTP (\d{3})\b")
+_ERROR_TYPE = re.compile(r"[A-Za-z_][\w.]{0,63}")
+_CONTENT_TYPE = re.compile(r"[\w.+-]{1,64}/[\w.+-]{1,64}")
 
 
-def _redact_credential_lines(text: str) -> str:
-    """Replace credential material, value included, line by line, before lines are joined."""
+def public_media_type(content_type: str | None) -> str | None:
+    """The bare media type of a Content-Type header for public files, lower-cased; None when it is not one.
 
-    text = _KEY_MATERIAL.sub("<redacted key material>", text)
-    lines = []
-    for line in text.splitlines():
-        for pattern in (_CREDENTIAL_HEADER, _CREDENTIAL_ASSIGNMENT, _AUTH_SCHEME):
-            line = pattern.sub("<redacted credential>", line)
-        lines.append(line)
-    return "\n".join(lines)
-
-
-def public_detail(text: str, limit: int = ERROR_DETAIL_LIMIT) -> str:
-    """One line of error text, bounded and redacted for public evidence and receipts.
-
-    Credential material goes first and whole: header values, auth-scheme
-    tokens, cookies, and secret assignments, each to the end of its line.
-    Anything the public-safety check would still refuse as credential
-    material cuts the text there, so a marker is never removed while its
-    value stays; ``assert_public_safe`` still checks every receipt after this.
+    Parameters (``; charset=…``, a quoted note) and anything that is not a
+    plain ``type/subtype`` token never reach a public file; the private copy
+    keeps the raw header.
     """
 
-    line = " ".join(_redact_credential_lines(text).split())
-    for pattern, token in _DETAIL_REDACTIONS:
-        line = pattern.sub(token, line)
-    for guard in (v1._AUTHENTICATION_MATERIAL, v1._SECRET_ASSIGNMENT):
-        found = guard.search(line)
-        if found:
-            line = line[: found.start()] + "<redacted credential>"
-    line = line.strip()
-    return line if len(line) <= limit else line[: limit - 1] + "…"
+    media = _CONTENT_TYPE.match(content_type.strip()) if content_type else None
+    return media.group(0).lower() if media else None
+
+
+def public_detail(text: str, *, error_type: str | None = None, status: int | None = None,
+                  content_type: str | None = None) -> str:
+    """A fixed public summary of a failure detail; no part of the text is copied.
+
+    The summary names the error type, the HTTP status (given, or the first
+    ``HTTP <code>`` the text names), the media type when known, the text's
+    length in bytes, and the first 16 hex digits of its SHA-256.  The text
+    itself lives in the private copy: the trial's private evidence file
+    (``<root>/evidence/raw/trial-evidence.json``) or the re-smoke's private
+    receipt (``private_receipt_path``).
+    """
+
+    raw = text.encode("utf-8", "replace")
+    if status is None:
+        found = _HTTP_STATUS.search(text)
+        status = int(found.group(1)) if found else None
+    parts: list[str] = []
+    if error_type and _ERROR_TYPE.fullmatch(error_type):
+        parts.append(error_type)
+    if status is not None:
+        parts.append(f"HTTP {status}")
+    media = public_media_type(content_type)
+    if media:
+        parts.append(media)
+    parts += [f"{len(raw)} bytes", f"sha256:{hashlib.sha256(raw).hexdigest()[:16]}", PRIVATE_DETAIL_NOTE]
+    return "; ".join(parts)
+
+
+def failure_type(error: BaseException) -> str:
+    """The type a failure's detail names: a MeasuredFailure's original error, else its own."""
+
+    if isinstance(error, MeasuredFailure) and error.__cause__ is not None:
+        return type(error.__cause__).__name__
+    return type(error).__name__
+
+
+class PrivateText(str):
+    """Free text copied from upstream into a step's values.
+
+    It is a ``str``, so a private failure message (``json.dumps(values)``)
+    carries it whole.  A public receipt or evidence file renders it as
+    ``public_detail``'s summary (``render_values``); the private copy keeps
+    the text whole.  ``status`` and ``content_type`` are the HTTP
+    response's, when it came from one.
+    """
+
+    status: int | None
+    content_type: str | None
+
+    def __new__(cls, text: str, status: int | None = None, content_type: str | None = None) -> PrivateText:
+        value = super().__new__(cls, text)
+        value.status, value.content_type = status, content_type
+        return value
+
+    def summary(self) -> str:
+        return public_detail(str(self), status=self.status, content_type=self.content_type)
+
+
+REDACTED_FIELD = "redacted_credential_field"
+REDACTED_VALUE = "<redacted credential>"
+
+
+def render_values(value: Any, rendering: str) -> Any:
+    """Measured values, JSON-safe, in one rendering: ``"public"``, ``"private"``, or ``"capture"``.
+
+    A non-finite float is recorded as None, as ``_finite`` records one;
+    tuples and sets become lists, keys and any other object their text.  A
+    field v1's own public-safety rule names a credential
+    (``v1._contains_secret_field``) is renamed ``redacted_credential_field``
+    (``..._2``, ``..._3`` for more in one mapping) with a redacted value.  A
+    ``PrivateText`` becomes its summary in the public rendering and its full
+    text in the private one; ``"capture"`` keeps it for a later rendering.
+    Nothing else is rewritten: the public files' checks are
+    ``v1.assert_public_safe`` and the gitleaks gate (``public_withhold_reason``).
+    """
+
+    if isinstance(value, PrivateText):
+        return value.summary() if rendering == "public" else str(value) if rendering == "private" else value
+    if value is None or isinstance(value, (bool, int, str)):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, Mapping):
+        rendered: dict[str, Any] = {}
+        redacted = 0
+        for key, item in value.items():
+            name = key if isinstance(key, str) else str(key)
+            if v1._contains_secret_field({name: None}):
+                redacted += 1
+                name = REDACTED_FIELD if redacted == 1 else f"{REDACTED_FIELD}_{redacted}"
+                while name in value or name in rendered:
+                    redacted += 1
+                    name = f"{REDACTED_FIELD}_{redacted}"
+                rendered[name] = REDACTED_VALUE
+            else:
+                rendered[name] = render_values(item, rendering)
+        return rendered
+    if isinstance(value, (list, tuple)):
+        return [render_values(item, rendering) for item in value]
+    if isinstance(value, (set, frozenset)):
+        return sorted((render_values(item, rendering) for item in value), key=repr)
+    return str(value)
+
+
+def public_values(value: Any) -> Any:
+    """Values as a public file carries them (``render_values``): private text as its summary."""
+
+    return render_values(value, "public")
+
+
+def private_values(value: Any) -> Any:
+    """Values as a private copy carries them (``render_values``): private text whole."""
+
+    return render_values(value, "private")
+
+
+def failure_values(error: BaseException) -> dict[str, Any]:
+    """The structured values a failure carries (``ScenarioFailure.values``), JSON-safe; else empty.
+
+    Private text stays marked (``PrivateText``) until a public or private
+    copy renders it.
+    """
+
+    values = getattr(error, "values", None)
+    return render_values(dict(values), "capture") if isinstance(values, Mapping) else {}
+
+
+# The gitleaks gate.  Every would-be public receipt or evidence file is
+# serialized and scanned before it is written, with gitleaks's default rules
+# plus one rule per secret the kit issued or loaded in this run, each
+# matching that exact value (``gitleaks_config``).  A finding withholds the
+# public file; the private copy is written either way.  gitleaks runs in its
+# own private directory (mode 0700, removed afterwards) with no GITLEAKS_*
+# variables, so no repository .gitleaks.toml or .gitleaksignore changes its
+# rules, and --ignore-gitleaks-allow disables gitleaks:allow comments.  Its
+# JSON report, written with --redact, gives the withhold reason the rule ids
+# and the serialized document's line numbers, never a secret or a match.
+GITLEAKS = "gitleaks"
+GITLEAKS_FINDINGS_EXIT = 42
+GITLEAKS_FINDING = "gitleaks finding (redacted)"
+GITLEAKS_MISSING = "gitleaks is not installed: install the Arch package gitleaks (extra) to write public files"
+GITLEAKS_TIMEOUT_S = 300
+# An issued secret shorter than this gets no exact-value rule: too short to
+# match only itself.
+GITLEAKS_SECRET_MINIMUM = 8
+_RE2_METACHARACTERS = frozenset("\\.+*?()|[]{}^$")
+_RULE_ID = re.compile(r"[\w.-]{1,64}")
+
+
+def go_quote_meta(value: str) -> str:
+    """Go's ``regexp.QuoteMeta``: escape only ``\\.+*?()|[]{}^$``, as RE2 requires."""
+
+    return "".join(f"\\{character}" if character in _RE2_METACHARACTERS else character for character in value)
+
+
+def gitleaks_config(secrets: Iterable[str]) -> str:
+    """A gitleaks config: the default rules, plus one exact-value rule per secret of at least 8 characters.
+
+    Each rule matches the secret as the gated JSON document spells it
+    (``json.dumps(secret, ensure_ascii=False)`` without its quotes), so a
+    quote, a backslash, or a newline in the secret still matches.  Rule ids
+    are ``owui-kit-secret-<n>`` and say nothing about the secret.  The config
+    holds the secrets themselves, so it lives only in the gate's private
+    directory.
+    """
+
+    lines = ["[extend]", "useDefault = true"]
+    kept = sorted({secret for secret in secrets if len(secret) >= GITLEAKS_SECRET_MINIMUM})
+    for number, secret in enumerate(kept, 1):
+        serialized = json.dumps(secret, ensure_ascii=False)[1:-1]
+        lines += ["", "[[rules]]", f'id = "owui-kit-secret-{number}"',
+                  'description = "a secret the kit issued or loaded in this run"',
+                  # A JSON string written with ensure_ascii=False is a valid TOML
+                  # basic string, astral characters included.
+                  f"regex = {json.dumps(go_quote_meta(serialized), ensure_ascii=False)}"]
+    return "\n".join(lines) + "\n"
+
+
+def _gitleaks_finding_reason(report: Path) -> str:
+    """``GITLEAKS_FINDING`` with the sorted rule ids and their serialized line numbers, from the report."""
+
+    try:
+        findings = json.loads(report.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return GITLEAKS_FINDING
+    lines: dict[str, set[int]] = {}
+    for finding in findings if isinstance(findings, list) else []:
+        rule = finding.get("RuleID") if isinstance(finding, dict) else None
+        line = finding.get("StartLine") if isinstance(finding, dict) else None
+        if isinstance(rule, str) and _RULE_ID.fullmatch(rule) and isinstance(line, int):
+            lines.setdefault(rule, set()).add(line)
+    if not lines:
+        return GITLEAKS_FINDING
+    named = "; ".join(f"{rule} at line{'s' if len(found) > 1 else ''} {', '.join(map(str, sorted(found)))}"
+                      for rule, found in sorted(lines.items()))
+    return f"{GITLEAKS_FINDING}: {named}"
+
+
+def gitleaks_withhold_reason(document: Any, secrets: Iterable[str] = ()) -> str | None:
+    """Why gitleaks withholds ``document`` from a public file, or None; never a secret or a match."""
+
+    executable = shutil.which(GITLEAKS)
+    if executable is None:
+        return GITLEAKS_MISSING
+    payload = (json.dumps(document, indent=2, sort_keys=True, ensure_ascii=False) + "\n").encode()
+    environment = {key: value for key, value in os.environ.items() if not key.startswith("GITLEAKS_")}
+    try:
+        with tempfile.TemporaryDirectory(prefix="owui-gitleaks-") as directory:
+            os.chmod(directory, 0o700)
+            config, report = Path(directory) / "gitleaks.toml", Path(directory) / "report.json"
+            descriptor = os.open(config, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                handle.write(gitleaks_config(secrets))
+            command = [executable, "stdin", "--no-banner", "--redact", "--log-level", "error",
+                       "--ignore-gitleaks-allow", "--config", str(config),
+                       "--report-format", "json", "--report-path", str(report),
+                       "--exit-code", str(GITLEAKS_FINDINGS_EXIT)]
+            completed = subprocess.run(command, input=payload, cwd=directory, env=environment,
+                                       capture_output=True, timeout=GITLEAKS_TIMEOUT_S, check=False)
+            if completed.returncode == GITLEAKS_FINDINGS_EXIT:
+                return _gitleaks_finding_reason(report)
+    except (OSError, subprocess.SubprocessError) as error:
+        return f"gitleaks could not run ({type(error).__name__})"
+    if completed.returncode == 0:
+        return None
+    return f"gitleaks failed (exit {completed.returncode})"
+
+
+def public_withhold_reason(document: Any, secrets: Iterable[str] = ()) -> str | None:
+    """Why ``document`` must not be written publicly, or None: ``v1.assert_public_safe``, then gitleaks."""
+
+    try:
+        v1.assert_public_safe(document)
+    except ValueError as error:
+        return str(error)
+    return gitleaks_withhold_reason(document, secrets)
+
+
+def write_private(path: Path, document: Any) -> Path:
+    """Write a private copy (mode 0600): never committed, never gated."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle.write(json.dumps(document, indent=2, sort_keys=True, ensure_ascii=False) + "\n")
+    os.chmod(path, 0o600)
+    return path
+
+
+def write_public(path: Path, document: Any) -> None:
+    """Write a public file that has already passed ``public_withhold_reason``."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(document, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
 def response_detail(response: Response) -> str | None:
-    """The error detail a response carries: its JSON ``detail`` (or ``error``), else its text, public-safe."""
+    """The error detail a response carries, for private failure text: its JSON ``detail`` (or ``error``), else its body.
+
+    It reaches only exception messages and private copies; a public file
+    carries ``public_detail``'s summary instead.
+    """
 
     if not response.body:
         return None
@@ -977,15 +1291,22 @@ def response_detail(response: Response) -> str | None:
             text = json.dumps(text, sort_keys=True)
     if text is None:
         text = response.body.decode("utf-8", "replace")
-    detail = public_detail(text)
+    detail = " ".join(str(text).split())[:RESULT_DETAIL_LIMIT]
     return detail or None
 
 
 def error_detail(response: Response) -> str:
-    """``": <detail>"`` for a failure message, or ``""`` when the response carries none."""
+    """``": <detail>"`` for a (private) failure message, or ``""`` when the response carries none."""
 
     detail = response_detail(response)
     return f": {detail}" if detail else ""
+
+
+def response_failure(message: str, response: Response, values: Mapping[str, Any] | None = None) -> ScenarioFailure:
+    """A failure from an HTTP response: ``message``, then the response's detail, with its status and media type."""
+
+    return ScenarioFailure(f"{message}{error_detail(response)}", values, status=response.status,
+                           content_type=response.content_type)
 
 
 def multipart_file(field: str, filename: str, data: bytes, content_type: str) -> tuple[bytes, str]:
@@ -1188,9 +1509,13 @@ class Context:
 class ScenarioResult:
     id: str
     result: str
+    # The private detail: public receipts carry public_detail's summary of it.
     detail: str
     duration_s: float
     values: dict[str, Any] = dataclasses.field(default_factory=dict)
+    error_type: str | None = None
+    # The failing HTTP response's media type, when the failure came from one.
+    content_type: str | None = None
 
     def line(self) -> str:
         return f"{self.id} {self.result} {self.detail}"
@@ -1237,35 +1562,42 @@ def vector_record(vector: Sequence[float]) -> dict[str, Any]:
 
 
 def zembed_canary(ctx: Context) -> dict[str, Any]:
-    query = lemond_embed(ctx, ctx.settings.query_prefix + CANARY_QUERY)
-    relevant = lemond_embed(ctx, ctx.settings.content_prefix + CANARY_RELEVANT)
-    unrelated = lemond_embed(ctx, ctx.settings.content_prefix + CANARY_UNRELATED)
-    to_relevant, to_unrelated = _cosine_or_none(query, relevant), _cosine_or_none(query, unrelated)
-    vectors = {"query": vector_record(query), "relevant": vector_record(relevant), "unrelated": vector_record(unrelated)}
+    vectors: dict[str, Any] = {}
+    # Filled as the canary measures, so a failed or malformed embedding at
+    # any point keeps every vector record taken before it.
     values: dict[str, Any] = {
         "texts": {"query": CANARY_QUERY, "relevant": CANARY_RELEVANT, "unrelated": CANARY_UNRELATED},
-        "dimensions": len(query),
         "vectors": vectors,
-        "margin": _finite(to_relevant - to_unrelated, 6)
-        if to_relevant is not None and to_unrelated is not None
-        else None,
         "prefix_source": ctx.settings.source,
     }
-    if not v1.embedding_canary_passes(query, relevant, unrelated):
-        raise Escalation("ESCALATE: zembed canary", values)
-    if ctx.stored_chunk is not None:
-        chunk, stored = ctx.stored_chunk()
-        direct = lemond_embed(ctx, ctx.settings.content_prefix + chunk)
-        vectors["stored_chunk"] = vector_record(stored)
-        vectors["direct_chunk"] = vector_record(direct)
-        similarity = _cosine_or_none(stored, direct)
-        values["stored_vector_cosine"] = _finite(similarity, 6)
-        if similarity is None or not similarity >= STORED_VECTOR_MINIMUM_COSINE:
-            raise Escalation(
-                "ESCALATE: zembed canary (stored vector differs from the settings-prefixed embedding)", values
-            )
-    else:
-        values["stored_vector_cosine"] = "not-applicable"
+    with keeping(values, SCENARIO_FAILURES):
+        query = lemond_embed(ctx, ctx.settings.query_prefix + CANARY_QUERY)
+        vectors["query"] = vector_record(query)
+        values["dimensions"] = len(query)
+        relevant = lemond_embed(ctx, ctx.settings.content_prefix + CANARY_RELEVANT)
+        vectors["relevant"] = vector_record(relevant)
+        unrelated = lemond_embed(ctx, ctx.settings.content_prefix + CANARY_UNRELATED)
+        vectors["unrelated"] = vector_record(unrelated)
+        to_relevant, to_unrelated = _cosine_or_none(query, relevant), _cosine_or_none(query, unrelated)
+        values["margin"] = (
+            _finite(to_relevant - to_unrelated, 6) if to_relevant is not None and to_unrelated is not None else None
+        )
+        # An escalation is not a step failure, so it passes through with its values.
+        if not v1.embedding_canary_passes(query, relevant, unrelated):
+            raise Escalation("ESCALATE: zembed canary", values)
+        if ctx.stored_chunk is not None:
+            chunk, stored = ctx.stored_chunk()
+            vectors["stored_chunk"] = vector_record(stored)
+            direct = lemond_embed(ctx, ctx.settings.content_prefix + chunk)
+            vectors["direct_chunk"] = vector_record(direct)
+            similarity = _cosine_or_none(stored, direct)
+            values["stored_vector_cosine"] = _finite(similarity, 6)
+            if similarity is None or not similarity >= STORED_VECTOR_MINIMUM_COSINE:
+                raise Escalation(
+                    "ESCALATE: zembed canary (stored vector differs from the settings-prefixed embedding)", values
+                )
+        else:
+            values["stored_vector_cosine"] = "not-applicable"
     return values
 
 
@@ -1287,19 +1619,24 @@ def zerank_qualification(ctx: Context) -> dict[str, Any]:
             raise Blocked(NEEDS_OWNER_RESTART)
         raise Blocked(f"NEEDS: re-save the RAG config or restart {ctx.unit}")
     if health.status != 200 or (health.json() or {}).get("status") != "qualified":
-        raise ScenarioFailure(f"retrieval health returned HTTP {health.status}{error_detail(health)}")
+        raise response_failure(f"retrieval health returned HTTP {health.status}", health,
+                              {"health_status": health.status})
     query, documents = rag_gate_constants()
-    response = ctx.lemond.json(
-        "POST",
-        LEMOND_API["rerank"],
-        {"model": ctx.settings.reranking_model, "query": query, "documents": list(documents)},
-    )
-    scores = validate_rerank_results(
-        response.get("results") if isinstance(response, dict) else None, len(documents)
-    )
-    if scores[0] <= max(scores[1:]):
-        raise ScenarioFailure("the relevant document was not ranked first")
-    return {"health": "qualified", "scores": [round(score, 6) for score in scores]}
+    values: dict[str, Any] = {"health": "qualified"}
+    # Health is measured; a failed or malformed rerank keeps it.
+    with keeping(values, SCENARIO_FAILURES):
+        response = ctx.lemond.json(
+            "POST",
+            LEMOND_API["rerank"],
+            {"model": ctx.settings.reranking_model, "query": query, "documents": list(documents)},
+        )
+        scores = validate_rerank_results(
+            response.get("results") if isinstance(response, dict) else None, len(documents)
+        )
+        values["scores"] = [round(score, 6) for score in scores]
+        if scores[0] <= max(scores[1:]):
+            raise ScenarioFailure("the relevant document was not ranked first", values)
+    return values
 
 
 def file_processing_error(webui: Endpoint, token: str, file_id: str) -> str:
@@ -1316,8 +1653,8 @@ def file_processing_error(webui: Endpoint, token: str, file_id: str) -> str:
         record = None
     data = record.get("data") if isinstance(record, dict) else None
     error = data.get("error") if isinstance(data, dict) else None
-    # The stored error can name server paths or addresses; it reaches receipts.
-    return public_detail(str(error), 500) if error else "no stored error"
+    # Private failure text: public files carry public_detail's summary of it.
+    return " ".join(str(error).split())[:500] if error else "no stored error"
 
 
 def _wait_for_file(ctx: Context, file_id: str) -> None:
@@ -1340,53 +1677,56 @@ def _wait_for_file(ctx: Context, file_id: str) -> None:
 
 def cited_answer(ctx: Context) -> dict[str, Any]:
     body, content_type = multipart_file("file", HANDBOOK_NAME, handbook_bytes(), "text/markdown")
-    started = time.monotonic()
-    upload = ctx.webui.request("POST", API["files"], body=body, content_type=content_type, token=ctx.token)
-    if upload.status != 200 or not isinstance((upload.json() or {}).get("id"), str):
-        raise ScenarioFailure(f"handbook upload returned HTTP {upload.status}{error_detail(upload)}")
-    file_id = upload.json()["id"]
-    timings = {"upload_s": round(time.monotonic() - started, 3)}
-    try:
+    timings: dict[str, float] = {}
+    # Filled as the scenario measures, so every failure, from the upload to
+    # the cleanup delete, keeps the timings and records taken before it.
+    values: dict[str, Any] = {
+        "timings": timings,
+        # Open WebUI 0.11.4 records a file source's upload name on its
+        # chunks' metadata, so that is the one source name the check
+        # requires (filename only, per the #89 ruling).
+        "expected_source_name": HANDBOOK_NAME,
+    }
+    with keeping(values, SCENARIO_FAILURES):
         started = time.monotonic()
-        _wait_for_file(ctx, file_id)
-        timings["index_s"] = round(time.monotonic() - started, 3)
-        started = time.monotonic()
-        response = ctx.webui.request(
-            "POST",
-            API["chat"],
-            payload={
-                "model": ctx.chat_model,
-                "stream": True,
-                "temperature": 0,
-                "params": {"temperature": 0},
-                "messages": [{"role": "user", "content": CITED_ANSWER_PROMPT}],
-                "files": [{"type": "file", "id": file_id}],
-            },
-            token=ctx.token,
-        )
-        timings["chat_s"] = round(time.monotonic() - started, 3)
-        if response.status != 200:
-            raise ScenarioFailure(f"file-scoped chat returned HTTP {response.status}{error_detail(response)}")
-        text, sources = parse_chat_response(response.body, response.content_type)
-        summary = summarize_sources(sources)
-        values = {
-            "timings": timings,
-            "sources": summary,
-            # Open WebUI 0.11.4 records a file source's upload name on its
-            # chunks' metadata, so that is the one source name the check
-            # requires (filename only, per the #89 ruling).
-            "expected_source_name": HANDBOOK_NAME,
-            "fact_present": CANONICAL_FACT in text,
-        }
-        if not cited_answer_passes(text, summary, HANDBOOK_NAME):
-            raise ScenarioFailure(json.dumps(values, sort_keys=True, ensure_ascii=False))
-    except BaseException:
-        # Clean up on every path, but never let the cleanup hide the failure.
-        _delete_file(ctx, file_id)
-        raise
-    deleted = _delete_file(ctx, file_id)
-    if deleted != 200:
-        raise ScenarioFailure(f"the handbook delete returned {deleted}; the uploaded file remains")
+        upload = ctx.webui.request("POST", API["files"], body=body, content_type=content_type, token=ctx.token)
+        timings["upload_s"] = round(time.monotonic() - started, 3)
+        if upload.status != 200 or not isinstance((upload.json() or {}).get("id"), str):
+            raise response_failure(f"handbook upload returned HTTP {upload.status}", upload)
+        file_id = upload.json()["id"]
+        try:
+            started = time.monotonic()
+            _wait_for_file(ctx, file_id)
+            timings["index_s"] = round(time.monotonic() - started, 3)
+            started = time.monotonic()
+            response = ctx.webui.request(
+                "POST",
+                API["chat"],
+                payload={
+                    "model": ctx.chat_model,
+                    "stream": True,
+                    "temperature": 0,
+                    "params": {"temperature": 0},
+                    "messages": [{"role": "user", "content": CITED_ANSWER_PROMPT}],
+                    "files": [{"type": "file", "id": file_id}],
+                },
+                token=ctx.token,
+            )
+            timings["chat_s"] = round(time.monotonic() - started, 3)
+            if response.status != 200:
+                raise response_failure(f"file-scoped chat returned HTTP {response.status}", response)
+            text, sources = parse_chat_response(response.body, response.content_type)
+            summary = summarize_sources(sources)
+            values.update(sources=summary, fact_present=CANONICAL_FACT in text)
+            if not cited_answer_passes(text, summary, HANDBOOK_NAME):
+                raise ScenarioFailure(json.dumps(values, sort_keys=True, ensure_ascii=False), values)
+        except BaseException:
+            # Clean up on every path, but never let the cleanup hide the failure.
+            _delete_file(ctx, file_id)
+            raise
+        deleted = _delete_file(ctx, file_id)
+        if deleted != 200:
+            raise ScenarioFailure(f"the handbook delete returned {deleted}; the uploaded file remains", values)
     return values
 
 
@@ -1429,27 +1769,29 @@ def stt(ctx: Context) -> dict[str, Any]:
         "POST", API["transcriptions"], body=body, content_type=content_type, token=ctx.token
     )
     elapsed = round(time.monotonic() - started, 3)
-    if response.status != 200:
-        raise ScenarioFailure(f"transcription returned HTTP {response.status}{error_detail(response)}")
-    result = response.json()
-    if not isinstance(result, dict):
-        result = {}
-    text = result.get("text")
-    if not isinstance(text, str):
-        text = ""
-    language = result.get("language")
-    if not isinstance(language, str):
-        language = None
-    values = {
+    values: dict[str, Any] = {
         "transcription_s": elapsed,
-        "language": language,
-        "word_count": len(normalize_words(text).split()),
         "whisper": {"model": ctx.whisper_model, **whisper_pin_record(ctx.whisper_model)},
     }
-    if not transcription_passes(text, language):
-        raise ScenarioFailure(f"transcription did not match: {normalize_words(text)[:120]}")
-    if ctx.journal is not None and "WhisperModel initialization failed" in ctx.journal():
-        raise ScenarioFailure("the journal shows a Whisper model load failure")
+    # The transcription is timed; a failed or malformed reply keeps the time.
+    with keeping(values, SCENARIO_FAILURES):
+        if response.status != 200:
+            raise response_failure(f"transcription returned HTTP {response.status}", response)
+        result = response.json()
+        if not isinstance(result, dict):
+            result = {}
+        text = result.get("text")
+        if not isinstance(text, str):
+            text = ""
+        language = result.get("language")
+        if not isinstance(language, str):
+            language = None
+        language = constrained_language(language)
+        values.update(language=language, word_count=len(normalize_words(text).split()))
+        if not transcription_passes(text, language):
+            raise ScenarioFailure(f"transcription did not match: {normalize_words(text)[:120]}", values)
+        if ctx.journal is not None and "WhisperModel initialization failed" in ctx.journal():
+            raise ScenarioFailure("the journal shows a Whisper model load failure", values)
     return values
 
 
@@ -1473,21 +1815,23 @@ SCENARIO_FAILURES = (
 
 def run_scenario(ctx: Context, scenario_id: str) -> ScenarioResult:
     started = time.monotonic()
+    error_type: str | None = None
+    content_type: str | None = None
     try:
         values = SCENARIOS[scenario_id](ctx)
         result, detail = PASS, "ok"
     except Escalation as error:
         # The lead decides on the values the canary computed, so keep them.
-        values, result, detail = dict(error.values), ESCALATE, str(error)
+        values, result, detail, error_type = dict(error.values), ESCALATE, str(error), "Escalation"
     except Blocked as error:
-        values, result, detail = {}, BLOCKED, str(error)
+        values, result, detail, error_type = failure_values(error), BLOCKED, str(error), "Blocked"
     except SCENARIO_FAILURES as error:
-        values, result, detail = {}, FAIL, f"{type(error).__name__}: {error}"
-    # An exception's text can carry whatever a server returned; the detail
-    # goes into receipts and evidence, so it is redacted here, once.
-    if result != PASS:
-        detail = public_detail(detail, RESULT_DETAIL_LIMIT)
-    return ScenarioResult(scenario_id, result, detail, round(time.monotonic() - started, 3), values)
+        # A failed check keeps what it measured.  The detail is private text:
+        # a public receipt carries only public_detail's summary of it.
+        values, result, detail, error_type = failure_values(error), FAIL, failure_text(error), failure_type(error)
+        content_type = getattr(error, "content_type", None)
+    return ScenarioResult(scenario_id, result, detail, round(time.monotonic() - started, 3), values, error_type,
+                          content_type)
 
 
 def run_scenarios(ctx: Context, scenario_ids: Sequence[str]) -> list[ScenarioResult]:
@@ -1518,8 +1862,23 @@ def build_receipt(
     health: Any,
     results: Sequence[ScenarioResult],
     precondition: str | None = None,
+    public: bool = True,
 ) -> dict[str, Any]:
+    """The re-smoke receipt.
+
+    The public form carries ``public_detail``'s summary of every non-PASS
+    detail, of the precondition, and of any private text in the values; the
+    private form (``public=False``) carries their full text.
+    ``publish_receipt`` gates the public form.
+    """
+
     codes = [item.result for item in results] + ([BLOCKED] if precondition else [])
+
+    def detail(item: ScenarioResult) -> str:
+        if public and item.result != PASS:
+            return public_detail(item.detail, error_type=item.error_type, content_type=item.content_type)
+        return item.detail
+
     lemond = {
         key: health[key]
         for key in ("version", "start_time", "started_at", "uptime")
@@ -1544,27 +1903,50 @@ def build_receipt(
             "chat": chat_model,
         },
         "settings_source": settings.source if settings else None,
-        "precondition": precondition,
+        "precondition": (
+            public_detail(precondition, error_type="Blocked") if public and precondition else precondition
+        ),
         "scenarios": [
             {
                 "id": item.id,
                 "result": item.result,
-                "detail": item.detail,
+                "detail": detail(item),
                 "duration_s": item.duration_s,
-                "values": item.values,
+                "values": public_values(item.values) if public else private_values(item.values),
             }
             for item in results
         ],
         "exit_code": aggregate_exit_code(codes),
     }
-    v1.assert_public_safe(receipt)
     return receipt
 
 
-def write_receipt(path: Path, receipt: Mapping[str, Any]) -> None:
-    v1.assert_public_safe(receipt)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(receipt, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
+def private_receipt_path(path: Path) -> Path:
+    """Where the private receipt, with the full failure details, sits beside the public one."""
+
+    return path.with_name(f"{path.stem}.private{path.suffix or '.json'}")
+
+
+def publish_receipt(path: Path, public: dict[str, Any], private: dict[str, Any],
+                    secrets: Iterable[str] = ()) -> tuple[int, str | None]:
+    """Gate the public receipt, then write the private one with the final verdict, then the public one.
+
+    The gate runs first, so the private receipt (``private_receipt_path``,
+    mode 0600) records the run's final ``exit_code`` and its
+    ``public_withheld`` reason (None when the public receipt was written).  A
+    withheld public receipt turns a passing run into a failing one; 75 and 3
+    stand.  Returns the final exit code and the reason.
+    """
+
+    reason = public_withhold_reason(public, secrets)
+    exit_code = public["exit_code"]
+    if reason is not None and exit_code == EXIT_PASS:
+        exit_code = EXIT_FAIL
+    private["exit_code"], private["public_withheld"] = exit_code, reason
+    write_private(private_receipt_path(path), private)
+    if reason is None:
+        write_public(path, public)
+    return exit_code, reason
 
 
 # ---------------------------------------------------------------------------
@@ -1650,7 +2032,7 @@ def model_registration(webui: Endpoint, token: str, model_id: str) -> str:
         return "unregistered"
     if response.status in (401, 403):
         return "inaccessible"
-    raise ScenarioFailure(f"the model entry read returned HTTP {response.status}{error_detail(response)}")
+    raise response_failure(f"the model entry read returned HTTP {response.status}", response)
 
 
 def register_chat_model(webui: Endpoint, token: str, model_id: str) -> str:
@@ -1672,8 +2054,8 @@ def register_chat_model(webui: Endpoint, token: str, model_id: str) -> str:
     created = webui.request("POST", API["model_create"], payload=form, token=token)
     # A concurrent create answers 401 "taken"; the read below settles either way.
     if model_registration(webui, token, model_id) != "registered":
-        raise ScenarioFailure(
-            f"registering the chat model returned HTTP {created.status}{error_detail(created)}"
+        raise response_failure(
+            f"registering the chat model returned HTTP {created.status}", created
         )
     return "created" if created.status == 200 else "existing"
 
@@ -1744,6 +2126,8 @@ def _resmoke(args: argparse.Namespace) -> int:
     health: Any = None
     results: list[ScenarioResult] = []
     precondition: str | None = None
+    # Secrets this run loaded or was issued, for the gate's exact-value rules.
+    issued: list[str] = []
     try:
         try:
             if args.target == "acceptance" and args.root is None:
@@ -1779,15 +2163,17 @@ def _resmoke(args: argparse.Namespace) -> int:
             )
             email = credential("resmoke-email", args.credentials_dir)
             password = credential("resmoke-password", args.credentials_dir)
+            issued.append(password)
             try:
                 token = signin(webui, email, password)
             except (OSError, http.client.HTTPException, ScenarioFailure) as error:
                 raise Blocked(
                     f"Open WebUI is unreachable or rejected the smoke sign-in ({type(error).__name__})"
                 ) from error
+            issued.append(token)
             chat_model = webui_chat_model(webui, token, args.chat_model)
         except Blocked as error:
-            precondition = public_detail(str(error), RESULT_DETAIL_LIMIT)
+            precondition = str(error)
             print(f"precondition BLOCKED {precondition}", flush=True)
         else:
             ctx = Context(
@@ -1798,18 +2184,32 @@ def _resmoke(args: argparse.Namespace) -> int:
     except BaseException as error:
         # An unexpected error or an interrupt still leaves a FAIL receipt; the
         # detail names only the error type so the receipt stays public-safe.
-        results.append(ScenarioResult("open-webui.resmoke.run", FAIL, type(error).__name__, 0.0))
+        results.append(ScenarioResult("open-webui.resmoke.run", FAIL, type(error).__name__, 0.0,
+                                      error_type=type(error).__name__))
         raise
     finally:
         # Every run that gets this far leaves a receipt with its exit code,
         # except a rehearsal, which writes no evidence-shaped file.
-        receipt = build_receipt(
-            target=args.target, mode=args.mode, settings=settings, chat_model=args.chat_model,
-            health=health, results=results, precondition=precondition,
-        )
-        receipt["whisper_model"] = args.whisper_model
+        receipts = {
+            public: build_receipt(
+                target=args.target, mode=args.mode, settings=settings, chat_model=args.chat_model,
+                health=health, results=results, precondition=precondition, public=public,
+            )
+            for public in (True, False)
+        }
+        receipt = receipts[True]
+        for each in receipts.values():
+            each["whisper_model"] = args.whisper_model
         if args.mode != "rehearsal":
-            write_receipt(args.receipt, receipt)
+            # The gate runs first; the private receipt keeps the full failure
+            # details and the final verdict, and the public one, with their
+            # summaries, is written only past the gate.  The gate knows the
+            # smoke password and session token when the run got that far; the
+            # re-smoke never holds Open WebUI's own secrets.
+            receipt["exit_code"], reason = publish_receipt(args.receipt, receipt, receipts[False], issued)
+            if reason is not None:
+                print(f"receipt: NOT written publicly ({reason}); the private receipt is "
+                      f"{private_receipt_path(args.receipt)}", file=sys.stderr)
     return receipt["exit_code"]
 
 

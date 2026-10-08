@@ -1,9 +1,12 @@
 import contextlib
+import hashlib
+import http.client
 import importlib.util
 import io
 import json
 import os
 import re
+import shutil
 import sqlite3
 import sys
 import subprocess
@@ -39,6 +42,23 @@ def load(name, path):
 kit_module = load("accept_open_webui_household", KIT)
 sc = kit_module.sc
 v1 = kit_module.v1
+
+# The gitleaks gate runs a stub by default, so the tests need no gitleaks and
+# stay fast; OWUI_GITLEAKS_STUB_EXIT sets its exit code.
+_gitleaks_stub = tempfile.TemporaryDirectory(prefix="owui-gitleaks-stub-")
+_gitleaks_patch = mock.patch.object(sc, "GITLEAKS", str(Path(_gitleaks_stub.name) / "gitleaks"))
+
+
+def setUpModule():
+    path = Path(_gitleaks_stub.name) / "gitleaks"
+    path.write_text("#!/bin/sh\ncat >/dev/null\nexit \"${OWUI_GITLEAKS_STUB_EXIT:-0}\"\n")
+    path.chmod(0o755)
+    _gitleaks_patch.start()
+
+
+def tearDownModule():
+    _gitleaks_patch.stop()
+    _gitleaks_stub.cleanup()
 
 
 def packaged_env():
@@ -1412,12 +1432,12 @@ class ProductionDocTests(unittest.TestCase):
     def test_both_runbooks_carry_the_base_whisper_pin(self):
         pin = sc.whisper_pin_record(sc.DEFAULT_WHISPER_MODEL)
         self.assertIn(f"rev={pin['revision']}", self.doc)
-        for name, digest in pin["files"].items():
+        for name, digest in ((item["name"], item["sha256"]) for item in pin["files"]):
             self.assertIn(f"| `{name}` | `{digest}` |", self.doc)
             self.assertIn(f'"$src/{name}"', self.doc)
         acceptance = (REPO_ROOT / "docs" / "maintainers" / "open-webui-household-acceptance.md").read_text(encoding="utf-8")
         self.assertIn(f"`{pin['revision']}`", acceptance)
-        for name, digest in pin["files"].items():
+        for name, digest in ((item["name"], item["sha256"]) for item in pin["files"]):
             self.assertIn(f"| `{name}` | `{digest}` |", acceptance)
         self.assertIn(f"`{sc.JFK_FLAC_SHA256}`", acceptance)
 
@@ -1582,21 +1602,24 @@ class FailureDetailTests(unittest.TestCase):
     MODEL_NOT_FOUND = b'{"detail":"Model not found"}'
 
     def test_a_wrong_refusal_records_open_webuis_detail(self):
-        reply = kit_module.ChatReply(400, "", [], "Model not found", self.MODEL_NOT_FOUND)
+        reply = kit_module.ChatReply(400, "", [], "Model not found", self.MODEL_NOT_FOUND, "application/json")
         record = kit_module.refusal_record(reply)
+        # A chat's error detail is private text: whole in private copies, a summary in public ones.
         self.assertEqual((record["status"], record["fixed_detail"], record["detail"]), (400, False, "Model not found"))
+        self.assertIsInstance(record["detail"], sc.PrivateText)
+        self.assertEqual(sc.public_values(record)["detail"],
+                         sc.public_detail("Model not found", status=400, content_type="application/json"))
         fixed = kit_module.ChatReply(503, "", [], kit_module._rag_unavailable_detail(), b"")
         self.assertIsNone(kit_module.refusal_record(fixed)["detail"])
         self.assertIsNone(kit_module.reply_detail(200, "ignored"))
-        long_detail = "x" * 500
-        self.assertLessEqual(len(kit_module.reply_detail(400, long_detail)), sc.ERROR_DETAIL_LIMIT)
 
     def test_the_cited_check_keeps_the_failed_chats_status_and_detail(self):
-        with mock.patch.object(kit_module, "file_chat", return_value=(400, "", {"count": 0, "names": []},
-                                                                      "Model not found")):
+        reply = kit_module.ChatReply(400, "", [], "Model not found", b"", "application/json")
+        with mock.patch.object(kit_module, "file_chat", return_value=reply):
             check = kit_module.cited_check(mock.Mock(), "t", "chat", "f1")
         self.assertEqual(check, {"cited": False, "status": 400, "detail": "Model not found", "fact_present": False,
-                                 "sources": {"count": 0, "names": []}})
+                                 "sources": {"count": 0, "names": [], "scores": []}})
+        self.assertIsInstance(check["detail"], sc.PrivateText)
 
     def test_the_cited_check_reads_the_upload_name_from_0_11_4_chunk_metadata(self):
         # Open WebUI 0.11.4 echoes the request's {"type": "file", "id"} item as
@@ -1692,6 +1715,365 @@ class FailureDetailTests(unittest.TestCase):
                                                 "open_webui_start": 50.0, "sign_in": 0.25, "chat": 0.75})
         self.assertEqual(rollback["state_restore_s"], 69.0)
         self.assertIn("before_clock_s", rollback)
+
+
+class FailedStepValuesTests(unittest.TestCase):
+    """A failed step keeps its measured values; the trial runs once and promises every value."""
+
+    drill_mocks = FailureDetailTests.drill_mocks
+    LAPS = {"systemctl": 0.5, "restore_tuple": 15.0, "start_open_webui": 50.0, "admin_token": 0.25,
+            "cited_check": 0.75, "start_qdrant": 2.0, "start_support_units": 1.0}
+
+    def drill_trial(self, directory):
+        kit = make_kit(directory, rehearsal=True)
+        kit.raw.mkdir(parents=True)
+        kit.anchor.mkdir(parents=True)
+        (kit.anchor / "anchor.json").write_text("{}")
+        trial = kit_module.Trial(kit)
+        trial.listed_chat_model = "chat"
+        trial.seed_file = "f1"
+        trial.anchor = {"epoch_bound": 0, "archives": [{}]}
+        return kit, trial
+
+    def run_step(self, trial, step_id, action):
+        with contextlib.redirect_stdout(io.StringIO()):
+            trial.step(step_id, action)
+        return trial.steps[-1]
+
+    def assert_public_values(self, kit, trial, step):
+        # JSON-safe (no NaN or inf) and public-safe once in the evidence.
+        json.dumps(step.values, allow_nan=False)
+        evidence = kit_module.build_evidence(kit, trial, sc.EXIT_FAIL, False)
+        json.dumps(evidence, allow_nan=False)
+        v1.assert_public_safe(evidence)
+        recorded = next(item for item in evidence["steps"] if item["id"] == step.id)
+        self.assertEqual(recorded["values"], step.values)
+
+    def test_a_failed_restore_drill_records_its_measurements(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit, trial = self.drill_trial(directory)
+            with self.drill_mocks(kit, self.LAPS):
+                step = self.run_step(trial, kit_module.RESTORE_DRILL, trial.restore_drill)
+            self.assertEqual(step.result, sc.FAIL)
+            # The ceiling overrun's measurements, not only the detail (a summary in public copies).
+            self.assertEqual(step.values["restore_s"], 67.5)
+            self.assertEqual(step.values["ceiling_s"], kit_module.LIMITS["restore_s"])
+            self.assertEqual(step.values["phases_s"], {"stop": 1.0, "restore_tuple": 15.0, "open_webui_start": 50.5,
+                                                       "sign_in": 0.25, "chat": 0.75})
+            self.assertTrue(step.values["cited_fact"])
+            self.assertEqual(step.values["a_d3"], {"passes": True})
+            self.assertEqual(step.values["pre_restore_divergence"], {"sentinel": True})
+            self.assertIn("route", step.values)
+            self.assertIn("one_admin", step.values)
+            self.assert_public_values(kit, trial, step)
+
+    def test_a_failed_rollback_drill_records_its_measurements(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit, trial = self.drill_trial(directory)
+            with self.drill_mocks(kit, self.LAPS):
+                step = self.run_step(trial, kit_module.ROLLBACK_DRILL, trial.rollback_drill)
+            self.assertEqual(step.result, sc.FAIL)
+            self.assertEqual(step.values["state_restore_s"], 69.0)
+            self.assertEqual(step.values["ceiling_s"], kit_module.LIMITS["rollback_state_s"])
+            self.assertEqual(step.values["phases_s"], {"qdrant_start": 2.0, "restore_tuple": 15.0,
+                                                       "support_units": 1.0, "open_webui_start": 50.0,
+                                                       "sign_in": 0.25, "chat": 0.75})
+            self.assertIn("before_clock_s", step.values)
+            self.assertEqual(step.values["legacy_service"], {"before": {}, "after": {}})
+            self.assertFalse(step.values["acceptance_listener_on_8080"])
+            self.assert_public_values(kit, trial, step)
+
+    def test_a_drill_whose_route_check_fails_keeps_the_drills_measurements(self):
+        route = {"https_status": 502, "websocket_status": 101, "listener_findings": []}
+
+        def failing_route(*_args, **_kwargs):
+            raise sc.ScenarioFailure(json.dumps(route, sort_keys=True), route)
+
+        with tempfile.TemporaryDirectory() as directory:
+            kit, trial = self.drill_trial(directory)
+            with self.drill_mocks(kit, self.LAPS), mock.patch.object(kit_module, "route_checks", failing_route), \
+                    mock.patch.object(kit_module, "one_admin") as one_admin:
+                step = self.run_step(trial, kit_module.RESTORE_DRILL, trial.restore_drill)
+            one_admin.assert_not_called()
+            self.assertEqual(step.result, sc.FAIL)
+            self.assertEqual(step.detail, f"ScenarioFailure: {json.dumps(route, sort_keys=True)}")
+            self.assertEqual(step.values["route"], route)
+            self.assertEqual(step.values["restore_s"], 67.5)
+            self.assertNotIn("one_admin", step.values)
+            self.assert_public_values(kit, trial, step)
+
+    def test_a_failed_restart_records_its_measurements(self):
+        # The step's own start, then the restart's start and end.
+        clock = iter([0.0, 100.0, 100.0 + kit_module.LIMITS["restart_s"] + 5.0])
+        with tempfile.TemporaryDirectory() as directory:
+            kit = make_kit(directory)
+            trial = kit_module.Trial(kit)
+            with mock.patch.multiple(kit_module, snapshot_resources=mock.DEFAULT, require_lemond_ready=mock.DEFAULT,
+                                     systemctl=mock.DEFAULT, wait_open_webui=mock.DEFAULT, wait_until=mock.DEFAULT), \
+                    mock.patch.object(kit_module.time, "monotonic", side_effect=lambda: next(clock, 200.0)):
+                step = self.run_step(trial, "open-webui.acceptance.ready.restart", trial.restart)
+            self.assertEqual(step.result, sc.FAIL)
+            self.assertEqual(step.values, {"restart_to_ready_s": kit_module.LIMITS["restart_s"] + 5.0,
+                                           "ceiling_s": kit_module.LIMITS["restart_s"]})
+            self.assert_public_values(kit, trial, step)
+
+    def test_a_failed_resources_step_records_every_value_with_the_cache_inventory(self):
+        unit = "owui-acc-open-webui.service"
+        oom = [{"units": {unit: {"oom_kill": 1, "NRestarts": 0, "memory_peak": 10}}}]
+        end = ["state/open-webui/cache/staged.bin", "tmp/open-webui/scratch"]
+        qdrant = mock.Mock()
+        qdrant.shapes.return_value = {"open-webui_files": {"points": 7}}
+        with tempfile.TemporaryDirectory() as directory:
+            kit = make_kit(directory)
+            kit.raw.mkdir(parents=True)
+            (kit.raw / kit_module.STAGED_INVENTORY).write_text(json.dumps(end[:1]))
+            trial = kit_module.Trial(kit)
+            trial.anchor = {"sizes": {"open-webui": 3}, "snapshot_bytes": 9}
+            with mock.patch.object(kit_module, "snapshot_resources"), \
+                    mock.patch.object(kit_module, "read_jsonl", return_value=oom), \
+                    mock.patch.object(kit_module.Kit, "qdrant", return_value=qdrant), \
+                    mock.patch.object(kit_module, "tree_sizes", return_value={"apparent_bytes": 5}), \
+                    mock.patch.object(kit_module, "cache_inventory", return_value=end):
+                step = self.run_step(trial, "open-webui.acceptance.resources", trial.resources)
+            self.assertEqual(step.result, sc.FAIL)
+            # The detail still names only the gates; the values keep everything.
+            self.assertIn("oom_kills", step.detail)
+            self.assertFalse(step.values["passes"])
+            self.assertEqual(step.values["oom_kills"][unit], 1)
+            self.assertIn("unplanned_restarts", step.values)
+            self.assertEqual(step.values["qdrant_storage"], {"apparent_bytes": 5})
+            self.assertEqual(step.values["points"], {"open-webui_files": 7})
+            self.assertEqual((step.values["anchor"], step.values["snapshot_bytes"]), ({"open-webui": 3}, 9))
+            self.assertEqual(step.values["cache_inventory"]["new_files"], ["tmp/open-webui/scratch"])
+            self.assert_public_values(kit, trial, step)
+
+    def test_failure_values_are_json_safe(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit = make_kit(directory)
+            trial = kit_module.Trial(kit)
+            unsafe = {
+                "kit_path": f"{kit.root}/state/open-webui/cache/x",
+                "nested": [{"api_key": "s3cret"}, ("a", float("nan"))],
+                "inf": float("inf"), "ratio": 0.5, "count": 3, "ok": True, "none": None,
+            }
+
+            def failing():
+                raise sc.ScenarioFailure("measured", unsafe)
+
+            step = self.run_step(trial, "open-webui.acceptance.privacy", failing)
+            text = json.dumps(step.values, allow_nan=False)
+            for private in ("s3cret", directory):
+                self.assertNotIn(private, text)
+            self.assertEqual(step.values["kit_path"], "<root>/state/open-webui/cache/x")
+            self.assertEqual(step.values["nested"][1], ["a", None])
+            self.assertIsNone(step.values["inf"])
+            self.assertEqual((step.values["ratio"], step.values["count"], step.values["ok"], step.values["none"]),
+                             (0.5, 3, True, None))
+            self.assert_public_values(kit, trial, step)
+
+    def test_a_blocked_step_keeps_values_only_when_its_exception_carries_them(self):
+        with tempfile.TemporaryDirectory() as directory:
+            trial = kit_module.Trial(make_kit(directory))
+            carrying = sc.Blocked("NEEDS OWNER: x")
+            carrying.values = {"health": 503}  # type: ignore[attr-defined]
+            for error, expected in ((carrying, {"health": 503}), (sc.Blocked("NEEDS OWNER: y"), {})):
+                def blocked(error=error):
+                    raise error
+
+                with self.subTest(expected=expected), self.assertRaises(kit_module.Stop):
+                    self.run_step(trial, "b", blocked)
+                self.assertEqual((trial.steps[-1].result, trial.steps[-1].values), (sc.BLOCKED, expected))
+
+    def test_other_step_failures_record_no_values(self):
+        with tempfile.TemporaryDirectory() as directory:
+            trial = kit_module.Trial(make_kit(directory))
+
+            def failing():
+                raise OSError("no such file")
+
+            step = self.run_step(trial, "a", failing)
+            self.assertEqual((step.result, step.values), (sc.FAIL, {}))
+
+    # Errors other than a check's failure that escape after a drill measured
+    # its timing: the drill, the patched kit function, and its error.
+    POST_MEASUREMENT_ERRORS = (
+        (kit_module.RESTORE_DRILL, "route_checks", TimeoutError("timed out")),
+        (kit_module.RESTORE_DRILL, "one_admin", http.client.RemoteDisconnected("Remote end closed connection")),
+        (kit_module.RESTORE_DRILL, "a_d3_checks", sqlite3.OperationalError("database is locked")),
+        (kit_module.RESTORE_DRILL, "start_caddy", subprocess.CalledProcessError(1, ["systemctl", "start"])),
+        (kit_module.ROLLBACK_DRILL, "route_checks", TimeoutError("timed out")),
+        (kit_module.ROLLBACK_DRILL, "one_admin", OSError("connection refused")),
+        (kit_module.ROLLBACK_DRILL, "a_d3_checks", KeyError("epoch")),
+        (kit_module.ROLLBACK_DRILL, "acceptance_listeners_on", OSError("ss failed")),
+    )
+
+    NOT_REACHED = {"route_checks": "route", "one_admin": "one_admin", "a_d3_checks": "a_d3", "start_caddy": "route",
+                   "acceptance_listeners_on": "acceptance_listener_on_8080"}
+
+    def test_an_error_after_a_drills_timing_keeps_the_drills_measurements(self):
+        for drill, target, error in self.POST_MEASUREMENT_ERRORS:
+            with self.subTest(drill=drill, target=target), tempfile.TemporaryDirectory() as directory:
+                kit, trial = self.drill_trial(directory)
+                action = trial.restore_drill if drill == kit_module.RESTORE_DRILL else trial.rollback_drill
+                with self.drill_mocks(kit, self.LAPS), mock.patch.object(kit_module, target, side_effect=error):
+                    step = self.run_step(trial, drill, action)
+                self.assertEqual(step.result, sc.FAIL)
+                # The detail reads as it did before the values were kept.
+                self.assertEqual(step.detail, f"{type(error).__name__}: {error}")
+                timing = "restore_s" if drill == kit_module.RESTORE_DRILL else "state_restore_s"
+                self.assertEqual(step.values[timing], 67.5 if drill == kit_module.RESTORE_DRILL else 69.0)
+                self.assertEqual(set(step.values["phases_s"]), (
+                    {"stop", "restore_tuple", "open_webui_start", "sign_in", "chat"}
+                    if drill == kit_module.RESTORE_DRILL
+                    else {"qdrant_start", "restore_tuple", "support_units", "open_webui_start", "sign_in", "chat"}))
+                self.assertIn("cited_chat", step.values)
+                if target == "one_admin":
+                    self.assertIn("route", step.values)
+                # Nothing past the failure is recorded.
+                self.assertNotIn(self.NOT_REACHED[target], step.values)
+                self.assert_public_values(kit, trial, step)
+
+    def test_a_rollback_whose_second_legacy_read_fails_keeps_the_first(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit, trial = self.drill_trial(directory)
+            failing = subprocess.CalledProcessError(1, ["systemctl", "is-active"])
+            with self.drill_mocks(kit, self.LAPS), \
+                    mock.patch.object(kit_module, "legacy_service_state", side_effect=[{"state": "inactive"}, failing]):
+                step = self.run_step(trial, kit_module.ROLLBACK_DRILL, trial.rollback_drill)
+            self.assertEqual((step.result, step.detail), (sc.FAIL, f"CalledProcessError: {failing}"))
+            self.assertEqual(step.values["legacy_service"], {"before": {"state": "inactive"}})
+            self.assertEqual(step.values["state_restore_s"], 69.0)
+            self.assert_public_values(kit, trial, step)
+
+    def test_a_drill_that_fails_mid_restore_keeps_the_phases_it_measured(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit, trial = self.drill_trial(directory)
+            with self.drill_mocks(kit, self.LAPS), \
+                    mock.patch.object(kit_module, "start_open_webui", side_effect=[None, OSError("no socket")]):
+                step = self.run_step(trial, kit_module.RESTORE_DRILL, trial.restore_drill)
+            self.assertEqual((step.result, step.detail), (sc.FAIL, "OSError: no socket"))
+            self.assertEqual(step.values["phases_s"], {"stop": 1.0, "restore_tuple": 15.0})
+            self.assertEqual(step.values["pre_restore_divergence"], {"sentinel": True})
+            self.assertNotIn("restore_s", step.values)
+            self.assert_public_values(kit, trial, step)
+
+    def test_a_resources_read_that_fails_after_the_gates_keeps_them(self):
+        unit = "owui-acc-open-webui.service"
+        calm = [{"units": {unit: {"oom_kill": 0, "NRestarts": 0, "memory_peak": 10}}}]
+        with tempfile.TemporaryDirectory() as directory:
+            kit = make_kit(directory)
+            trial = kit_module.Trial(kit)
+            with mock.patch.object(kit_module, "snapshot_resources"), \
+                    mock.patch.object(kit_module, "read_jsonl", return_value=calm), \
+                    mock.patch.object(kit_module.Kit, "qdrant"), \
+                    mock.patch.object(kit_module, "tree_sizes", side_effect=OSError("storage unreadable")):
+                step = self.run_step(trial, "open-webui.acceptance.resources", trial.resources)
+            self.assertEqual((step.result, step.detail), (sc.FAIL, "OSError: storage unreadable"))
+            self.assertTrue(step.values["passes"])
+            self.assertEqual(step.values["memory_peak_max_bytes"][unit], 10)
+            self.assert_public_values(kit, trial, step)
+
+    SNAPSHOT = {"label": "snapshot", "units": {}, "slice": {"oom_kill": 0}}
+    # Each setup call that runs before a drill's clock, in order, with the
+    # measurements taken before it.
+    ROLLBACK_SETUP = (
+        ("verify_anchor", set()),
+        ("legacy_service_state", {"archives_match_anchor"}),
+        ("snapshot_resources", {"archives_match_anchor", "legacy_service"}),
+        ("systemctl", {"archives_match_anchor", "legacy_service", "resources_before"}),
+        ("snapshot_pre_rollback_inventory", {"archives_match_anchor", "legacy_service", "resources_before"}),
+        ("remove_tree", {"archives_match_anchor", "legacy_service", "resources_before"}),
+        ("restage_trees", {"archives_match_anchor", "legacy_service", "resources_before"}),
+        ("create_state_directories", {"archives_match_anchor", "legacy_service", "resources_before"}),
+        ("place_whisper", {"archives_match_anchor", "legacy_service", "resources_before"}),
+        ("ledger", {"archives_match_anchor", "legacy_service", "resources_before"}),
+    )
+    RESTORE_SETUP = (
+        ("systemctl", set()),
+        ("admin_token", set()),
+        ("valkey_command", set()),
+        ("backup_anchor", set()),
+        ("verify_anchor", set()),
+        ("start_open_webui", set()),
+        ("marker_divergence", set()),
+        ("snapshot_resources", {"pre_restore_divergence"}),
+        ("ledger", {"pre_restore_divergence", "resources_before"}),
+    )
+
+    def test_a_failing_rollback_setup_call_keeps_what_was_measured_before_it(self):
+        for target, measured in self.ROLLBACK_SETUP:
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as directory:
+                kit, trial = self.drill_trial(directory)
+                with self.drill_mocks(kit, self.LAPS), \
+                        mock.patch.object(kit_module, "legacy_service_state", return_value={"state": "inactive"}), \
+                        mock.patch.object(kit_module, "snapshot_resources", return_value=self.SNAPSHOT), \
+                        mock.patch.object(kit_module, target, side_effect=OSError(f"{target} failed")):
+                    step = self.run_step(trial, kit_module.ROLLBACK_DRILL, trial.rollback_drill)
+                self.assertEqual((step.result, step.detail), (sc.FAIL, f"OSError: {target} failed"))
+                self.assertEqual(set(step.values), {"ceiling_s"} | measured)
+                if "legacy_service" in measured:
+                    self.assertEqual(step.values["legacy_service"], {"before": {"state": "inactive"}})
+                if "resources_before" in measured:
+                    self.assertEqual(step.values["resources_before"], self.SNAPSHOT)
+                self.assert_public_values(kit, trial, step)
+
+    def test_a_failing_restore_setup_call_keeps_what_was_measured_before_it(self):
+        for target, measured in self.RESTORE_SETUP:
+            with self.subTest(target=target), tempfile.TemporaryDirectory() as directory:
+                kit, trial = self.drill_trial(directory)
+                with self.drill_mocks(kit, self.LAPS), \
+                        mock.patch.object(kit_module, "snapshot_resources", return_value=self.SNAPSHOT), \
+                        mock.patch.object(kit_module, target, side_effect=OSError(f"{target} failed")):
+                    step = self.run_step(trial, kit_module.RESTORE_DRILL, trial.restore_drill)
+                self.assertEqual((step.result, step.detail), (sc.FAIL, f"OSError: {target} failed"))
+                self.assertEqual(set(step.values), {"ceiling_s"} | measured)
+                if "resources_before" in measured:
+                    self.assertEqual(step.values["resources_before"], self.SNAPSHOT)
+                self.assert_public_values(kit, trial, step)
+
+    def test_a_failed_gate_read_keeps_the_end_of_trial_snapshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit = make_kit(directory)
+            trial = kit_module.Trial(kit)
+            with mock.patch.object(kit_module, "snapshot_resources", return_value=self.SNAPSHOT), \
+                    mock.patch.object(kit_module, "read_jsonl", side_effect=ValueError("resources.jsonl is malformed")):
+                step = self.run_step(trial, "open-webui.acceptance.resources", trial.resources)
+            self.assertEqual((step.result, step.detail), (sc.FAIL, "ValueError: resources.jsonl is malformed"))
+            self.assertEqual(step.values, {"end_of_trial_snapshot": self.SNAPSHOT})
+            self.assert_public_values(kit, trial, step)
+
+    def test_record_check_keeps_the_steps_values_for_any_step_failure(self):
+        values: dict[str, Any] = {"restore_s": 12.5}
+        for error in (TimeoutError("timed out"), OSError("refused"), KeyError("x")):
+            with self.subTest(error=type(error).__name__):
+                def nested(error=error):
+                    raise error
+
+                with self.assertRaises(kit_module.MeasuredFailure) as raised:
+                    kit_module.record_check(values, "route", nested)
+                self.assertIsInstance(raised.exception, sc.ScenarioFailure)
+                self.assertEqual(str(raised.exception), f"{type(error).__name__}: {error}")
+                self.assertIs(raised.exception.__cause__, error)
+                self.assertEqual(raised.exception.values, {"restore_s": 12.5})
+        # Anything outside the step failures passes through untouched.
+        def blocked():
+            raise sc.Blocked("NEEDS OWNER: x")
+
+        with self.assertRaises(sc.Blocked):
+            kit_module.record_check(values, "route", blocked)
+
+    def test_an_escalation_keeps_its_values_unchanged(self):
+        values = {"margin": 0.1, "vectors": {"query": {"dimensions": 2560, "norm": None}}, "prefix_source": "x"}
+        with tempfile.TemporaryDirectory() as directory:
+            trial = kit_module.Trial(make_kit(directory))
+
+            def escalate():
+                raise sc.Escalation("ESCALATE: zembed canary", values)
+
+            with contextlib.redirect_stdout(io.StringIO()), self.assertRaises(kit_module.Stop):
+                trial.step("c", escalate)
+            self.assertEqual((trial.steps[-1].result, trial.steps[-1].values), (sc.ESCALATE, values))
+            self.assertEqual(trial.steps[-1].detail, "ESCALATE: zembed canary")
 
 
 class PeerTests(unittest.TestCase):
@@ -2703,6 +3085,23 @@ class QdrantPagingTests(unittest.TestCase):
             self.check(self.FakeOpenWebUI(delete_status=500))
         self.assertIn("knowledge", str(raised.exception))
 
+    def test_a_transport_error_after_the_counts_keeps_them_and_still_cleans_up(self):
+        webui = self.FakeOpenWebUI()
+        request = webui.request
+
+        def failing(method, path, **kwargs):
+            if (method, path) == ("POST", sc.API["retrieval_query_collection"]):
+                raise http.client.RemoteDisconnected("Remote end closed connection")
+            return request(method, path, **kwargs)
+
+        webui.request = failing
+        with self.assertRaises(kit_module.MeasuredFailure) as raised:
+            self.check(webui)
+        self.assertEqual(str(raised.exception), "RemoteDisconnected: Remote end closed connection")
+        self.assertEqual(raised.exception.values["points"], {"file": 1100, "knowledge": 1100})
+        self.assertEqual(set(raised.exception.values["timings"]), {"index_s", "knowledge_add_s", "chat_s"})
+        self.assertEqual(webui.deleted, ["knowledge k1", "file f1"])
+
 
 class HybridErrorTests(unittest.TestCase):
     """open-webui.acceptance.failclosed.hybrid-error against fake Open WebUI and Qdrant."""
@@ -2948,6 +3347,21 @@ class HybridErrorTests(unittest.TestCase):
                 with self.assertRaises(sc.ScenarioFailure):
                     self.check(fakes)
                 self.assertEqual((fakes.chats, fakes.deleted, fakes.qdrant_calls), ([], [], []))
+
+    def test_a_transport_error_after_the_fault_chat_keeps_its_record_and_still_cleans_up(self):
+        fakes = self.Fakes()
+        journal = mock.Mock(side_effect=OSError("journalctl failed"))
+        with mock.patch.object(kit_module, "PAGING_POLL_S", 0), mock.patch.object(kit_module, "HYBRID_SETTLE_S", 0.0), \
+                self.assertRaises(kit_module.MeasuredFailure) as raised:
+            kit_module.hybrid_error_check(fakes, fakes.qdrant(), "t", "chat", "f1", journal)
+        values = raised.exception.values
+        self.assertEqual(str(raised.exception), "OSError: journalctl failed")
+        self.assertEqual(values["points"], {"file": 4, "knowledge": 4})
+        self.assertEqual(values["fault"]["status"], 503)
+        self.assertEqual(values["health_after_fault"], 200)
+        self.assertEqual(set(values["timings"]), {"knowledge_add_s", "fault_chat_s"})
+        self.assertEqual(fakes.deleted, ["knowledge k1"])
+        self.assertIsNone(fakes.planted)
 
     def test_a_failed_plant_still_deletes_the_knowledge_base(self):
         fakes = self.Fakes(plant_status=500)
@@ -3353,6 +3767,375 @@ class EvidenceTests(unittest.TestCase):
             void = kit_module.build_evidence(kit, trial, 0, True)
             self.assertTrue(void["disposition"].startswith("void"))
 
+    def finish_with_gitleaks(self, directory, environment):
+        kit, trial = self.trial(directory, rehearsal=False)
+        with mock.patch.dict(os.environ, environment), contextlib.redirect_stdout(io.StringIO()), \
+                contextlib.redirect_stderr(io.StringIO()) as errors:
+            code = trial.finish()
+        return kit, trial, code, errors.getvalue()
+
+    def test_a_gitleaks_finding_withholds_the_public_evidence_and_keeps_the_private(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit, trial, code, errors = self.finish_with_gitleaks(
+                directory, {"OWUI_GITLEAKS_STUB_EXIT": str(sc.GITLEAKS_FINDINGS_EXIT)})
+            self.assertEqual(code, sc.EXIT_FAIL)
+            recorded = trial.steps[-1]
+            self.assertEqual((recorded.id, recorded.result, recorded.detail),
+                             (kit_module.TRIAL_STEPS[-1], sc.FAIL, "gitleaks finding (redacted)"))
+            self.assertIn("NOT written publicly (gitleaks finding (redacted))", errors)
+            self.assertFalse(kit.path("evidence", "public").exists())
+            self.assertTrue((kit.raw / kit_module.PRIVATE_EVIDENCE).is_file())
+
+    def test_a_missing_gitleaks_fails_closed_naming_the_package(self):
+        with tempfile.TemporaryDirectory() as directory, \
+                mock.patch.object(sc, "GITLEAKS", "owui-no-such-gitleaks"):
+            kit, trial, code, errors = self.finish_with_gitleaks(directory, {})
+            self.assertEqual(code, sc.EXIT_FAIL)
+            self.assertEqual((trial.steps[-1].result, trial.steps[-1].detail), (sc.FAIL, sc.GITLEAKS_MISSING))
+            self.assertIn("Arch package gitleaks (extra)", errors)
+            self.assertFalse(kit.path("evidence", "public").exists())
+            self.assertTrue((kit.raw / kit_module.PRIVATE_EVIDENCE).is_file())
+        self.assertIn("gitleaks", kit_module.HOST_TOOLS)
+
+    def test_a_second_gate_withhold_fails_the_evidence_step_in_the_private_copy(self):
+        reason = "gitleaks finding (redacted): generic-api-key at line 9"
+        with tempfile.TemporaryDirectory() as directory:
+            kit, trial = self.trial(directory, rehearsal=False)
+            with mock.patch.object(sc, "public_withhold_reason", side_effect=[None, reason]) as gate, \
+                    contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                code = trial.finish()
+            self.assertEqual((code, gate.call_count), (sc.EXIT_FAIL, 2))
+            self.assertFalse(kit.path("evidence", "public").exists())
+            private = json.loads((kit.raw / kit_module.PRIVATE_EVIDENCE).read_text())
+            evidence_step = private["steps"][-1]
+            self.assertEqual((evidence_step["id"], evidence_step["result"], evidence_step["detail"]),
+                             (kit_module.TRIAL_STEPS[-1], sc.FAIL, reason))
+            self.assertEqual((private["exit_code"], private["disposition"], private["public_withheld"]),
+                             (sc.EXIT_FAIL, "not accepted", reason))
+            self.assertEqual((trial.steps[-1].result, trial.steps[-1].detail), (sc.FAIL, reason))
+
+    def test_the_gate_gets_the_trials_issued_secrets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit, trial = self.trial(directory, rehearsal=False)
+            with mock.patch.object(kit_module.Trial, "issued_secrets", return_value=["issued-secret-1"]), \
+                    mock.patch.object(sc, "public_withhold_reason", return_value=None) as gate, \
+                    contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                trial.finish()
+            self.assertEqual([call.args[1] for call in gate.call_args_list], [["issued-secret-1"]] * 2)
+
+    def test_issued_secrets_cover_the_credstore_and_the_session_tokens(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit = make_kit(directory)
+            kit.save_state(credential_route="plaintext-0400")
+            kit.credstore.mkdir(parents=True)
+            stored = {"webui-secret-key": "webui-secret-value", "admin-email": kit_module.ADMIN_EMAIL,
+                      "admin-name": kit_module.ADMIN_NAME, "resmoke-email": kit_module.ADMIN_EMAIL,
+                      "valkey-url": "redis://owui:valkey-password-1@127.0.0.1:16379/0",
+                      "admin-final-password": "final-password-value"}
+            for name, value in stored.items():
+                kit.store_credential(name, value)
+            trial = kit_module.Trial(kit)
+            trial.token, trial.pre_backup_session = "session-token-a", ""
+            issued = trial.issued_secrets()
+        self.assertEqual(sorted(issued), sorted(["session-token-a", "webui-secret-value", "final-password-value",
+                                                 "redis://owui:valkey-password-1@127.0.0.1:16379/0",
+                                                 "valkey-password-1"]))
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertEqual(kit_module.Trial(make_kit(directory)).issued_secrets(), [])
+
+    @unittest.skipIf(shutil.which("gitleaks") is None, "gitleaks is not installed")
+    def test_the_real_gitleaks_withholds_a_trial_secret_in_a_step_value(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit, trial = self.trial(directory, rehearsal=False)
+            trial.steps[0].values["observed"] = "the relay answered with session-token-value-77 and stopped"
+            trial.token = "session-token-value-77"
+            with mock.patch.object(sc, "GITLEAKS", "gitleaks"), contextlib.redirect_stdout(io.StringIO()), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                code = trial.finish()
+            self.assertEqual(code, sc.EXIT_FAIL)
+            self.assertRegex(trial.steps[-1].detail, r"^gitleaks finding \(redacted\): owui-kit-secret-1 at line \d+$")
+            self.assertFalse(kit.path("evidence", "public").exists())
+
+    def test_private_text_is_summarized_publicly_and_kept_whole_privately(self):
+        text = "Bad Gateway from upstream: Authorization: Bearer abc.def"
+        digest = hashlib.sha256(text.encode()).hexdigest()[:16]
+        with tempfile.TemporaryDirectory() as directory:
+            kit, trial = self.trial(directory, rehearsal=False)
+            trial.steps[0] = kit_module.Step(trial.steps[0].id, sc.PASS, "ok", 1.0,
+                                             {"journal_warning": sc.PrivateText(text)})
+            trial.steps[1] = kit_module.Step(trial.steps[1].id, sc.FAIL, "ScenarioFailure: x", 1.0,
+                                             {"cited_chat": {"detail": sc.PrivateText(text, 502, "text/plain")}},
+                                             "ScenarioFailure")
+            public = kit_module.build_evidence(kit, trial, sc.EXIT_FAIL, False)
+            private = kit_module.build_evidence(kit, trial, sc.EXIT_FAIL, False, public=False)
+            v1.assert_public_safe(public)
+            self.assertNotIn("Bearer", json.dumps(public))
+            passing, failing = public["steps"][0]["values"], public["steps"][1]["values"]
+            self.assertTrue(passing["journal_warning"].endswith(f"sha256:{digest}; {sc.PRIVATE_DETAIL_NOTE}"))
+            self.assertTrue(failing["cited_chat"]["detail"].startswith("HTTP 502; text/plain; "))
+            self.assertIn(digest, failing["cited_chat"]["detail"])
+            self.assertEqual(private["steps"][0]["values"]["journal_warning"], text)
+            self.assertEqual(private["steps"][1]["values"]["cited_chat"]["detail"], text)
+
+    def test_unit_properties_records_the_journal_warning_as_private_text(self):
+        line = "systemd[1]: owui-acc-open-webui.service: IP firewall unavailable on host bpf-01"
+        with tempfile.TemporaryDirectory() as directory:
+            trial = kit_module.Trial(make_kit(directory))
+            with mock.patch.object(kit_module, "a_id2_rows", return_value=[]), \
+                    mock.patch.object(kit_module, "unit_show", return_value={}), \
+                    mock.patch.object(kit_module.Trial, "open_webui_journal", return_value=f"start\n{line}\n"):
+                values = trial.unit_properties()
+        self.assertIsInstance(values["journal_warning"], sc.PrivateText)
+        self.assertEqual(values["journal_warning"], line)
+        self.assertNotIn("bpf-01", sc.public_values(values)["journal_warning"])
+
+    def test_a_native_tools_message_error_is_private_text(self):
+        attempt = {"message": {"output": [], "error": {"content": "upstream exploded: secret-ish detail"}},
+                   "completion_s": 1.0}
+        values = kit_module.native_values({"attempts": [attempt, attempt], "mode": kit_module.NATIVE_MODE_RETRIED})
+        for record in (values, values["first_attempt"]):
+            self.assertIsInstance(record["message_error"], sc.PrivateText)
+        public = sc.public_values(values)
+        self.assertNotIn("exploded", json.dumps(public))
+        self.assertEqual(sc.private_values(values)["first_attempt"]["message_error"], "upstream exploded: secret-ish detail")
+
+    def test_an_http_failure_names_its_media_type_in_the_public_step_detail(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit, trial = self.trial(directory, rehearsal=False)
+            trial.steps = []
+            response = sc.Response(502, "text/html; charset=utf-8", b"<html>bad gateway</html>")
+
+            def failing():
+                raise sc.response_failure("the knowledge-scoped chat returned HTTP 502", response)
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                trial.step("open-webui.acceptance.qdrant.paging", failing)
+            evidence = kit_module.build_evidence(kit, trial, sc.EXIT_FAIL, False)
+        self.assertEqual(trial.steps[0].content_type, "text/html; charset=utf-8")
+        self.assertTrue(evidence["steps"][0]["detail"].startswith("ScenarioFailure; HTTP 502; text/html; "))
+        self.assertNotIn("bad gateway", evidence["steps"][0]["detail"])
+
+    def representative_trial(self, directory):
+        """A record-mode trial whose every step carries values shaped like the kit's real ones (all PASS)."""
+
+        kit, trial = self.trial(directory, rehearsal=False)
+        candidate = json.loads(CANDIDATE_SET.read_text(encoding="utf-8"))
+        deployed = [entry for entry in candidate["archives"] if entry["role"] == "deployed"]
+        digest = hashlib.sha256(b"representative").hexdigest()
+        handbook_reply = kit_module.ChatReply(200, sc.CANONICAL_FACT, [], None, b"", "text/event-stream")
+        summary = sc.summarize_sources([{
+            "source": {"type": "file", "id": "2b6f3c7e-9a51-4c38-8d1e-5b0f4e7a1c92"}, "document": ["chunk"],
+            "metadata": [{"name": sc.HANDBOOK_NAME, "source": sc.HANDBOOK_NAME}], "distances": [0.2778, 0.0556]}])
+        cited = {"status": 200, "detail": kit_module.reply_detail(200, None), "fact_present": True, "sources": summary}
+        refusal = kit_module.refusal_record(kit_module.ChatReply(503, "", [], kit_module._rag_unavailable_detail(), b""))
+        attempt = {"message": {"output": [{"type": "function_call", "name": "view_knowledge_file", "call_id": "c1"},
+                                          {"type": "function_call_output", "call_id": "c1",
+                                           "output": '{"error": "x", "status": 503}'}]}, "completion_s": 4.2}
+        unit = {"oom_kill": 0, "NRestarts": 0, "memory_peak": 812_000_000, "CPUUsageNSec": 91_000_000_000,
+                "state": "active"}
+        snapshot = {"label": "before restore", "t": 1_791_000_000.0, "units": {u: dict(unit) for u in kit.units()},
+                    "slice": {"unit": kit.slice, "state": "active", "oom_kill": 0}}
+        gates = kit_module.resource_gates([snapshot])
+        phases = {"stop": 1.2, "restore_tuple": 14.9, "open_webui_start": 11.0, "sign_in": 0.3, "chat": 5.1}
+        a_d3 = {"quick_check": "ok", "alembic_head": kit_module.ALEMBIC_HEAD, "digests_match": True,
+                "collections_match": True, "tuple_match": True, "epoch_above_bound": True,
+                "pre_backup_session_status": 401, "fresh_login": True, "valkey_sentinel_present": True, "passes": True}
+        route = {"https_status": 200, "websocket_status": 101, "listener_findings": []}
+        admin = {"enable_signup": False, "admin_count": 1, "user_count": 1}
+        shapes = {name: {"present": True, "size": kit_module.QDRANT_DIMENSIONS, "distance": "Cosine", "points": 12,
+                         "indexes": ["metadata.file_id", "metadata.hash", "tenant_id"]} for name in kit_module.COLLECTIONS}
+        drill = {"ceiling_s": 40.0, "phases_s": phases, "pre_restore_divergence": {"sentinel": True, "file": True},
+                 "resources_before": snapshot, "reserved_epoch_above_bound": True, "restore_s": 32.5,
+                 "cited_fact": True, "cited_chat": cited, "a_d3": a_d3, "route": route, "one_admin": admin}
+        values = {
+            "open-webui.acceptance.identity.archives": {
+                "manifest": {"schema": candidate["schema"], "candidate_set": candidate["candidate_set"],
+                             "adoption_main_commit": candidate["adoption_main_commit"], "sha256": digest},
+                "archives": [{"name": e["archive"]["filename"], "size": e["archive"]["size"],
+                              "sha256": e["archive"]["sha256"], "source_commit": e["archive"]["source_commit"],
+                              "source_commit_basis": e["source_commit_basis"]} for e in deployed],
+                "bound_not_deployed": [], "external_inputs_declared": candidate["external_inputs"],
+                "supporting": [{"package": "valkey", "version": "8.1.4-1", "source": "host"}],
+                "host_providers": {name: "1.0-1" for name in kit_module.HOST_PROVIDERS},
+                "providers_of_record": {"note": kit_module.PROVIDERS_OF_RECORD_NOTE, "absent": [],
+                                        "packages": [{"package": "python-ctranslate2-gfx1151", "version": "4.7.2-1",
+                                                      "source": "host", "foreign": True}]},
+                "module_origins": {"open_webui": "<root>/tree/open-webui/opt/open-webui/lib/python3.14/site-packages"},
+                "whisper": {"model": "base", **sc.whisper_pin_record("base")},
+                "jfk_flac_sha256": sc.JFK_FLAC_SHA256,
+                "speech": {"provider": "python-ctranslate2-gfx1151 4.7.2-1", "device": "cpu",
+                           "compute_type": "int8 (upstream default)", "hf_hub_offline": "1"},
+            },
+            "open-webui.acceptance.identity.unit-properties": {
+                "rows": [{"unit": "open-webui.service", "property": "credentials", "packaged": "systemd-creds (system)",
+                          "acceptance": "systemd-creds", "status": "rewritten", "reason": "user credentials"},
+                         {"unit": "open-webui.service", "property": "acceptance.env OPENAI_API_KEYS",
+                          "packaged": "", "acceptance": "", "status": "overlay",
+                          "reason": "allowlisted acceptance overlay key"}],
+                "effective": {"IPAddressAllow": "loopback/8 loopback/128", "IPAddressDeny": "0.0.0.0/0 ::/0"},
+                "journal_warning": None},
+            "open-webui.acceptance.ready.first-start": {"ready_s": 41.2, "alembic_head": kit_module.ALEMBIC_HEAD,
+                                                        "migration_errors": 0, "qdrant_fresh": True},
+            "open-webui.acceptance.profile.persisted": {
+                "persisted_keys": sorted(kit_module.PROFILE_PERSISTENT_KEYS), "overlay_keys": ["RAG_OPENAI_API_BASE_URL"],
+                "environment_keys": ["WEBUI_URL"], "unclassified": [], "absent": [], "mismatched": []},
+            "open-webui.acceptance.auth.one-admin": admin,
+            "open-webui.acceptance.ready.restart": {"restart_to_ready_s": 18.4, "ceiling_s": 25.0},
+            "open-webui.acceptance.qdrant.g4": {"version": kit_module.QDRANT_VERSION, "fresh_state": True,
+                                                "collections": shapes, "runtime_roles": ["prw"],
+                                                "runtime_holds_admin_key": False,
+                                                "negative_probes": {"r_upsert": 403, "prw_create": 403, "prw_delete": 403}},
+            "open-webui.acceptance.connections.no-stored-secret": {
+                "runtime_credentials": sorted(kit_module.OPEN_WEBUI_SECRETS + ("session-epoch",)),
+                "nonempty_key_fields": []},
+            "open-webui.resmoke.zembed-canary": {"dimensions": 2560, "margin": 0.412305, "prefix_source": "process-environ",
+                                                 "stored_vector_cosine": 0.999998,
+                                                 "vectors": {"query": {"dimensions": 2560, "norm": 1.0}}},
+            "open-webui.resmoke.zerank-qualification": {"health": "qualified", "scores": [0.981204, 0.013377]},
+            "open-webui.acceptance.route.caddy-uds": route,
+            "open-webui.resmoke.cited-answer": {"timings": {"upload_s": 0.2, "index_s": 3.4, "chat_s": 6.1},
+                                                "sources": summary, "expected_source_name": sc.HANDBOOK_NAME,
+                                                "fact_present": True},
+            "open-webui.acceptance.failclosed.reranker-down": {
+                "latching_retrieval_status": 503, "plain_chat_status": 200, "retrieval_status": 503,
+                "file_chat_status": 503, "health_status": 503, "fixed_detail": True, "file_chat_sources": 0,
+                "plain_chat_detail": None, "file_chat_detail": None},
+            "open-webui.acceptance.failclosed.full-context": {"health_before": 503, "health_after": 503,
+                                                              "chats": {"mixed": refusal, "all-full": refusal}},
+            "open-webui.acceptance.failclosed.native-tools": {
+                **kit_module.native_values({"attempts": [attempt], "mode": kit_module.NATIVE_MODE_PLAIN}),
+                "health_before": 503, "health_after": 503, "knowledge_tool_outputs": ['{"error": "x", "status": 503}'],
+                "handbook_text": False},
+            "open-webui.acceptance.failclosed.recovery": {"latched_status": 503, "health_after_resave": 200,
+                                                          "cited_fact": True, "cited_chat": cited},
+            "open-webui.acceptance.gate.explicit-reads": {
+                **kit_module.native_values({"attempts": [attempt], "mode": kit_module.NATIVE_MODE_PLAIN}),
+                "health": 200, "view_knowledge_file_calls": 1, "view_knowledge_file_holds_fact": True,
+                "chats": {"mixed": {"status": 200, "sources": 1, "fact_in_sources": True,
+                                    "detail": kit_module.reply_detail(handbook_reply.status, None)}}},
+            "open-webui.resmoke.stt": {"transcription_s": 2.874, "language": "en", "word_count": 22,
+                                       "whisper": {"model": "base", **sc.whisper_pin_record("base")}},
+            "open-webui.acceptance.privacy": {
+                "ip_address_policy": {"IPAddressAllow": "loopback/8", "IPAddressDeny": "0.0.0.0/0 ::/0"},
+                "ip_address_policy_enforced": False, "peer_samples": 412, "remote_provider_peers": None,
+                "peer_violations": [], "telemetry": dict(sc.TELEMETRY_EXPECTED),
+                "haystack": {"unit_in_slice": False, "module_mapped": False, "env_keys": [],
+                             "host_service_active": False, "host_service_enabled": False}},
+            kit_module.RESTORE_DRILL: drill,
+            kit_module.ROLLBACK_DRILL: {**drill, "state_restore_s": 35.1, "before_clock_s": 52.0, "window_s": 101.3,
+                                        "archives_match_anchor": True,
+                                        "legacy_service": {"before": {"ActiveState": "inactive"},
+                                                           "after": {"ActiveState": "inactive"}},
+                                        "legacy_service_touched": False, "acceptance_listener_on_8080": False},
+            "open-webui.acceptance.qdrant.paging": {
+                "corpus": {"name": kit_module.PAGING_CORPUS_NAME, "bytes": 715_000, "sha256": digest,
+                           "sections": kit_module.PAGING_SECTIONS, "planted_section": kit_module.PAGING_PLANTED_SECTION},
+                "rag_settings": {"ENABLE_RAG_HYBRID_SEARCH": True, "HYBRID_BM25_WEIGHT": 0.5, "CHUNK_SIZE": 1000},
+                "scroll_page": kit_module.QDRANT_SCROLL_PAGE, "timings": {"index_s": 61.2},
+                "points": {"file": 1100, "knowledge": 1100}, "retrieved": {"sources": 1, "chunks": 3, "planted": True},
+                "bm25": {"section": 417, "query": "0417", "documents": 3, "found": True}},
+            "open-webui.acceptance.failclosed.hybrid-error": {
+                "health_before": 200, "timings": {"knowledge_add_s": 2.0}, "points": {"file": 4, "knowledge": 4},
+                "fault_point": {"id": kit_module.HYBRID_FAULT_POINT, "in_knowledge_tenant": True,
+                                "metadata_null": True, "tenant_points_with_fault": 5},
+                "fault": {**refusal, "sentinel": False}, "health_after_fault": 200, "fallback_refusal_logged": True,
+                "tenant_points_after_fault_delete": 4,
+                "recovery": {"status": 200, "sources": 1, "fact_in_sources": True, "finite_scores": True},
+                "health_after_recovery": 200, "cleanup": {"knowledge_delete": 200, "knowledge_points_after_delete": 0}},
+            "open-webui.acceptance.resources": {
+                "end_of_trial_snapshot": snapshot, **gates, "qdrant_storage": {"apparent_bytes": 9_000_000,
+                                                                              "allocated_bytes": 9_400_000},
+                "points": {name: 12 for name in kit_module.COLLECTIONS}, "anchor": {"apparent_bytes": 52_000_000},
+                "snapshot_bytes": {name: 400_000 for name in kit_module.COLLECTIONS},
+                "cache_inventory": kit_module.cache_inventory_record(
+                    ["state/open-webui/cache/whisper/models/x"], None,
+                    ["state/open-webui/cache/tiktoken/9b5ad71b2ce5302211f9c61530b329a4922fc6a4"])},
+        }
+        for step in trial.steps:
+            step.values = values.get(step.id, {})
+            step.duration_s = 1.0
+        return kit, trial
+
+    @unittest.skipIf(shutil.which("gitleaks") is None, "gitleaks is not installed")
+    def test_the_real_gitleaks_passes_a_full_record_mode_evidence_document(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit, trial = self.representative_trial(directory)
+            trial.steps.append(kit_module.Step(kit_module.TRIAL_STEPS[-1], sc.PASS, "ok", 0.0,
+                                               {"trial_set_count": 1, "restore_drills": 1, "rollback_drills": 1}))
+            evidence = kit_module.build_evidence(kit, trial, sc.EXIT_PASS, False)
+            self.assertEqual({step["id"] for step in evidence["steps"]}, set(kit_module.TRIAL_STEPS))
+            with mock.patch.object(sc, "GITLEAKS", "gitleaks"):
+                self.assertIsNone(sc.public_withhold_reason(evidence, ["issued-secret-not-in-the-document"]))
+
+    def test_the_trial_collects_every_token_it_obtains(self):
+        with tempfile.TemporaryDirectory() as directory:
+            trial = kit_module.Trial(make_kit(directory))
+            tokens = iter(["session-a-0000", "session-b-1111"])
+            with mock.patch.object(kit_module, "admin_token", side_effect=lambda _kit: next(tokens)):
+                trial.token = trial.sign_in()
+                trial.token = trial.sign_in()  # supersedes the first
+            trial.issued_tokens.add("readonly-jwt-2222")
+            self.assertEqual(trial.issued_secrets(), ["readonly-jwt-2222", "session-a-0000", "session-b-1111"])
+            issued: set[str] = set()
+            kit = trial.kit
+            with mock.patch.object(kit_module, "admin_token", return_value="fresh-a-d3-3333"), \
+                    mock.patch.object(kit_module, "data_dir", return_value=Path(directory)), \
+                    mock.patch.object(kit_module.sqlite3, "connect") as connect, \
+                    mock.patch.object(kit_module, "credential_fingerprints", return_value={}), \
+                    mock.patch.object(kit_module, "valkey_sentinel", return_value=None), \
+                    mock.patch.object(kit_module, "ledger", return_value=1), \
+                    mock.patch.object(kit_module.Kit, "uds"):
+                connect.return_value.__enter__.return_value.execute.return_value.fetchone.return_value = ("ok",)
+                (kit.anchor).mkdir(parents=True)
+                (kit.anchor / "fingerprints.json").write_text("{}")
+                qdrant = mock.Mock()
+                qdrant.shapes.return_value = {}
+                kit_module.a_d3_checks(kit, {"epoch_bound": 0, "collections": {}, "data_digest": "", "rdb_sha256": "",
+                                             "credstore_digest": ""},
+                                       {"data_digest": "", "rdb_sha256": "", "credstore_digest": ""}, qdrant, "s",
+                                       issued)
+            self.assertEqual(issued, {"fresh-a-d3-3333"})
+
+    def test_a_native_tools_chat_failure_keeps_its_media_type_through_cleanup(self):
+        webui = mock.Mock()
+        webui.json.return_value = {"id": "c1"}
+        webui.request.return_value = sc.Response(502, "text/html; charset=utf-8", b"<html>bad gateway</html>")
+        with self.assertRaises(sc.ScenarioFailure) as raised:
+            kit_module.native_tool_chat(webui, "t", "chat", "f1")
+        error = raised.exception
+        self.assertEqual((error.status, error.content_type), (502, "text/html; charset=utf-8"))
+        self.assertIn("cleanup: chat c1 DELETE returned 502", str(error))
+        self.assertTrue(sc.public_detail(str(error), error_type="ScenarioFailure",
+                                         content_type=error.content_type).startswith("ScenarioFailure; HTTP 502; text/html; "))
+
+    def test_an_unknown_tool_name_is_private_text(self):
+        attempt = {"message": {"output": [{"type": "function_call", "name": "view_knowledge_file", "call_id": "1"},
+                                          {"type": "function_call", "name": "exfiltrate_everything", "call_id": "2"}]},
+                   "completion_s": 1.0}
+        values = kit_module.native_values({"attempts": [attempt], "mode": kit_module.NATIVE_MODE_PLAIN})
+        public, private = sc.public_values(values), sc.private_values(values)
+        self.assertEqual(public["tools_called"][0], "view_knowledge_file")
+        self.assertTrue(public["tools_called"][1].endswith(sc.PRIVATE_DETAIL_NOTE))
+        self.assertNotIn("exfiltrate", json.dumps(public))
+        self.assertEqual(private["tools_called"], ["view_knowledge_file", "exfiltrate_everything"])
+
+    def test_the_public_step_row_carries_only_the_bare_media_type(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit, trial = self.trial(directory, rehearsal=False)
+            header = 'text/html; charset="utf-8"; note="a; b"'
+            trial.steps[0] = kit_module.Step(trial.steps[0].id, sc.FAIL, "ScenarioFailure: x", 1.0, {},
+                                             "ScenarioFailure", header)
+            public = kit_module.build_evidence(kit, trial, sc.EXIT_FAIL, False)
+            private = kit_module.build_evidence(kit, trial, sc.EXIT_FAIL, False, public=False)
+        self.assertEqual(public["steps"][0]["content_type"], "text/html")
+        self.assertEqual(private["steps"][0]["content_type"], header)
+
+    def test_a_clean_trial_writes_the_public_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit, trial, code, _ = self.finish_with_gitleaks(directory, {})
+            self.assertEqual(code, sc.EXIT_PASS)
+            self.assertEqual(len(list(kit.path("evidence", "public").glob("*.json"))), 1)
+
     def test_the_0400_fallback_is_a_trial_condition_not_a_failure(self):
         with tempfile.TemporaryDirectory() as directory:
             kit, trial = self.trial(directory, rehearsal=False)
@@ -3461,25 +4244,32 @@ class EvidenceTests(unittest.TestCase):
                 ["a PASS", "b FAIL ScenarioFailure: head mismatch", "c BLOCKED stub unreachable"],
             )
 
-    def test_a_step_detail_is_redacted_so_the_public_record_is_written(self):
+    def test_a_step_detail_is_summarized_publicly_and_kept_privately(self):
         with tempfile.TemporaryDirectory() as directory:
             kit, trial = self.trial(directory, rehearsal=False)
-            trial.steps[0] = kit_module.Step(
-                trial.steps[0].id, sc.FAIL,
-                f"OSError: cannot read /home/someone/x from 10.1.2.3 for admin@example.org; "
-                f"kept {kit.root}/state/open-webui/data; with api_key=k1", 1.0, {})
+            raw = (f"OSError: GET /x returned HTTP 502: cannot read /home/someone/x from 10.1.2.3 for "
+                   f"admin@example.org; kept {kit.root}/state/open-webui/data; with api_key=k1")
+            trial.steps[0] = kit_module.Step(trial.steps[0].id, sc.FAIL, raw, 1.0, {}, "OSError")
             evidence = kit_module.build_evidence(kit, trial, sc.EXIT_FAIL, False)
             v1.assert_public_safe(evidence)
             detail = evidence["steps"][0]["detail"]
-            for private in ("/home/someone", "10.1.2.3", "admin@example.org", "k1", str(kit.root)):
+            self.assertEqual(detail, sc.public_detail(raw, error_type="OSError"))
+            self.assertTrue(detail.startswith("OSError; HTTP 502; "))
+            for private in ("/home/someone", "10.1.2.3", "admin@example.org", "k1", str(kit.root), "cannot read"):
                 self.assertNotIn(private, detail)
-            # The kit's own path tokens survive, so the detail still says where.
-            self.assertIn("<root>/state/open-webui/data", detail)
+            # PASS details are the kit's own text and stay as they are.
+            self.assertEqual(evidence["steps"][1]["detail"], "ok")
+            private = kit_module.build_evidence(kit, trial, sc.EXIT_FAIL, False, public=False)
+            self.assertEqual(private["steps"][0]["detail"], raw)
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                trial.finish()
+            written = json.loads((kit.raw / kit_module.PRIVATE_EVIDENCE).read_text())
+            self.assertEqual(written["steps"][0]["detail"], raw)
 
     def test_an_unsafe_record_keeps_the_values_privately(self):
         with tempfile.TemporaryDirectory() as directory:
             kit, trial = self.trial(directory, rehearsal=False)
-            # A step value, not its detail: details are redacted before the check.
+            # A step value, not its detail: a public detail is only a summary.
             trial.steps[0].values["observed"] = "/home/someone/x"
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as errors:
                 code = trial.finish()
