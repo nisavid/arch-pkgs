@@ -810,7 +810,9 @@ instead.
   error detail, a native-tools message error, a journal warning) gets the
   same summary. No upstream free text (error bodies, messages, journal
   lines, headers beyond the media type) reaches a public file; the fixed
-  summary replaces it, and the full text lives in the private copy.
+  summary replaces it, and the text as the kit captured it lives in the
+  private copy (long error bodies are captured with whitespace collapsed and
+  capped, at 4000 characters for an HTTP error detail).
   Structured upstream values (versions, revision ids, collection shapes,
   counts, booleans, settings, timestamps, model ids, source names, scores,
   language codes, tool names) are recorded as measurements, such as the
@@ -1034,10 +1036,10 @@ no receipt in rehearsal mode.
   FAIL row). The receipt follows the trial evidence's rule: no upstream free
   text reaches the public receipt, structured upstream values are recorded
   as measurements, and the kit turns a value that fails its check (a cited
-  source name other than the handbook's, a non-numeric score, a malformed
+  source name other than the handbook's, a score that is not a finite number, a malformed
   language code) into the fixed summary. A non-PASS detail, a precondition, and upstream text in the
   values appear only as the same fixed summary the trial evidence uses; the
-  full text goes to a private receipt beside it, `<out>.private.json` (mode
+  captured text goes to a private receipt beside it, `<out>.private.json` (mode
   0600, never committed). The gate runs first and uses the same rules as the
   trial's, with exact-value rules for the smoke password and the session
   token when the run got that far; the re-smoke never holds Open WebUI's
