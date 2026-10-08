@@ -107,9 +107,12 @@ Every check passed on Python 3.14.6 with PyAV 19.0.1 (`python-av`
 The record is the run's output with one exception: the ownership
 `unowned_note` was corrected after the run, from a generic sentence that
 named inputs which were not mapped and called every other path non-payload.
-The runner's summary step now writes the corrected note, and re-running that
-step alone on the run's raw outputs reproduces this `g0-g2.json` byte for
-byte. No fixture was re-run.
+The runner's summary step now writes the corrected note. On 2026-10-05,
+re-running that step alone on the run's raw outputs, against the same host
+package database, reproduced this `g0-g2.json` byte for byte. The step records
+the current date and live `pacman` ownership, so a later re-run differs in
+`run_date` and wherever host packages have changed since. No fixture was
+re-run.
 
 `provider_profile` in `g0-g2.json` lists the host package versions.
 

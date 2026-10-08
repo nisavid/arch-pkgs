@@ -79,7 +79,8 @@ non-stager keys sit beside the `archive` object, never inside it:
 - `build_inputs` (`open-webui` only): the pinned offline closures.
 
 At the top level, `adoption_main_commit` is the merged `main` commit that the
-tree comparison used. It is not a source commit.
+tree comparison used. It is not the set's source commit: each archive carries
+its own, and it may coincide with one (here, `python-faster-whisper`'s).
 
 ## Per-archive source commit
 
@@ -160,8 +161,8 @@ from `2059571` to `86549fa`: a tree check against `2059571` would compare the
 `main_tree_delta` is unchanged against `86549fa`.
 
 The manifest is edited in place and keeps its file name and `recorded`
-date, because the acceptance kit, its tests, and both runbooks name this file
-as the candidate of record. Git history keeps the 1.2.1-1 binding.
+date, because its tests and both runbooks name this file as the candidate of
+record, and the acceptance kit takes it through `--manifest`. Git history keeps the 1.2.1-1 binding.
 
 ## Archives stay outside git
 

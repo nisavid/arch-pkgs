@@ -13,6 +13,10 @@ The sublane stays deferred and publication-ineligible until
 reviews this evidence. The Open WebUI household-stack cutover owns production
 installation.
 
+`python-faster-whisper` 1.2.1-1 below is superseded by
+[1.2.1-2](../python-faster-whisper-1.2.1-2/) (#124) and is no longer a
+candidate; the CTranslate2 evidence here still applies.
+
 | Archive | Size | SHA-256 |
 | --- | --- | --- |
 | `ctranslate2-4.8.2-1-x86_64.pkg.tar.zst` | 1055772 | `d0843d9254afde3dedd7d92e6e218aae63d559926f3ebffcdbf2827373d8267b` |
