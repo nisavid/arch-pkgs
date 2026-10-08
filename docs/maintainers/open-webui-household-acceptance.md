@@ -811,8 +811,9 @@ instead.
   same summary. No upstream free text (error bodies, messages, journal
   lines, headers beyond the media type) reaches a public file; the fixed
   summary replaces it, and the text as the kit captured it lives in the
-  private copy (long error bodies are captured with whitespace collapsed and
-  capped, at 4000 characters for an HTTP error detail).
+  private copy (some captures, such as the response detail in a failure
+  message, are whitespace-collapsed and truncated; a chat's error detail is
+  kept as received).
   Structured upstream values (versions, revision ids, collection shapes,
   counts, booleans, settings, timestamps, model ids, source names, scores,
   language codes, tool names) are recorded as measurements, such as the
