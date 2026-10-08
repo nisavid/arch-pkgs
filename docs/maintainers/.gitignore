@@ -1,0 +1,6 @@
+# Open WebUI household acceptance: private copies with full failure details
+# (open-webui-household-acceptance.md). Never commit them. The root
+# .gitignore is bound by digest in committed Qdrant evidence, so these rules
+# live here, where acceptance evidence is committed.
+*.private.json
+trial-evidence.json

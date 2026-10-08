@@ -1,10 +1,12 @@
 import contextlib
+import hashlib
 import http.client
 import importlib.util
 import io
 import json
 import os
 import re
+import shutil
 import sqlite3
 import sys
 import subprocess
@@ -1600,22 +1602,24 @@ class FailureDetailTests(unittest.TestCase):
     MODEL_NOT_FOUND = b'{"detail":"Model not found"}'
 
     def test_a_wrong_refusal_records_open_webuis_detail(self):
-        reply = kit_module.ChatReply(400, "", [], "Model not found", self.MODEL_NOT_FOUND)
+        reply = kit_module.ChatReply(400, "", [], "Model not found", self.MODEL_NOT_FOUND, "application/json")
         record = kit_module.refusal_record(reply)
-        # A chat's error detail is recorded as its summary, never its text.
-        self.assertEqual((record["status"], record["fixed_detail"]), (400, False))
-        self.assertEqual(record["detail"], sc.public_detail("Model not found", status=400))
-        self.assertNotIn("Model not found", record["detail"])
+        # A chat's error detail is private text: whole in private copies, a summary in public ones.
+        self.assertEqual((record["status"], record["fixed_detail"], record["detail"]), (400, False, "Model not found"))
+        self.assertIsInstance(record["detail"], sc.PrivateText)
+        self.assertEqual(sc.public_values(record)["detail"],
+                         sc.public_detail("Model not found", status=400, content_type="application/json"))
         fixed = kit_module.ChatReply(503, "", [], kit_module._rag_unavailable_detail(), b"")
         self.assertIsNone(kit_module.refusal_record(fixed)["detail"])
         self.assertIsNone(kit_module.reply_detail(200, "ignored"))
 
     def test_the_cited_check_keeps_the_failed_chats_status_and_detail(self):
-        with mock.patch.object(kit_module, "file_chat", return_value=(400, "", {"count": 0, "names": []},
-                                                                      "Model not found")):
+        reply = kit_module.ChatReply(400, "", [], "Model not found", b"", "application/json")
+        with mock.patch.object(kit_module, "file_chat", return_value=reply):
             check = kit_module.cited_check(mock.Mock(), "t", "chat", "f1")
-        self.assertEqual(check, {"cited": False, "status": 400, "detail": sc.public_detail("Model not found", status=400),
-                                 "fact_present": False, "sources": {"count": 0, "names": []}})
+        self.assertEqual(check, {"cited": False, "status": 400, "detail": "Model not found", "fact_present": False,
+                                 "sources": {"count": 0, "names": [], "scores": []}})
+        self.assertIsInstance(check["detail"], sc.PrivateText)
 
     def test_the_cited_check_reads_the_upload_name_from_0_11_4_chunk_metadata(self):
         # Open WebUI 0.11.4 echoes the request's {"type": "file", "id"} item as
@@ -1751,7 +1755,7 @@ class FailedStepValuesTests(unittest.TestCase):
             with self.drill_mocks(kit, self.LAPS):
                 step = self.run_step(trial, kit_module.RESTORE_DRILL, trial.restore_drill)
             self.assertEqual(step.result, sc.FAIL)
-            # The ceiling overrun's measurements, not only the redacted detail.
+            # The ceiling overrun's measurements, not only the detail (a summary in public copies).
             self.assertEqual(step.values["restore_s"], 67.5)
             self.assertEqual(step.values["ceiling_s"], kit_module.LIMITS["restore_s"])
             self.assertEqual(step.values["phases_s"], {"stop": 1.0, "restore_tuple": 15.0, "open_webui_start": 50.5,
@@ -3793,6 +3797,124 @@ class EvidenceTests(unittest.TestCase):
             self.assertTrue((kit.raw / kit_module.PRIVATE_EVIDENCE).is_file())
         self.assertIn("gitleaks", kit_module.HOST_TOOLS)
 
+    def test_a_second_gate_withhold_fails_the_evidence_step_in_the_private_copy(self):
+        reason = "gitleaks finding (redacted): generic-api-key at line 9"
+        with tempfile.TemporaryDirectory() as directory:
+            kit, trial = self.trial(directory, rehearsal=False)
+            with mock.patch.object(sc, "public_withhold_reason", side_effect=[None, reason]) as gate, \
+                    contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                code = trial.finish()
+            self.assertEqual((code, gate.call_count), (sc.EXIT_FAIL, 2))
+            self.assertFalse(kit.path("evidence", "public").exists())
+            private = json.loads((kit.raw / kit_module.PRIVATE_EVIDENCE).read_text())
+            evidence_step = private["steps"][-1]
+            self.assertEqual((evidence_step["id"], evidence_step["result"], evidence_step["detail"]),
+                             (kit_module.TRIAL_STEPS[-1], sc.FAIL, reason))
+            self.assertEqual((private["exit_code"], private["disposition"], private["public_withheld"]),
+                             (sc.EXIT_FAIL, "not accepted", reason))
+            self.assertEqual((trial.steps[-1].result, trial.steps[-1].detail), (sc.FAIL, reason))
+
+    def test_the_gate_gets_the_trials_issued_secrets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit, trial = self.trial(directory, rehearsal=False)
+            with mock.patch.object(kit_module.Trial, "issued_secrets", return_value=["issued-secret-1"]), \
+                    mock.patch.object(sc, "public_withhold_reason", return_value=None) as gate, \
+                    contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                trial.finish()
+            self.assertEqual([call.args[1] for call in gate.call_args_list], [["issued-secret-1"]] * 2)
+
+    def test_issued_secrets_cover_the_credstore_and_the_session_tokens(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit = make_kit(directory)
+            kit.save_state(credential_route="plaintext-0400")
+            kit.credstore.mkdir(parents=True)
+            stored = {"webui-secret-key": "webui-secret-value", "admin-email": kit_module.ADMIN_EMAIL,
+                      "admin-name": kit_module.ADMIN_NAME, "resmoke-email": kit_module.ADMIN_EMAIL,
+                      "valkey-url": "redis://owui:valkey-password-1@127.0.0.1:16379/0",
+                      "admin-final-password": "final-password-value"}
+            for name, value in stored.items():
+                kit.store_credential(name, value)
+            trial = kit_module.Trial(kit)
+            trial.token, trial.pre_backup_session = "session-token-a", ""
+            issued = trial.issued_secrets()
+        self.assertEqual(sorted(issued), sorted(["session-token-a", "webui-secret-value", "final-password-value",
+                                                 "redis://owui:valkey-password-1@127.0.0.1:16379/0",
+                                                 "valkey-password-1"]))
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertEqual(kit_module.Trial(make_kit(directory)).issued_secrets(), [])
+
+    @unittest.skipIf(shutil.which("gitleaks") is None, "gitleaks is not installed")
+    def test_the_real_gitleaks_withholds_a_trial_secret_in_a_step_value(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit, trial = self.trial(directory, rehearsal=False)
+            trial.steps[0].values["observed"] = "the relay answered with session-token-value-77 and stopped"
+            trial.token = "session-token-value-77"
+            with mock.patch.object(sc, "GITLEAKS", "gitleaks"), contextlib.redirect_stdout(io.StringIO()), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                code = trial.finish()
+            self.assertEqual(code, sc.EXIT_FAIL)
+            self.assertRegex(trial.steps[-1].detail, r"^gitleaks finding \(redacted\): owui-kit-secret-1 at line \d+$")
+            self.assertFalse(kit.path("evidence", "public").exists())
+
+    def test_private_text_is_summarized_publicly_and_kept_whole_privately(self):
+        text = "Bad Gateway from upstream: Authorization: Bearer abc.def"
+        digest = hashlib.sha256(text.encode()).hexdigest()[:16]
+        with tempfile.TemporaryDirectory() as directory:
+            kit, trial = self.trial(directory, rehearsal=False)
+            trial.steps[0] = kit_module.Step(trial.steps[0].id, sc.PASS, "ok", 1.0,
+                                             {"journal_warning": sc.PrivateText(text)})
+            trial.steps[1] = kit_module.Step(trial.steps[1].id, sc.FAIL, "ScenarioFailure: x", 1.0,
+                                             {"cited_chat": {"detail": sc.PrivateText(text, 502, "text/plain")}},
+                                             "ScenarioFailure")
+            public = kit_module.build_evidence(kit, trial, sc.EXIT_FAIL, False)
+            private = kit_module.build_evidence(kit, trial, sc.EXIT_FAIL, False, public=False)
+            v1.assert_public_safe(public)
+            self.assertNotIn("Bearer", json.dumps(public))
+            passing, failing = public["steps"][0]["values"], public["steps"][1]["values"]
+            self.assertTrue(passing["journal_warning"].endswith(f"sha256:{digest}; {sc.PRIVATE_DETAIL_NOTE}"))
+            self.assertTrue(failing["cited_chat"]["detail"].startswith("HTTP 502; text/plain; "))
+            self.assertIn(digest, failing["cited_chat"]["detail"])
+            self.assertEqual(private["steps"][0]["values"]["journal_warning"], text)
+            self.assertEqual(private["steps"][1]["values"]["cited_chat"]["detail"], text)
+
+    def test_unit_properties_records_the_journal_warning_as_private_text(self):
+        line = "systemd[1]: owui-acc-open-webui.service: IP firewall unavailable on host bpf-01"
+        with tempfile.TemporaryDirectory() as directory:
+            trial = kit_module.Trial(make_kit(directory))
+            with mock.patch.object(kit_module, "a_id2_rows", return_value=[]), \
+                    mock.patch.object(kit_module, "unit_show", return_value={}), \
+                    mock.patch.object(kit_module.Trial, "open_webui_journal", return_value=f"start\n{line}\n"):
+                values = trial.unit_properties()
+        self.assertIsInstance(values["journal_warning"], sc.PrivateText)
+        self.assertEqual(values["journal_warning"], line)
+        self.assertNotIn("bpf-01", sc.public_values(values)["journal_warning"])
+
+    def test_a_native_tools_message_error_is_private_text(self):
+        attempt = {"message": {"output": [], "error": {"content": "upstream exploded: secret-ish detail"}},
+                   "completion_s": 1.0}
+        values = kit_module.native_values({"attempts": [attempt, attempt], "mode": kit_module.NATIVE_MODE_RETRIED})
+        for record in (values, values["first_attempt"]):
+            self.assertIsInstance(record["message_error"], sc.PrivateText)
+        public = sc.public_values(values)
+        self.assertNotIn("exploded", json.dumps(public))
+        self.assertEqual(sc.private_values(values)["first_attempt"]["message_error"], "upstream exploded: secret-ish detail")
+
+    def test_an_http_failure_names_its_media_type_in_the_public_step_detail(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit, trial = self.trial(directory, rehearsal=False)
+            trial.steps = []
+            response = sc.Response(502, "text/html; charset=utf-8", b"<html>bad gateway</html>")
+
+            def failing():
+                raise sc.response_failure("the knowledge-scoped chat returned HTTP 502", response)
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                trial.step("open-webui.acceptance.qdrant.paging", failing)
+            evidence = kit_module.build_evidence(kit, trial, sc.EXIT_FAIL, False)
+        self.assertEqual(trial.steps[0].content_type, "text/html; charset=utf-8")
+        self.assertTrue(evidence["steps"][0]["detail"].startswith("ScenarioFailure; HTTP 502; text/html; "))
+        self.assertNotIn("bad gateway", evidence["steps"][0]["detail"])
+
     def test_a_clean_trial_writes_the_public_evidence(self):
         with tempfile.TemporaryDirectory() as directory:
             kit, trial, code, _ = self.finish_with_gitleaks(directory, {})
@@ -3932,7 +4054,7 @@ class EvidenceTests(unittest.TestCase):
     def test_an_unsafe_record_keeps_the_values_privately(self):
         with tempfile.TemporaryDirectory() as directory:
             kit, trial = self.trial(directory, rehearsal=False)
-            # A step value, not its detail: details are redacted before the check.
+            # A step value, not its detail: a public detail is only a summary.
             trial.steps[0].values["observed"] = "/home/someone/x"
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as errors:
                 code = trial.finish()

@@ -166,6 +166,9 @@ BOOTSTRAP_CREDENTIALS = ("admin-email", "admin-name", "admin-bootstrap-password"
 COMMISSION_CREDENTIALS = BOOTSTRAP_CREDENTIALS + ("admin-final-password",)
 RESMOKE_CREDENTIALS = ("resmoke-email", "resmoke-password")
 QDRANT_ADMIN_CREDENTIAL = "qdrant-admin-key"
+# Credentials that name the fixture account rather than guard anything; the
+# gitleaks gate gets no exact-value rule for them (Trial.issued_secrets).
+NOT_SECRET_CREDENTIALS = frozenset({"admin-email", "admin-name", "resmoke-email"})
 ADMIN_EMAIL = "owui-acc-admin@household.invalid"
 ADMIN_NAME = "Acceptance Administrator"
 VALKEY_USER = "open-webui"
@@ -508,8 +511,14 @@ _IPV4_LOOPBACK = re.compile(r"(?<![\d.])127(?:\.\d{1,3}){3}(/\d{1,2})?(?![\d.])"
 
 
 def publicize(value: Any, replacements: Sequence[tuple[str, str]]) -> Any:
-    """Rewrite private paths and loopback addresses into public tokens."""
+    """Rewrite private paths and loopback addresses into public tokens.
 
+    Private text (``sc.PrivateText``) is left as it is: a public copy renders
+    it as a summary, and a private copy keeps it whole.
+    """
+
+    if isinstance(value, sc.PrivateText):
+        return value
     if isinstance(value, str):
         text = value
         for private, token in replacements:
@@ -2152,7 +2161,7 @@ def upload_markdown(webui: sc.Endpoint, token: str, name: str, data: bytes, what
     upload = webui.request("POST", sc.API["files"], body=body, content_type=content_type, token=token)
     file_id = (upload.json() or {}).get("id") if upload.status == 200 else None
     if not isinstance(file_id, str):
-        raise sc.ScenarioFailure(f"{what} upload returned HTTP {upload.status}{sc.error_detail(upload)}")
+        raise sc.response_failure(f"{what} upload returned HTTP {upload.status}", upload)
 
     def processed() -> bool:
         response = webui.request("GET", sc.API["file_status"].format(id=file_id), token=token)
@@ -2194,6 +2203,7 @@ class ChatReply:
     sources: list[dict[str, Any]]
     detail: Any
     body: bytes
+    content_type: str = ""
 
     def holds(self, sentence: str) -> bool:
         """Whether a retrieved source document carries ``sentence``."""
@@ -2237,33 +2247,34 @@ def post_chat(
             detail = (response.json() or {}).get("detail")
         except (json.JSONDecodeError, AttributeError):
             detail = None
-        return ChatReply(response.status, "", [], detail, response.body)
+        return ChatReply(response.status, "", [], detail, response.body, response.content_type)
     text, sources = sc.parse_chat_response(response.body, response.content_type)
-    return ChatReply(response.status, text, sources, None, response.body)
+    return ChatReply(response.status, text, sources, None, response.body, response.content_type)
 
 
-def file_chat(webui: sc.Endpoint, token: str, chat_model: str, file_id: str | None) -> tuple[int, str, dict[str, Any], Any]:
-    reply = post_chat(webui, token, chat_model, [{"type": "file", "id": file_id}] if file_id else None,
-                      sc.CITED_ANSWER_PROMPT if file_id else "Reply with OK.")
-    return reply.status, reply.text, sc.summarize_sources(reply.sources), reply.detail
+def file_chat(webui: sc.Endpoint, token: str, chat_model: str, file_id: str | None) -> ChatReply:
+    return post_chat(webui, token, chat_model, [{"type": "file", "id": file_id}] if file_id else None,
+                     sc.CITED_ANSWER_PROMPT if file_id else "Reply with OK.")
 
 
-def reply_detail(status: int, detail: Any) -> str | None:
-    """A failed chat's error detail for the record: bounded and public-safe; None on success."""
+def reply_detail(status: int, detail: Any, content_type: str | None = None) -> sc.PrivateText | None:
+    """A failed chat's error detail as private text: summarized in public files, whole in private ones; None on success."""
 
     if status == 200 or detail is None:
         return None
-    return sc.public_detail(detail if isinstance(detail, str) else json.dumps(detail, sort_keys=True), status=status)
+    text = detail if isinstance(detail, str) else json.dumps(detail, sort_keys=True)
+    return sc.PrivateText(text, status, content_type or None)
 
 
 def cited_check(webui: sc.Endpoint, token: str, chat_model: str, file_id: str) -> dict[str, Any]:
     """The cited-fact chat: whether it passed, with its status and any error detail."""
 
-    status, text, summary, detail = file_chat(webui, token, chat_model, file_id)
+    reply = file_chat(webui, token, chat_model, file_id)
+    status, text, summary = reply.status, reply.text, sc.summarize_sources(reply.sources)
     return {
         "cited": status == 200 and sc.cited_answer_passes(text, summary, sc.HANDBOOK_NAME),
         "status": status,
-        "detail": reply_detail(status, detail),
+        "detail": reply_detail(status, reply.detail, reply.content_type),
         # Why a 200 chat did not count: the fact, the cited names, or the scores.
         "fact_present": sc.CANONICAL_FACT in text,
         "sources": summary,
@@ -2305,7 +2316,7 @@ def refusal_record(reply: ChatReply) -> dict[str, Any]:
         "status": reply.status,
         "fixed_detail": fixed,
         # Any other refusal's detail, so a wrong refusal says why.
-        "detail": None if fixed else reply_detail(reply.status, reply.detail),
+        "detail": None if fixed else reply_detail(reply.status, reply.detail, reply.content_type),
         "sources": len(reply.sources),
         "handbook_text": reply.handbook_text(),
     }
@@ -2428,7 +2439,7 @@ def native_tool_chat(webui: sc.Endpoint, token: str, chat_model: str, file_id: s
         started = time.monotonic()
         response = webui.request("POST", sc.API["chat"], payload=payload, token=token)
         if response.status != 200:
-            raise sc.ScenarioFailure(f"the native-tools chat returned HTTP {response.status}{sc.error_detail(response)}")
+            raise sc.response_failure(f"the native-tools chat returned HTTP {response.status}", response)
         stored: dict[str, Any] = {}
 
         def done() -> bool:
@@ -2486,7 +2497,8 @@ def attempt_values(attempt: Mapping[str, Any]) -> dict[str, Any]:
     }
     error = message.get("error")
     if error:
-        values["message_error"] = str(error.get("content") if isinstance(error, dict) else error)[:300]
+        # Upstream text: private, summarized in public files.
+        values["message_error"] = sc.PrivateText(str(error.get("content") if isinstance(error, dict) else error)[:300])
     return values
 
 
@@ -2688,7 +2700,7 @@ def paging_check(webui: sc.Endpoint, qdrant: Qdrant, token: str, chat_model: str
             )
             timings["chat_s"] = round(time.monotonic() - started, 3)
             if response.status != 200:
-                raise sc.ScenarioFailure(f"the knowledge-scoped chat returned HTTP {response.status}{sc.error_detail(response)}")
+                raise sc.response_failure(f"the knowledge-scoped chat returned HTTP {response.status}", response)
             _, sources = sc.parse_chat_response(response.body, response.content_type)
             retrieved = retrieved_chunks(sources)
             started = time.monotonic()
@@ -2943,7 +2955,7 @@ def record_check(values: dict[str, Any], key: str, check: Callable[[], dict[str,
         values[key] = check()
     except sc.ScenarioFailure as error:
         values[key] = error.values
-        raise type(error)(str(error), values) from error
+        raise error.with_values(values) from error
     except STEP_FAILURES as error:
         raise MeasuredFailure(failure_text(error), values) from error
 
@@ -3091,6 +3103,8 @@ class Step:
     duration_s: float
     values: dict[str, Any] = dataclasses.field(default_factory=dict)
     error_type: str | None = None
+    # The failing HTTP response's media type, when the failure came from one.
+    content_type: str | None = None
 
     def line(self) -> str:
         return f"{self.id} {self.result} {self.detail}"
@@ -3156,6 +3170,7 @@ class Trial:
     def step(self, step_id: str, action: Callable[[], dict[str, Any] | Passed], *, critical: bool = False) -> None:
         started = time.monotonic()
         error_type: str | None = None
+        content_type: str | None = None
         try:
             outcome, result = action(), sc.PASS
             values, detail = (outcome.values, outcome.detail) if isinstance(outcome, Passed) else (outcome, "ok")
@@ -3167,23 +3182,25 @@ class Trial:
             # The one trial promises every value: a failed step keeps what it
             # measured, and its full detail stays in the private evidence.
             values, result, detail = self.failure_values(error), sc.FAIL, failure_text(error)
-            error_type = sc.failure_type(error)
-        self.record(Step(step_id, result, detail, round(time.monotonic() - started, 3), values, error_type))
+            error_type, content_type = sc.failure_type(error), getattr(error, "content_type", None)
+        self.record(Step(step_id, result, detail, round(time.monotonic() - started, 3), values, error_type,
+                         content_type))
         if result in {sc.ESCALATE, sc.BLOCKED} or (critical and result == sc.FAIL):
             raise Stop()
 
     def failure_values(self, error: BaseException) -> dict[str, Any]:
-        """The values a failed step's exception carries, public-safe.
+        """The values a failed step's exception carries, JSON-safe.
 
-        The path tokens apply first, as they do to a step's detail, so a kit
-        path reads ``<root>/...`` rather than ``<path>``; then every string is
-        redacted like the detail (``sc.public_values``).
+        The kit's path tokens apply first, so a kit path reads ``<root>/...``;
+        private text stays marked (``sc.PrivateText``) until ``build_evidence``
+        renders it as a summary in the public copy and whole in the private
+        one (``sc.render_values``).
         """
 
         values = getattr(error, "values", None)
         if not isinstance(values, Mapping):
             return {}
-        return sc.public_values(publicize(dict(values), self.kit.replacements()))
+        return sc.render_values(publicize(dict(values), self.kit.replacements()), "capture")
 
     def scenario(self, scenario_id: str, ctx: sc.Context) -> None:
         try:
@@ -3192,7 +3209,7 @@ class Trial:
             outcome = sc.ScenarioResult(scenario_id, sc.FAIL, f"{type(error).__name__}: {error}", 0.0,
                                         error_type=type(error).__name__)
         self.record(Step(outcome.id, outcome.result, outcome.detail, outcome.duration_s, outcome.values,
-                         outcome.error_type))
+                         outcome.error_type, outcome.content_type))
         if outcome.result in {sc.ESCALATE, sc.BLOCKED}:
             raise Stop()
 
@@ -3246,7 +3263,9 @@ class Trial:
              if "IP firewall" in line or "IPAddress" in line or "BPF" in line),
             None,
         )
-        return {"rows": rows, "effective": shown, "journal_warning": warning}
+        # A journal line is private text: summarized in public files.
+        return {"rows": rows, "effective": shown,
+                "journal_warning": sc.PrivateText(warning) if warning is not None else None}
 
     def first_start(self) -> dict[str, Any]:
         kit = self.kit
@@ -3391,9 +3410,11 @@ class Trial:
         systemctl("stop", UNITS["relay"])
         query = {"collection_name": f"file-{self.seed_file}", "query": sc.CANONICAL_QUERY}
         latch = uds.request("POST", "/api/v1/retrieval/query/doc", payload=query, token=self.token).status
-        chat_status, _, _, chat_detail = file_chat(uds, self.token, self.chat_id(), None)
+        plain = file_chat(uds, self.token, self.chat_id(), None)
+        chat_status = plain.status
         retrieval = uds.request("POST", "/api/v1/retrieval/query/doc", payload=query, token=self.token)
-        file_status, _, sources, detail = file_chat(uds, self.token, self.chat_id(), self.seed_file)
+        cited = file_chat(uds, self.token, self.chat_id(), self.seed_file)
+        file_status, sources, detail = cited.status, sc.summarize_sources(cited.sources), cited.detail
         health = uds.request("GET", sc.API["rag_health"], token=self.token).status
         retrieval_detail = (retrieval.json() or {}).get("detail") if retrieval.status != 200 else None
         from_gate = _rag_unavailable_detail()
@@ -3405,8 +3426,8 @@ class Trial:
             "health_status": health,
             "fixed_detail": retrieval_detail == from_gate and detail == from_gate,
             "file_chat_sources": sources["count"],
-            "plain_chat_detail": reply_detail(chat_status, chat_detail),
-            "file_chat_detail": None if detail == from_gate else reply_detail(file_status, detail),
+            "plain_chat_detail": reply_detail(chat_status, plain.detail, plain.content_type),
+            "file_chat_detail": None if detail == from_gate else reply_detail(file_status, detail, cited.content_type),
         }
         if not (chat_status == 200 and retrieval.status == 503 and file_status == 503 and health == 503
                 and values["fixed_detail"] and sources["count"] == 0):
@@ -3477,7 +3498,7 @@ class Trial:
             "health": health,
             "chats": {name: {"status": reply.status, "sources": len(reply.sources),
                              "fact_in_sources": reply.holds(sc.CANONICAL_FACT),
-                             "detail": reply_detail(reply.status, reply.detail)}
+                             "detail": reply_detail(reply.status, reply.detail, reply.content_type)}
                       for name, reply in replies.items()},
             "view_knowledge_file_calls": len(views),
             "view_knowledge_file_holds_fact": any(sc.CANONICAL_FACT in text for text in views),
@@ -3828,6 +3849,36 @@ class Trial:
 
         self.step("rehearsal.embedding-prefixes", check)
 
+    def issued_secrets(self) -> list[str]:
+        """The secrets this run issued or loaded, for the gate's exact-value rules; never printed or recorded.
+
+        Every credential in the credstore except the non-secret ones
+        (``NOT_SECRET_CREDENTIALS``), the Valkey password inside
+        ``valkey-url``, and the admin session tokens this trial holds.  A
+        credential that cannot be read (no credstore yet, a failed decrypt)
+        is left out; the gate's default rules still apply.  The stub provider
+        is issued no key: Open WebUI's provider keys stay empty.
+        """
+
+        issued = [token for token in (self.token, self.pre_backup_session) if token]
+        try:
+            names = sorted(path.name.removesuffix(".cred") for path in self.kit.credstore.iterdir() if path.is_file())
+        except OSError:
+            return issued
+        for name in names:
+            if name in NOT_SECRET_CREDENTIALS:
+                continue
+            try:
+                value = self.kit.read_credential(name)
+            except (OSError, subprocess.SubprocessError, KitError):
+                continue
+            issued.append(value)
+            if name == "valkey-url":
+                password = urllib.parse.urlsplit(value).password
+                if password:
+                    issued.append(password)
+        return issued
+
     def drill_counts(self) -> dict[str, int]:
         """How many restore and rollback drills this trial actually ran."""
 
@@ -3835,14 +3886,24 @@ class Trial:
         return {"restore_drills": ran.count(RESTORE_DRILL), "rollback_drills": ran.count(ROLLBACK_DRILL)}
 
     def finish(self) -> int:
+        """Record the evidence step, gate the public evidence, then write the private and public copies.
+
+        The public evidence passes ``v1.assert_public_safe`` and the gitleaks
+        gate twice: on a draft, which sets the evidence step's verdict, and on
+        the final document, which carries that step.  A final withhold turns
+        the evidence step into a FAIL with its reason.  Only then is the
+        private evidence written, so it records the verdict and exit code
+        ``finish`` returns.
+        """
+
         kit = self.kit
         restarted = lemond_restarted(self.lemond_pre, self.lemond_post)
         results = [step.result for step in self.steps]
         exit_code = sc.aggregate_exit_code(results)
         if restarted and exit_code == sc.EXIT_PASS:
             exit_code = sc.EXIT_PRECONDITION
-        # The public form's checks: v1.assert_public_safe, then the gitleaks gate.
-        reason = sc.public_withhold_reason(build_evidence(kit, self, exit_code, restarted))
+        issued = self.issued_secrets()
+        reason = sc.public_withhold_reason(build_evidence(kit, self, exit_code, restarted), issued)
         safe, detail = reason is None, reason or "ok"
         drills = self.drill_counts()
         complete = drills == {"restore_drills": 1, "rollback_drills": 1}
@@ -3850,42 +3911,43 @@ class Trial:
             detail = "a critical failure stopped the trial before both drills ran"
         evidence_step = Step(TRIAL_STEPS[-1], sc.PASS if safe and complete else sc.FAIL, detail, 0.0,
                              {"trial_set_count": 1, **drills})
-        self.record(evidence_step)
+        self.steps.append(evidence_step)
         if (not safe or not complete) and exit_code == sc.EXIT_PASS:
             exit_code = sc.EXIT_FAIL
+        evidence = build_evidence(kit, self, exit_code, restarted)
+        if safe:
+            # The final document carries the evidence step; gate it too.
+            reason = sc.public_withhold_reason(evidence, issued)
+            if reason is not None:
+                safe = False
+                evidence_step.result, evidence_step.detail = sc.FAIL, reason
+                if exit_code == sc.EXIT_PASS:
+                    exit_code = sc.EXIT_FAIL
+                evidence = build_evidence(kit, self, exit_code, restarted)
+        self.steps.pop()
+        self.record(evidence_step)
         if kit.rehearsal:
             print(f"rehearsal bring-up {'PASS' if exit_code == sc.EXIT_PASS else 'FAIL'} (no evidence written)")
             return exit_code
-        evidence = build_evidence(kit, self, exit_code, restarted)
         if restarted:
             print("NEEDS LEAD: Lemonade restarted during the trial; the run is void", file=sys.stderr)
         elif restarted is None:
             print("lemonade restart: not detectable from /api/v1/health; compare the Lemonade service start "
                   "times recorded before and after trial", file=sys.stderr)
         # The one trial's values always survive: the private document, with
-        # every step's full detail, goes to a private raw file first, and only
-        # the public copy, with their summaries, waits on the checks.
-        private = kit.raw / PRIVATE_EVIDENCE
-        private.parent.mkdir(parents=True, exist_ok=True)
-        descriptor = os.open(private, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            handle.write(json.dumps(build_evidence(kit, self, exit_code, restarted, public=False),
-                                    indent=2, sort_keys=True, ensure_ascii=False) + "\n")
-        os.chmod(private, 0o600)
-        if safe:
-            # The final public document adds the evidence step; check it again.
-            reason = sc.public_withhold_reason(evidence)
-            safe, detail = reason is None, reason or detail
-            if not safe and exit_code == sc.EXIT_PASS:
-                exit_code = sc.EXIT_FAIL
+        # every step's full detail, the final verdict, and the withhold reason,
+        # is written after the gate, and only a public copy that passed it
+        # follows.
+        private_document = build_evidence(kit, self, exit_code, restarted, public=False)
+        private_document["public_withheld"] = None if safe else evidence_step.detail
+        private = sc.write_private(kit.raw / PRIVATE_EVIDENCE, private_document)
         if safe:
             destination = kit.path("evidence", "public", f"open-webui-household-acceptance-{time.strftime('%Y-%m-%d', time.gmtime())}.json")
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            destination.write_text(json.dumps(evidence, indent=2, sort_keys=True, ensure_ascii=False) + "\n")
+            sc.write_public(destination, evidence)
             print(f"evidence: {destination}")
         else:
-            print(f"evidence: NOT written publicly ({detail}); the full document is kept privately at {private}",
-                  file=sys.stderr)
+            print(f"evidence: NOT written publicly ({evidence_step.detail}); the full document is kept privately "
+                  f"at {private}", file=sys.stderr)
         expectation = evidence.get("production_expectation")
         if expectation:
             print("production expectation for tools/open_webui_household_scenarios.py PRODUCTION_EXPECTATIONS "
@@ -4103,10 +4165,17 @@ def build_evidence(kit: Kit, trial: Trial, exit_code: int, lemond_restarted_: bo
         "production_expectation": production_expectation_for(kit),
         # A step's detail is exception text that can carry whatever a server
         # returned, so the public form carries only its summary.
-        "steps": [{**dataclasses.asdict(step),
-                   "detail": (sc.public_detail(step.detail, error_type=step.error_type)
-                              if public and step.result != sc.PASS else step.detail)}
-                  for step in trial.steps],
+        "steps": [{
+            "id": step.id,
+            "result": step.result,
+            "detail": (sc.public_detail(step.detail, error_type=step.error_type, content_type=step.content_type)
+                       if public and step.result != sc.PASS else step.detail),
+            "duration_s": step.duration_s,
+            # Private text in the values: a summary in public, whole in private.
+            "values": sc.public_values(step.values) if public else sc.private_values(step.values),
+            "error_type": step.error_type,
+            "content_type": step.content_type,
+        } for step in trial.steps],
     }
     return publicize(document, kit.replacements()) if public else document
 

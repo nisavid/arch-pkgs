@@ -287,13 +287,24 @@ class ScenarioFailure(RuntimeError):
     """The scenario ran and its pass condition does not hold.
 
     ``values`` carries what the check measured before it failed, so the
-    failed row keeps its structured values; the message alone is redacted
-    and truncated on its way to receipts and evidence.
+    failed row keeps its structured values.  The message is private failure
+    text: public receipts and evidence carry only ``public_detail``'s summary
+    of it, and the private copies keep it whole.  ``status`` and
+    ``content_type`` are the HTTP response's, when the failure came from one
+    (``response_failure``), so the summary can name them.
     """
 
-    def __init__(self, message: str, values: Mapping[str, Any] | None = None) -> None:
+    def __init__(self, message: str, values: Mapping[str, Any] | None = None, *,
+                 status: int | None = None, content_type: str | None = None) -> None:
         super().__init__(message)
         self.values: dict[str, Any] = dict(values or {})
+        self.status = status
+        self.content_type = content_type
+
+    def with_values(self, values: Mapping[str, Any]) -> ScenarioFailure:
+        """The same failure (type, message, HTTP status and media type) with ``values``."""
+
+        return type(self)(str(self), values, status=self.status, content_type=self.content_type)
 
 
 class Escalation(RuntimeError):
@@ -340,7 +351,7 @@ def keeping(values: dict[str, Any], failures: tuple[type[BaseException], ...]) -
         merged = {**values, **error.values}
         if merged == error.values:
             raise
-        raise type(error)(str(error), merged) from error
+        raise error.with_values(merged) from error
     except failures as error:
         raise MeasuredFailure(failure_text(error), values) from error
 
@@ -940,7 +951,7 @@ class Endpoint:
     def json(self, method: str, path: str, payload: Any = None, *, token: str | None = None, expected: tuple[int, ...] = (200,)) -> Any:
         response = self.request(method, path, payload=payload, token=token)
         if response.status not in expected:
-            raise ScenarioFailure(f"{method} {path.split('?')[0]} returned HTTP {response.status}{error_detail(response)}")
+            raise response_failure(f"{method} {path.split('?')[0]} returned HTTP {response.status}", response)
         return response.json()
 
 
@@ -957,9 +968,9 @@ def public_detail(text: str, *, error_type: str | None = None, status: int | Non
     """A fixed public summary of a failure detail; no part of the text is copied.
 
     The summary names the error type, the HTTP status (given, or the first
-    ``HTTP <code>`` the text names), the media type, the text's length in
-    bytes, and the first 16 hex digits of its SHA-256.  The text itself lives
-    only in the private copy: the trial's private evidence file
+    ``HTTP <code>`` the text names), the media type when known, the text's
+    length in bytes, and the first 16 hex digits of its SHA-256.  The text
+    itself lives in the private copy: the trial's private evidence file
     (``<root>/evidence/raw/trial-evidence.json``) or the re-smoke's private
     receipt (``private_receipt_path``).
     """
@@ -988,98 +999,219 @@ def failure_type(error: BaseException) -> str:
     return type(error).__name__
 
 
+class PrivateText(str):
+    """Free text copied from upstream into a step's values.
+
+    It is a ``str``, so a private failure message (``json.dumps(values)``)
+    carries it whole.  A public receipt or evidence file renders it as
+    ``public_detail``'s summary (``render_values``); the private copy keeps
+    the text whole.  ``status`` and ``content_type`` are the HTTP
+    response's, when it came from one.
+    """
+
+    status: int | None
+    content_type: str | None
+
+    def __new__(cls, text: str, status: int | None = None, content_type: str | None = None) -> PrivateText:
+        value = super().__new__(cls, text)
+        value.status, value.content_type = status, content_type
+        return value
+
+    def summary(self) -> str:
+        return public_detail(str(self), status=self.status, content_type=self.content_type)
+
+
 REDACTED_FIELD = "redacted_credential_field"
 REDACTED_VALUE = "<redacted credential>"
 
 
-def public_values(value: Any) -> Any:
-    """A failure's measured values, JSON-safe for receipts and evidence.
+def render_values(value: Any, rendering: str) -> Any:
+    """Measured values, JSON-safe, in one rendering: ``"public"``, ``"private"``, or ``"capture"``.
 
     A non-finite float is recorded as None, as ``_finite`` records one;
     tuples and sets become lists, keys and any other object their text.  A
     field v1's own public-safety rule names a credential
     (``v1._contains_secret_field``) is renamed ``redacted_credential_field``
-    (``..._2``, ``..._3`` for more in one mapping) with a redacted value.
+    (``..._2``, ``..._3`` for more in one mapping) with a redacted value.  A
+    ``PrivateText`` becomes its summary in the public rendering and its full
+    text in the private one; ``"capture"`` keeps it for a later rendering.
     Nothing else is rewritten: the public files' checks are
     ``v1.assert_public_safe`` and the gitleaks gate (``public_withhold_reason``).
     """
 
+    if isinstance(value, PrivateText):
+        return value.summary() if rendering == "public" else str(value) if rendering == "private" else value
     if value is None or isinstance(value, (bool, int, str)):
         return value
     if isinstance(value, float):
         return value if math.isfinite(value) else None
     if isinstance(value, Mapping):
-        public: dict[str, Any] = {}
+        rendered: dict[str, Any] = {}
         redacted = 0
         for key, item in value.items():
             name = key if isinstance(key, str) else str(key)
             if v1._contains_secret_field({name: None}):
                 redacted += 1
                 name = REDACTED_FIELD if redacted == 1 else f"{REDACTED_FIELD}_{redacted}"
-                while name in value or name in public:
+                while name in value or name in rendered:
                     redacted += 1
                     name = f"{REDACTED_FIELD}_{redacted}"
-                public[name] = REDACTED_VALUE
+                rendered[name] = REDACTED_VALUE
             else:
-                public[name] = public_values(item)
-        return public
+                rendered[name] = render_values(item, rendering)
+        return rendered
     if isinstance(value, (list, tuple)):
-        return [public_values(item) for item in value]
+        return [render_values(item, rendering) for item in value]
     if isinstance(value, (set, frozenset)):
-        return sorted((public_values(item) for item in value), key=repr)
+        return sorted((render_values(item, rendering) for item in value), key=repr)
     return str(value)
 
 
+def public_values(value: Any) -> Any:
+    """Values as a public file carries them (``render_values``): private text as its summary."""
+
+    return render_values(value, "public")
+
+
+def private_values(value: Any) -> Any:
+    """Values as a private copy carries them (``render_values``): private text whole."""
+
+    return render_values(value, "private")
+
+
 def failure_values(error: BaseException) -> dict[str, Any]:
-    """The structured values a failure carries (``ScenarioFailure.values``), JSON-safe; else empty."""
+    """The structured values a failure carries (``ScenarioFailure.values``), JSON-safe; else empty.
+
+    Private text stays marked (``PrivateText``) until a public or private
+    copy renders it.
+    """
 
     values = getattr(error, "values", None)
-    return public_values(dict(values)) if isinstance(values, Mapping) else {}
+    return render_values(dict(values), "capture") if isinstance(values, Mapping) else {}
 
 
 # The gitleaks gate.  Every would-be public receipt or evidence file is
-# serialized and scanned with gitleaks's default ruleset before it is
-# written; a finding withholds the public file (the private copy is always
-# written).  gitleaks runs in an empty directory with no GITLEAKS_* variables,
-# so no repository .gitleaks.toml or .gitleaksignore changes its rules.
+# serialized and scanned before it is written, with gitleaks's default rules
+# plus one rule per secret the kit issued or loaded in this run, each
+# matching that exact value (``gitleaks_config``).  A finding withholds the
+# public file; the private copy is written either way.  gitleaks runs in its
+# own private directory (mode 0700, removed afterwards) with no GITLEAKS_*
+# variables, so no repository .gitleaks.toml or .gitleaksignore changes its
+# rules, and --ignore-gitleaks-allow disables gitleaks:allow comments.  Its
+# JSON report, written with --redact, gives the withhold reason the rule ids
+# and the serialized document's line numbers, never a secret or a match.
 GITLEAKS = "gitleaks"
 GITLEAKS_FINDINGS_EXIT = 42
 GITLEAKS_FINDING = "gitleaks finding (redacted)"
 GITLEAKS_MISSING = "gitleaks is not installed: install the Arch package gitleaks (extra) to write public files"
 GITLEAKS_TIMEOUT_S = 300
+# An issued secret shorter than this gets no exact-value rule: too short to
+# match only itself.
+GITLEAKS_SECRET_MINIMUM = 8
+_RE2_METACHARACTERS = frozenset("\\.+*?()|[]{}^$")
+_RULE_ID = re.compile(r"[\w.-]{1,64}")
 
 
-def gitleaks_withhold_reason(document: Any) -> str | None:
-    """Why gitleaks withholds ``document`` from a public file, or None; never the matched text."""
+def go_quote_meta(value: str) -> str:
+    """Go's ``regexp.QuoteMeta``: escape only ``\\.+*?()|[]{}^$``, as RE2 requires."""
+
+    return "".join(f"\\{character}" if character in _RE2_METACHARACTERS else character for character in value)
+
+
+def gitleaks_config(secrets: Iterable[str]) -> str:
+    """A gitleaks config: the default rules, plus one exact-value rule per secret of at least 8 characters.
+
+    Rule ids are ``owui-kit-secret-<n>`` and say nothing about the secret.
+    The config holds the secrets themselves, so it lives only in the gate's
+    private directory.
+    """
+
+    lines = ["[extend]", "useDefault = true"]
+    kept = sorted({secret for secret in secrets if len(secret) >= GITLEAKS_SECRET_MINIMUM})
+    for number, secret in enumerate(kept, 1):
+        lines += ["", "[[rules]]", f'id = "owui-kit-secret-{number}"',
+                  'description = "a secret the kit issued or loaded in this run"',
+                  # A JSON string is a valid TOML basic string.
+                  f"regex = {json.dumps(go_quote_meta(secret))}"]
+    return "\n".join(lines) + "\n"
+
+
+def _gitleaks_finding_reason(report: Path) -> str:
+    """``GITLEAKS_FINDING`` with the sorted rule ids and their serialized line numbers, from the report."""
+
+    try:
+        findings = json.loads(report.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return GITLEAKS_FINDING
+    lines: dict[str, set[int]] = {}
+    for finding in findings if isinstance(findings, list) else []:
+        rule = finding.get("RuleID") if isinstance(finding, dict) else None
+        line = finding.get("StartLine") if isinstance(finding, dict) else None
+        if isinstance(rule, str) and _RULE_ID.fullmatch(rule) and isinstance(line, int):
+            lines.setdefault(rule, set()).add(line)
+    if not lines:
+        return GITLEAKS_FINDING
+    named = "; ".join(f"{rule} at line{'s' if len(found) > 1 else ''} {', '.join(map(str, sorted(found)))}"
+                      for rule, found in sorted(lines.items()))
+    return f"{GITLEAKS_FINDING}: {named}"
+
+
+def gitleaks_withhold_reason(document: Any, secrets: Iterable[str] = ()) -> str | None:
+    """Why gitleaks withholds ``document`` from a public file, or None; never a secret or a match."""
 
     executable = shutil.which(GITLEAKS)
     if executable is None:
         return GITLEAKS_MISSING
     payload = (json.dumps(document, indent=2, sort_keys=True, ensure_ascii=False) + "\n").encode()
     environment = {key: value for key, value in os.environ.items() if not key.startswith("GITLEAKS_")}
-    command = [executable, "stdin", "--no-banner", "--redact", "--log-level", "error",
-               "--exit-code", str(GITLEAKS_FINDINGS_EXIT)]
     try:
         with tempfile.TemporaryDirectory(prefix="owui-gitleaks-") as directory:
+            os.chmod(directory, 0o700)
+            config, report = Path(directory) / "gitleaks.toml", Path(directory) / "report.json"
+            descriptor = os.open(config, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                handle.write(gitleaks_config(secrets))
+            command = [executable, "stdin", "--no-banner", "--redact", "--log-level", "error",
+                       "--ignore-gitleaks-allow", "--config", str(config),
+                       "--report-format", "json", "--report-path", str(report),
+                       "--exit-code", str(GITLEAKS_FINDINGS_EXIT)]
             completed = subprocess.run(command, input=payload, cwd=directory, env=environment,
                                        capture_output=True, timeout=GITLEAKS_TIMEOUT_S, check=False)
+            if completed.returncode == GITLEAKS_FINDINGS_EXIT:
+                return _gitleaks_finding_reason(report)
     except (OSError, subprocess.SubprocessError) as error:
         return f"gitleaks could not run ({type(error).__name__})"
     if completed.returncode == 0:
         return None
-    if completed.returncode == GITLEAKS_FINDINGS_EXIT:
-        return GITLEAKS_FINDING
     return f"gitleaks failed (exit {completed.returncode})"
 
 
-def public_withhold_reason(document: Any) -> str | None:
+def public_withhold_reason(document: Any, secrets: Iterable[str] = ()) -> str | None:
     """Why ``document`` must not be written publicly, or None: ``v1.assert_public_safe``, then gitleaks."""
 
     try:
         v1.assert_public_safe(document)
     except ValueError as error:
         return str(error)
-    return gitleaks_withhold_reason(document)
+    return gitleaks_withhold_reason(document, secrets)
+
+
+def write_private(path: Path, document: Any) -> Path:
+    """Write a private copy (mode 0600): never committed, never gated."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+        handle.write(json.dumps(document, indent=2, sort_keys=True, ensure_ascii=False) + "\n")
+    os.chmod(path, 0o600)
+    return path
+
+
+def write_public(path: Path, document: Any) -> None:
+    """Write a public file that has already passed ``public_withhold_reason``."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(document, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
 
 
 def response_detail(response: Response) -> str | None:
@@ -1113,6 +1245,13 @@ def error_detail(response: Response) -> str:
 
     detail = response_detail(response)
     return f": {detail}" if detail else ""
+
+
+def response_failure(message: str, response: Response, values: Mapping[str, Any] | None = None) -> ScenarioFailure:
+    """A failure from an HTTP response: ``message``, then the response's detail, with its status and media type."""
+
+    return ScenarioFailure(f"{message}{error_detail(response)}", values, status=response.status,
+                           content_type=response.content_type)
 
 
 def multipart_file(field: str, filename: str, data: bytes, content_type: str) -> tuple[bytes, str]:
@@ -1320,6 +1459,8 @@ class ScenarioResult:
     duration_s: float
     values: dict[str, Any] = dataclasses.field(default_factory=dict)
     error_type: str | None = None
+    # The failing HTTP response's media type, when the failure came from one.
+    content_type: str | None = None
 
     def line(self) -> str:
         return f"{self.id} {self.result} {self.detail}"
@@ -1423,7 +1564,7 @@ def zerank_qualification(ctx: Context) -> dict[str, Any]:
             raise Blocked(NEEDS_OWNER_RESTART)
         raise Blocked(f"NEEDS: re-save the RAG config or restart {ctx.unit}")
     if health.status != 200 or (health.json() or {}).get("status") != "qualified":
-        raise ScenarioFailure(f"retrieval health returned HTTP {health.status}{error_detail(health)}",
+        raise response_failure(f"retrieval health returned HTTP {health.status}", health,
                               {"health_status": health.status})
     query, documents = rag_gate_constants()
     values: dict[str, Any] = {"health": "qualified"}
@@ -1496,7 +1637,7 @@ def cited_answer(ctx: Context) -> dict[str, Any]:
         upload = ctx.webui.request("POST", API["files"], body=body, content_type=content_type, token=ctx.token)
         timings["upload_s"] = round(time.monotonic() - started, 3)
         if upload.status != 200 or not isinstance((upload.json() or {}).get("id"), str):
-            raise ScenarioFailure(f"handbook upload returned HTTP {upload.status}{error_detail(upload)}")
+            raise response_failure(f"handbook upload returned HTTP {upload.status}", upload)
         file_id = upload.json()["id"]
         try:
             started = time.monotonic()
@@ -1518,7 +1659,7 @@ def cited_answer(ctx: Context) -> dict[str, Any]:
             )
             timings["chat_s"] = round(time.monotonic() - started, 3)
             if response.status != 200:
-                raise ScenarioFailure(f"file-scoped chat returned HTTP {response.status}{error_detail(response)}")
+                raise response_failure(f"file-scoped chat returned HTTP {response.status}", response)
             text, sources = parse_chat_response(response.body, response.content_type)
             summary = summarize_sources(sources)
             values.update(sources=summary, fact_present=CANONICAL_FACT in text)
@@ -1580,7 +1721,7 @@ def stt(ctx: Context) -> dict[str, Any]:
     # The transcription is timed; a failed or malformed reply keeps the time.
     with keeping(values, SCENARIO_FAILURES):
         if response.status != 200:
-            raise ScenarioFailure(f"transcription returned HTTP {response.status}{error_detail(response)}")
+            raise response_failure(f"transcription returned HTTP {response.status}", response)
         result = response.json()
         if not isinstance(result, dict):
             result = {}
@@ -1619,6 +1760,7 @@ SCENARIO_FAILURES = (
 def run_scenario(ctx: Context, scenario_id: str) -> ScenarioResult:
     started = time.monotonic()
     error_type: str | None = None
+    content_type: str | None = None
     try:
         values = SCENARIOS[scenario_id](ctx)
         result, detail = PASS, "ok"
@@ -1631,7 +1773,9 @@ def run_scenario(ctx: Context, scenario_id: str) -> ScenarioResult:
         # A failed check keeps what it measured.  The detail is private text:
         # a public receipt carries only public_detail's summary of it.
         values, result, detail, error_type = failure_values(error), FAIL, failure_text(error), failure_type(error)
-    return ScenarioResult(scenario_id, result, detail, round(time.monotonic() - started, 3), values, error_type)
+        content_type = getattr(error, "content_type", None)
+    return ScenarioResult(scenario_id, result, detail, round(time.monotonic() - started, 3), values, error_type,
+                          content_type)
 
 
 def run_scenarios(ctx: Context, scenario_ids: Sequence[str]) -> list[ScenarioResult]:
@@ -1667,14 +1811,17 @@ def build_receipt(
     """The re-smoke receipt.
 
     The public form carries ``public_detail``'s summary of every non-PASS
-    detail and of the precondition; the private form (``public=False``)
-    carries their full text.  ``write_receipt`` gates the public form.
+    detail, of the precondition, and of any private text in the values; the
+    private form (``public=False``) carries their full text.
+    ``publish_receipt`` gates the public form.
     """
 
     codes = [item.result for item in results] + ([BLOCKED] if precondition else [])
 
     def detail(item: ScenarioResult) -> str:
-        return public_detail(item.detail, error_type=item.error_type) if public and item.result != PASS else item.detail
+        if public and item.result != PASS:
+            return public_detail(item.detail, error_type=item.error_type, content_type=item.content_type)
+        return item.detail
 
     lemond = {
         key: health[key]
@@ -1709,7 +1856,7 @@ def build_receipt(
                 "result": item.result,
                 "detail": detail(item),
                 "duration_s": item.duration_s,
-                "values": item.values,
+                "values": public_values(item.values) if public else private_values(item.values),
             }
             for item in results
         ],
@@ -1724,26 +1871,35 @@ def private_receipt_path(path: Path) -> Path:
     return path.with_name(f"{path.stem}.private{path.suffix or '.json'}")
 
 
-def write_private_receipt(path: Path, receipt: Mapping[str, Any]) -> Path:
-    """Write the private receipt (mode 0600) beside ``path``; never commit it."""
-
-    private = private_receipt_path(path)
-    private.parent.mkdir(parents=True, exist_ok=True)
-    descriptor = os.open(private, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-        handle.write(json.dumps(receipt, indent=2, sort_keys=True, ensure_ascii=False) + "\n")
-    os.chmod(private, 0o600)
-    return private
-
-
-def write_receipt(path: Path, receipt: Mapping[str, Any]) -> None:
+def write_receipt(path: Path, receipt: Mapping[str, Any], secrets: Iterable[str] = ()) -> None:
     """Write the public receipt, or raise ``ValueError`` and write nothing when it must be withheld."""
 
-    reason = public_withhold_reason(receipt)
+    reason = public_withhold_reason(receipt, secrets)
     if reason is not None:
         raise ValueError(reason)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(receipt, indent=2, sort_keys=True, ensure_ascii=False) + "\n", encoding="utf-8")
+    write_public(path, receipt)
+
+
+def publish_receipt(path: Path, public: dict[str, Any], private: dict[str, Any],
+                    secrets: Iterable[str] = ()) -> tuple[int, str | None]:
+    """Gate the public receipt, then write the private one with the final verdict, then the public one.
+
+    The gate runs first, so the private receipt (``private_receipt_path``,
+    mode 0600) records the run's final ``exit_code`` and its
+    ``public_withheld`` reason (None when the public receipt was written).  A
+    withheld public receipt turns a passing run into a failing one; 75 and 3
+    stand.  Returns the final exit code and the reason.
+    """
+
+    reason = public_withhold_reason(public, secrets)
+    exit_code = public["exit_code"]
+    if reason is not None and exit_code == EXIT_PASS:
+        exit_code = EXIT_FAIL
+    private["exit_code"], private["public_withheld"] = exit_code, reason
+    write_private(private_receipt_path(path), private)
+    if reason is None:
+        write_public(path, public)
+    return exit_code, reason
 
 
 # ---------------------------------------------------------------------------
@@ -1829,7 +1985,7 @@ def model_registration(webui: Endpoint, token: str, model_id: str) -> str:
         return "unregistered"
     if response.status in (401, 403):
         return "inaccessible"
-    raise ScenarioFailure(f"the model entry read returned HTTP {response.status}{error_detail(response)}")
+    raise response_failure(f"the model entry read returned HTTP {response.status}", response)
 
 
 def register_chat_model(webui: Endpoint, token: str, model_id: str) -> str:
@@ -1851,8 +2007,8 @@ def register_chat_model(webui: Endpoint, token: str, model_id: str) -> str:
     created = webui.request("POST", API["model_create"], payload=form, token=token)
     # A concurrent create answers 401 "taken"; the read below settles either way.
     if model_registration(webui, token, model_id) != "registered":
-        raise ScenarioFailure(
-            f"registering the chat model returned HTTP {created.status}{error_detail(created)}"
+        raise response_failure(
+            f"registering the chat model returned HTTP {created.status}", created
         )
     return "created" if created.status == 200 else "existing"
 
@@ -1923,6 +2079,8 @@ def _resmoke(args: argparse.Namespace) -> int:
     health: Any = None
     results: list[ScenarioResult] = []
     precondition: str | None = None
+    # Secrets this run loaded or was issued, for the gate's exact-value rules.
+    issued: list[str] = []
     try:
         try:
             if args.target == "acceptance" and args.root is None:
@@ -1958,12 +2116,14 @@ def _resmoke(args: argparse.Namespace) -> int:
             )
             email = credential("resmoke-email", args.credentials_dir)
             password = credential("resmoke-password", args.credentials_dir)
+            issued.append(password)
             try:
                 token = signin(webui, email, password)
             except (OSError, http.client.HTTPException, ScenarioFailure) as error:
                 raise Blocked(
                     f"Open WebUI is unreachable or rejected the smoke sign-in ({type(error).__name__})"
                 ) from error
+            issued.append(token)
             chat_model = webui_chat_model(webui, token, args.chat_model)
         except Blocked as error:
             precondition = str(error)
@@ -1994,15 +2154,15 @@ def _resmoke(args: argparse.Namespace) -> int:
         for each in receipts.values():
             each["whisper_model"] = args.whisper_model
         if args.mode != "rehearsal":
-            # The private receipt keeps the full failure details; the public
-            # one, with their summaries, is written only past the gate.
-            private = write_private_receipt(args.receipt, receipts[False])
-            try:
-                write_receipt(args.receipt, receipt)
-            except ValueError as error:
-                print(f"receipt: NOT written publicly ({error}); the private receipt is {private}", file=sys.stderr)
-                if receipt["exit_code"] == EXIT_PASS:
-                    receipt["exit_code"] = EXIT_FAIL
+            # The gate runs first; the private receipt keeps the full failure
+            # details and the final verdict, and the public one, with their
+            # summaries, is written only past the gate.  The gate knows the
+            # smoke password and session token when the run got that far; the
+            # re-smoke never holds Open WebUI's own secrets.
+            receipt["exit_code"], reason = publish_receipt(args.receipt, receipt, receipts[False], issued)
+            if reason is not None:
+                print(f"receipt: NOT written publicly ({reason}); the private receipt is "
+                      f"{private_receipt_path(args.receipt)}", file=sys.stderr)
     return receipt["exit_code"]
 
 

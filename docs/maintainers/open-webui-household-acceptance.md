@@ -804,24 +804,41 @@ instead.
   `redacted_credential_field` with a redacted value.
 - Public versus private detail: a step that does not pass has a public
   `detail` that is a fixed summary, never upstream text: the error type, the
-  HTTP status when known, the byte length, the first 16 hex digits of the
-  text's SHA-256, and a note that the full detail is kept privately. The
-  full text lives only in the private file below; match a summary to it by
-  the digest.
+  HTTP status and media type when known, the byte length, the first 16 hex
+  digits of the text's SHA-256, and a note that the full detail is kept
+  privately. Free text copied from upstream into a step's values (a chat's
+  error detail, a native-tools message error, a journal warning) gets the
+  same summary. The committed record holds only summaries; the full text is
+  in the private file below, where a summary matches its text by the digest.
+  The kit's stdout and the lane logs also print full details: they are
+  operator-private and never committed.
 - Before the public copy is written, the kit runs the public-safety check and
-  then `gitleaks stdin` with its default rules on the serialized document. A
-  finding, a gitleaks error, or a missing `gitleaks` withholds the public copy
-  and records the evidence step as FAIL (`gitleaks finding (redacted)`; the
-  match is never printed). Ports appear
+  then `gitleaks stdin` on the serialized document, with gitleaks's default
+  rules plus one exact-value rule for each secret the run issued or loaded
+  (every credstore credential except the admin email and name, the Valkey
+  password, and the admin session tokens; a value under 8 characters gets no
+  rule). The rules live in a temporary config inside the gate's own
+  directory (mode 0700, removed afterwards), and `gitleaks:allow` comments
+  are ignored. A finding, a gitleaks error, or a missing `gitleaks`
+  withholds the public copy and records the evidence step as FAIL. A
+  finding's reason names its rule ids and the serialized document's line
+  numbers, for example `gitleaks finding (redacted): generic-api-key at line
+  412`, never the secret or the match; the kit's own rules are named
+  `owui-kit-secret-<n>`. If a harmless kit field trips a default rule, rename
+  that field rather than adding an allowlist. Ports appear
   only as `loopback:<port>` tokens, loopback ranges as `loopback/<prefix>`, and
   a non-default Lemonade origin as `<lemond>`; the root path, hostnames, and
   addresses never appear.
-- The full document, with every step's full detail, is always written first
-  to `<root>/evidence/raw/trial-evidence.json` (mode 0600). If the
-  public-safety check or gitleaks withholds the public copy, the kit prints
-  the private path with the reason, so the one trial's values survive. Never
-  commit the private file. Teardown refuses until it is moved out of the
-  root.
+- The full document, with every step's full detail, is written to
+  `<root>/evidence/raw/trial-evidence.json` (mode 0600) after the gate, so it
+  records the final evidence-step verdict, the exit code the trial returns,
+  and `public_withheld`, the reason the public copy was withheld (null when
+  it was written). If the public copy is withheld, the kit prints the
+  private path with the reason, so the one trial's values survive. A
+  rehearsal writes neither copy. Never commit the private file
+  (`docs/maintainers/.gitignore` ignores `trial-evidence.json` and
+  `*.private.json` where evidence is committed). Teardown
+  refuses until it is moved out of the root.
 - It records `production_expectation`, the frozen production-settings entry
   for the deployed `open-webui` archive (for this trial, the `0.11.4-2`
   entry), and the trial prints it. The evidence commit adds that entry to
@@ -997,12 +1014,16 @@ no receipt in rehearsal mode.
   a secret. Every run past argument parsing writes one, including a
   precondition failure (a missing `--root` or `--origin`, or an unreachable
   Lemonade or Open WebUI, exits 75 with a receipt) and a malformed response (a
-  FAIL row). A non-PASS detail and a precondition appear only as the same
-  fixed summary the trial evidence uses; the full text goes to a private
-  receipt beside it, `<out>.private.json` (mode 0600, never committed). A
-  rehearsal writes neither, and a public receipt that fails the
-  public-safety check or the gitleaks gate is not written (the private one
-  is): the run exits 1 instead, unless it already exits 75 or 3.
+  FAIL row). A non-PASS detail, a precondition, and upstream text in the
+  values appear only as the same fixed summary the trial evidence uses; the
+  full text goes to a private receipt beside it, `<out>.private.json` (mode
+  0600, never committed). The gate runs first and uses the same rules as the
+  trial's, with exact-value rules for the smoke password and the session
+  token when the run got that far; the re-smoke never holds Open WebUI's
+  own secrets. The private receipt records the final `exit_code` and
+  `public_withheld`. A rehearsal writes neither, and a public receipt that
+  fails the public-safety check or the gitleaks gate is not written (the
+  private one is): the run exits 1 instead, unless it already exits 75 or 3.
 
 ## Ported constants
 

@@ -932,7 +932,7 @@ class ZembedCanaryTests(unittest.TestCase):
 
 
 class ErrorDetailTests(unittest.TestCase):
-    """Failure messages carry the HTTP status and Open WebUI's detail, bounded and public-safe."""
+    """Private failure messages carry the HTTP status and Open WebUI's detail, bounded; public files carry a summary."""
 
     def response(self, status, body, content_type="application/json"):
         return scenarios.Response(status, content_type, body)
@@ -1014,11 +1014,66 @@ class ReceiptTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "absolute private path"):
                 scenarios.write_receipt(path, {**receipt, "values": "/home/someone/x"})
             self.assertFalse(path.exists())
-            private = scenarios.write_private_receipt(path, receipt)
+            private = scenarios.write_private(scenarios.private_receipt_path(path), receipt)
             self.assertEqual(private, Path(directory) / "receipt.private.json")
             self.assertEqual(private.stat().st_mode & 0o777, 0o600)
 
-    def test_a_withheld_public_receipt_keeps_the_private_one_and_fails_the_run(self):
+    def resmoke_through_the_gate(self, tmp, environment):
+        """A re-smoke whose preconditions and scenarios all pass, so it reaches the gate."""
+
+        env = candidate_env()
+        loaded = (env["RAG_EMBEDDING_MODEL"], env["RAG_RERANKING_MODEL"], "m")
+        health = {"all_models_loaded": [{"model_name": item} for item in loaded]}
+        models = {"data": [{"id": item} for item in loaded]}
+        (Path(tmp) / "resmoke-email").write_text("smoke@household.invalid")
+        (Path(tmp) / "resmoke-password").write_text("smoke-password-for-the-gate")
+        table = {scenario_id: (lambda _ctx: {"measured": 1}) for scenario_id in scenarios.SCENARIO_IDS}
+        with mock.patch.object(scenarios, "open_webui_pid", return_value=1), \
+                mock.patch.object(scenarios, "read_process_environ", return_value=env), \
+                mock.patch.object(scenarios, "lemond_snapshot", return_value=(health, models)), \
+                mock.patch.object(scenarios, "signin", return_value="session-token-for-the-gate"), \
+                mock.patch.object(scenarios, "webui_chat_model", return_value="m"), \
+                mock.patch.object(scenarios, "SCENARIOS", table), \
+                mock.patch.dict(os.environ, environment), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as errors:
+            code = scenarios.main(["resmoke", "--target", "acceptance", "--root", tmp, "--chat-model", "m",
+                                   "--receipt", f"{tmp}/r.json", "--credentials-dir", tmp,
+                                   "--socket", f"{tmp}/absent.sock"])
+        return code, errors.getvalue()
+
+    def test_a_passing_resmoke_writes_both_receipts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            code, _ = self.resmoke_through_the_gate(tmp, {})
+            public = json.loads(Path(f"{tmp}/r.json").read_text())
+            private = json.loads(Path(f"{tmp}/r.private.json").read_text())
+        self.assertEqual((code, public["exit_code"], private["exit_code"]), (0, 0, 0))
+        self.assertIsNone(private["public_withheld"])
+        self.assertEqual([item["result"] for item in public["scenarios"]], ["PASS"] * len(scenarios.SCENARIO_IDS))
+
+    def test_a_gate_finding_turns_a_passing_resmoke_into_a_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            code, errors = self.resmoke_through_the_gate(
+                tmp, {"OWUI_GITLEAKS_STUB_EXIT": str(scenarios.GITLEAKS_FINDINGS_EXIT)})
+            self.assertFalse(Path(f"{tmp}/r.json").exists())
+            private = json.loads(Path(f"{tmp}/r.private.json").read_text())
+        self.assertEqual(code, 1)
+        self.assertEqual((private["exit_code"], private["public_withheld"]), (1, "gitleaks finding (redacted)"))
+        self.assertEqual([item["result"] for item in private["scenarios"]], ["PASS"] * len(scenarios.SCENARIO_IDS))
+        self.assertIn("NOT written publicly (gitleaks finding (redacted))", errors)
+
+    def test_the_resmoke_gate_gets_the_secrets_it_loaded_or_was_issued(self):
+        seen = []
+
+        def gate(document, secrets=()):
+            seen.append(list(secrets))
+            return None
+
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(scenarios, "public_withhold_reason", gate):
+            code, _ = self.resmoke_through_the_gate(tmp, {})
+        self.assertEqual(code, 0)
+        self.assertEqual(seen, [["smoke-password-for-the-gate", "session-token-for-the-gate"]])
+
+    def test_a_withheld_precondition_receipt_keeps_exit_75_and_the_private_one(self):
         with tempfile.TemporaryDirectory() as tmp, \
                 mock.patch.object(scenarios, "open_webui_pid", return_value=1), \
                 mock.patch.object(scenarios, "read_process_environ", return_value=candidate_env()), \
@@ -1028,8 +1083,9 @@ class ReceiptTests(unittest.TestCase):
                                    "--receipt", f"{tmp}/r.json", "--credentials-dir", tmp,
                                    "--socket", f"{tmp}/absent.sock", "--lemond-url", "http://127.0.0.1:9"])
             self.assertFalse(Path(f"{tmp}/r.json").exists())
-            self.assertTrue(Path(f"{tmp}/r.private.json").is_file())
+            private = json.loads(Path(f"{tmp}/r.private.json").read_text())
         self.assertEqual(code, 75)
+        self.assertEqual((private["exit_code"], private["public_withheld"]), (75, "gitleaks finding (redacted)"))
         self.assertIn("gitleaks finding (redacted)", errors.getvalue())
 
     def test_a_failed_files_stored_error_stays_private(self):
@@ -1074,6 +1130,70 @@ class ReceiptTests(unittest.TestCase):
         for secret in (token, session, "tok3n", "s3ssion", "Bad Gateway"):
             self.assertNotIn(secret, written)
         self.assertIn("ScenarioFailure; HTTP 502; ", written)
+
+
+class PrivateTextTests(unittest.TestCase):
+    """Upstream free text in values: a summary in public copies, whole in private ones, with matching digests."""
+
+    TEXT = "upstream said: Authorization: Bearer abc.def at /home/someone/db"
+
+    def digest(self, text):
+        return hashlib.sha256(text.encode()).hexdigest()[:16]
+
+    def test_public_and_private_receipts_render_private_text(self):
+        note = scenarios.PrivateText(self.TEXT, 502, "text/plain; charset=utf-8")
+        results = [
+            scenarios.ScenarioResult("open-webui.resmoke.zembed-canary", "PASS", "ok", 1.0, {"note": note}),
+            scenarios.ScenarioResult("open-webui.resmoke.zerank-qualification", "FAIL", "ScenarioFailure: x", 0.1,
+                                     {"nested": [{"detail": note}]}, "ScenarioFailure"),
+        ]
+        settings = scenarios.settings_from_environ(candidate_env())
+        public, private = (scenarios.build_receipt(target="production", mode="record", settings=settings,
+                                                   chat_model="chat", health=None, results=results, public=flag)
+                           for flag in (True, False))
+        summary = public["scenarios"][0]["values"]["note"]
+        self.assertEqual(summary, f"HTTP 502; text/plain; {len(self.TEXT.encode())} bytes; "
+                                  f"sha256:{self.digest(self.TEXT)}; {scenarios.PRIVATE_DETAIL_NOTE}")
+        self.assertEqual(public["scenarios"][1]["values"]["nested"][0]["detail"], summary)
+        self.assertNotIn("Bearer", json.dumps(public))
+        scenarios.v1.assert_public_safe(public)
+        self.assertEqual(private["scenarios"][0]["values"]["note"], self.TEXT)
+        self.assertEqual(private["scenarios"][1]["values"]["nested"][0]["detail"], self.TEXT)
+        self.assertIn(self.digest(private["scenarios"][0]["values"]["note"]), summary)
+
+    def test_private_text_is_a_string_for_private_messages(self):
+        note = scenarios.PrivateText("raw upstream text", 400)
+        self.assertEqual(json.dumps({"detail": note}), '{"detail": "raw upstream text"}')
+        captured = scenarios.failure_values(scenarios.ScenarioFailure("x", {"detail": note}))
+        self.assertIsInstance(captured["detail"], scenarios.PrivateText)
+        self.assertEqual(captured["detail"].status, 400)
+
+    def test_an_http_failure_carries_its_media_type_to_the_public_summary(self):
+        body = b"<html>upstream proxy error page</html>"
+        endpoint = scenarios.Endpoint(origin="http://127.0.0.1:9")
+
+        def failing(_ctx):
+            with mock.patch.object(endpoint, "request",
+                                   return_value=scenarios.Response(502, "Text/HTML; charset=utf-8", body)):
+                endpoint.json("GET", "/api/v1/retrieval/health")
+            return {}
+
+        with mock.patch.object(scenarios, "SCENARIOS", {"open-webui.resmoke.zerank-qualification": failing}):
+            result = scenarios.run_scenario(object(), "open-webui.resmoke.zerank-qualification")
+        self.assertEqual((result.result, result.content_type), (scenarios.FAIL, "Text/HTML; charset=utf-8"))
+        receipt = scenarios.build_receipt(target="production", mode="record",
+                                          settings=scenarios.settings_from_environ(candidate_env()),
+                                          chat_model="chat", health=None, results=[result])
+        detail = receipt["scenarios"][0]["detail"]
+        self.assertTrue(detail.startswith("ScenarioFailure; HTTP 502; text/html; "), detail)
+        self.assertNotIn("proxy error", detail)
+        # The media type survives a failure re-raised with more values.
+        error = scenarios.response_failure("GET /x returned HTTP 502", scenarios.Response(502, "text/html", body))
+        with self.assertRaises(scenarios.ScenarioFailure) as raised, \
+                scenarios.keeping({"measured": 1}, scenarios.SCENARIO_FAILURES):
+            raise error
+        self.assertEqual((raised.exception.content_type, raised.exception.status), ("text/html", 502))
+        self.assertEqual(raised.exception.values, {"measured": 1})
 
 
 class PublicDetailTests(unittest.TestCase):
@@ -1173,33 +1293,97 @@ class GitleaksGateTests(unittest.TestCase):
         self.assertEqual(scenarios.public_withhold_reason({"api_key": "x"}),
                          "public evidence contains a secret-valued field")
 
-    def test_the_gate_scans_the_serialized_document_with_the_default_rules(self):
+    def test_the_gate_scans_the_serialized_document_with_its_own_config(self):
         with tempfile.TemporaryDirectory() as directory:
             capture = Path(directory) / "capture"
             script = Path(directory) / "gitleaks"
-            script.write_text(f'#!/bin/sh\nprintf "%s\\n" "$@" > {capture}.args\npwd > {capture}.cwd\n'
-                              f'env | grep -c "^GITLEAKS_" > {capture}.env\ncat > {capture}.in\nexit 0\n')
+            script.write_text(
+                f'#!/bin/sh\nprintf "%s\\n" "$@" > {capture}.args\npwd > {capture}.cwd\n'
+                f'stat -c %a . > {capture}.mode\n'
+                f'env | grep -c "^GITLEAKS_" > {capture}.env\ncat > {capture}.in\n'
+                f'while [ $# -gt 0 ]; do [ "$1" = --config ] && cp "$2" {capture}.toml '
+                f'&& stat -c %a "$2" > {capture}.toml.mode; shift; done\nexit 0\n')
             script.chmod(0o755)
             with mock.patch.object(scenarios, "GITLEAKS", str(script)), \
                     mock.patch.dict(os.environ, {"GITLEAKS_CONFIG": "/tmp/custom.toml"}):
-                self.assertIsNone(scenarios.public_withhold_reason({"b": 1, "a": "x"}))
+                self.assertIsNone(scenarios.public_withhold_reason({"b": 1, "a": "x"}, ["issued-secret-value"]))
             args = Path(f"{capture}.args").read_text().split()
+            work = Path(f"{capture}.cwd").read_text().strip()
             self.assertEqual(args, ["stdin", "--no-banner", "--redact", "--log-level", "error",
+                                    "--ignore-gitleaks-allow", "--config", f"{work}/gitleaks.toml",
+                                    "--report-format", "json", "--report-path", f"{work}/report.json",
                                     "--exit-code", str(scenarios.GITLEAKS_FINDINGS_EXIT)])
             self.assertEqual(json.loads(Path(f"{capture}.in").read_text()), {"a": "x", "b": 1})
-            self.assertNotEqual(Path(f"{capture}.cwd").read_text().strip(), os.getcwd())
+            self.assertNotEqual(work, os.getcwd())
+            # The private directory is 0700 and gone afterwards; the config inside it is 0600.
+            self.assertEqual(Path(f"{capture}.mode").read_text().strip(), "700")
+            self.assertEqual(Path(f"{capture}.toml.mode").read_text().strip(), "600")
+            self.assertFalse(Path(work).exists())
             self.assertEqual(Path(f"{capture}.env").read_text().strip(), "0")
+            self.assertEqual(Path(f"{capture}.toml").read_text(),
+                             scenarios.gitleaks_config(["issued-secret-value"]))
+
+    def test_the_withhold_reason_names_rules_and_lines_never_a_secret(self):
+        report = json.dumps([
+            {"RuleID": "owui-kit-secret-2", "StartLine": 30, "Secret": "REDACTED", "Match": "k=REDACTED"},
+            {"RuleID": "generic-api-key", "StartLine": 12, "Secret": "leaked-value", "Match": "token=leaked-value"},
+            {"RuleID": "owui-kit-secret-2", "StartLine": 41, "Secret": "x"},
+            {"RuleID": "bad rule id; drop it", "StartLine": 1},
+        ])
+        with tempfile.TemporaryDirectory() as directory:
+            script = Path(directory) / "gitleaks"
+            script.write_text('#!/bin/sh\nwhile [ $# -gt 0 ]; do [ "$1" = --report-path ] && report=$2; shift; done\n'
+                              f"cat >/dev/null\nprintf '%s' '{report}' > \"$report\"\nexit 42\n")
+            script.chmod(0o755)
+            with mock.patch.object(scenarios, "GITLEAKS", str(script)):
+                reason = scenarios.public_withhold_reason({"a": 1})
+        self.assertEqual(reason, "gitleaks finding (redacted): generic-api-key at line 12; "
+                                 "owui-kit-secret-2 at lines 30, 41")
+        self.assertNotIn("leaked-value", reason or "")
+
+    def test_the_config_extends_the_defaults_with_exact_issued_secrets(self):
+        config = scenarios.gitleaks_config(["short", "a.b-c_d+e$f(g)", "a.b-c_d+e$f(g)", "second-secret"])
+        self.assertTrue(config.startswith("[extend]\nuseDefault = true\n"))
+        self.assertEqual(config.count("[[rules]]"), 2)  # deduplicated, and "short" is under 8 characters
+        self.assertIn('id = "owui-kit-secret-1"', config)
+        self.assertIn('id = "owui-kit-secret-2"', config)
+        self.assertNotIn("short", config)
+        self.assertIn(json.dumps(r"a\.b-c_d\+e\$f\(g\)"), config)
+        self.assertEqual(scenarios.go_quote_meta(r"a-b_c.d\e+f*g?h(i)j|k[l]m{n}o^p$q r"),
+                         r"a-b_c\.d\\e\+f\*g\?h\(i\)j\|k\[l\]m\{n\}o\^p\$q r")
 
     @unittest.skipIf(shutil.which("gitleaks") is None, "gitleaks is not installed")
     def test_the_real_gitleaks_catches_an_openai_style_key(self):
         with mock.patch.object(scenarios, "GITLEAKS", "gitleaks"):
             self.assertIsNone(scenarios.public_withhold_reason({"detail": "ok", "count": 3}))
             reason = scenarios.public_withhold_reason({"scenarios": [{"values": {"note": FAKE_OPENAI_KEY}}]})
-        self.assertEqual(reason, "gitleaks finding (redacted)")
+        self.assertRegex(reason or "", r"^gitleaks finding \(redacted\): openai-api-key at line \d+$")
+
+    @unittest.skipIf(shutil.which("gitleaks") is None, "gitleaks is not installed")
+    def test_the_real_gitleaks_ignores_allow_comments(self):
+        with mock.patch.object(scenarios, "GITLEAKS", "gitleaks"):
+            reason = scenarios.public_withhold_reason({"note": f"{FAKE_OPENAI_KEY} gitleaks:allow"})
+        self.assertRegex(reason or "", r"^gitleaks finding \(redacted\): openai-api-key at line \d+$")
+
+    @unittest.skipIf(shutil.which("gitleaks") is None, "gitleaks is not installed")
+    def test_the_real_gitleaks_withholds_an_issued_secret(self):
+        issued = ["redis-pass_word.with-dots+plus$dollar(paren)", "x.y-z_w.v-u_t", "short"]
+        with mock.patch.object(scenarios, "GITLEAKS", "gitleaks"):
+            for secret in issued[:2]:
+                with self.subTest(secret=secret):
+                    document = {"steps": [{"values": {"observed": f"connected with {secret} then"}}]}
+                    self.assertRegex(scenarios.public_withhold_reason(document, issued) or "",
+                                     r"^gitleaks finding \(redacted\): owui-kit-secret-\d at line \d+$")
+                    self.assertIsNone(scenarios.public_withhold_reason({"steps": [{"values": {"observed": "then"}}]},
+                                                                       issued))
+            # A secret under 8 characters gets no rule.
+            self.assertIsNone(scenarios.public_withhold_reason({"note": "short"}, issued))
+            # Escaping keeps metacharacters literal: a near miss does not match.
+            self.assertIsNone(scenarios.public_withhold_reason({"note": "redis-pass_wordXwith-dots"}, issued))
 
 
 class FailureValuesTests(unittest.TestCase):
-    """A failed scenario keeps what it measured, JSON-safe and redacted."""
+    """A failed scenario keeps what it measured, JSON-safe; private text is rendered only in a public or private copy."""
 
     def run_one(self, error, scenario_id="open-webui.resmoke.cited-answer"):
         def failing(_ctx):
