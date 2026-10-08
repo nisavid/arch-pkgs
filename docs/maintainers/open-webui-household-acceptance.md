@@ -312,11 +312,11 @@ only.
 | --- | --- | --- |
 | `open-webui.acceptance.identity.archives` (A-ID1) | All deployed archives match the manifest by name, size, and SHA-256, before extraction and again at rollback. Each record carries its archive's `source_commit` and `source_commit_basis` from the manifest, and the step records the manifest's `external_inputs` verbatim as declared inputs beside the observed host providers. The generic `ctranslate2` and `python-ctranslate2` 4.8.2 archives are listed as "bound, not deployed"; the host `python-ctranslate2-gfx1151` provides and conflicts. | exact |
 | `open-webui.acceptance.identity.unit-properties` (A-ID2) | Every packaged unit property the user manager cannot apply, generated (see below). | record |
-| `open-webui.acceptance.ready.first-start` (A-R2) | First fresh start reaches Alembic head `d4c1a8e37b62`, Open WebUI 0.11.4's single head, with no migration error; UDS `/ready` 200 before commissioning. | head exact; duration recorded |
+| `open-webui.acceptance.ready.first-start` (A-R2) | First fresh start reaches Alembic head `d4c1a8e37b62`, Open WebUI 0.11.4's single head, with no migration error; UDS `/ready` 200 before commissioning. | head exact; measured head and duration recorded |
 | `open-webui.acceptance.profile.persisted` | Before commissioning rewrites the connection, the SQLite `config` row of each persistent key in the rendered household profile holds the profile's value, parsed as Open WebUI 0.11.4 parses it, or the acceptance overlay's value where the overlay sets the key (the relayed reranker URL). A first start without the profile would have persisted the vanilla values instead, and the stored values win after that. An absent row, a differing value, or a profile key the kit cannot classify fails the step and stops the trial. The record lists key names only, never values. | exact |
 | `open-webui.acceptance.auth.one-admin` (A-S2) | The packaged `open-webui-commission-admin` succeeds; signup off and exactly one admin, rechecked after both drills. Commissioning then runs the shared `configure` helper, which also registers the chat model: it creates Open WebUI's model entry for the listed id unless one exists. Every later chat needs that entry, because with the packaged `BYPASS_ADMIN_ACCESS_CONTROL=false` Open WebUI refuses even an admin's chat with a model that has none, although it lists the model; the chat-model precondition is therefore listed and registered. | exact |
 | `open-webui.acceptance.ready.restart` (A-R1) | Restart to UDS `/ready` 200 plus authenticated retrieval health 200. | ceiling 25 s |
-| `open-webui.acceptance.qdrant.g4` (A-S3, A-S4) | Fresh Qdrant 1.19.1 state, the version Qdrant reports; five `open-webui-rag-v1` collections, 2,560-dim cosine, payload indexes `tenant_id`, `metadata.hash`, `metadata.file_id`; the runtime holds only the `prw` JWT; the negative probe (an `r` JWT upsert and a `prw` collection create or delete return 403). | exact |
+| `open-webui.acceptance.qdrant.g4` (A-S3, A-S4) | Fresh Qdrant 1.19.1 state, the version Qdrant reports; five `open-webui-rag-v1` collections, 2,560-dim cosine, payload indexes `tenant_id`, `metadata.hash`, `metadata.file_id`; the runtime holds only the `prw` JWT; the negative probe (an `r` JWT upsert and a `prw` collection create or delete return 403). | exact; measured version and collection shapes recorded |
 | `open-webui.acceptance.connections.no-stored-secret` (A-S5) | Open WebUI's model connections carry no stored secret: the unit loads only Open WebUI's five secret credentials plus the session-epoch credential, and the API-key fields in the packaged env, the rendered profile, the overlay, SQLite config, and admin exports are empty. A rehearsal also requires that none of this run's requests to the stub carried a credential. An empty bearer counts as none, because Open WebUI's external reranker sends an `Authorization: Bearer` header with its key even when the key is empty, and the count starts at `stage`, because the user journal keeps earlier runs' stub requests. | exact |
 | `open-webui.resmoke.zembed-canary` (A-R3) | 2,560 dims, `\|norm − 1\| ≤ 0.001`, margin ≥ 0.20, prefixes read from the running process's settings; one indexed chunk's stored vector has cosine ≥ 0.999 with the direct content-prefixed vector. The step records each vector's dimensions and norm, the margin, and the stored-vector cosine, and an escalation keeps every value computed before it, so the lead decides on the measured values. A stored vector with no cosine to the direct one (a different length, a zero vector, or a non-finite value) also escalates (exit 3) rather than failing. | fixed; failure exits 3 and escalates |
 | `open-webui.resmoke.zerank-qualification` (A-R4) | Retrieval health 200 after start; a direct rerank gives finite scores with the relevant document first. | pass/fail |
@@ -808,14 +808,20 @@ instead.
   digits of the text's SHA-256, and a note that the full detail is kept
   privately. Free text copied from upstream into a step's values (a chat's
   error detail, a native-tools message error, a journal warning) gets the
-  same summary. No upstream free text reaches a public file; upstream
-  identifiers appear only in a kit-constrained form: a cited source name
-  only when it is the handbook's name, a score only when it is a finite
-  number, a transcription language only when it is a short language code,
-  and a tool name only when the kit knows it; any other value is
-  summarized. Model ids and the Lemonade version and start time are kept as
-  deliberate measurements. The private file below keeps every value whole,
-  and a summary matches its text by the digest. The kit's stdout and the
+  same summary. No upstream free text (error bodies, messages, journal
+  lines, headers beyond the media type) reaches a public file; the fixed
+  summary replaces it, and the full text lives in the private copy.
+  Structured upstream values (versions, revision ids, collection shapes,
+  counts, booleans, settings, timestamps, model ids, source names, scores,
+  language codes, tool names) are recorded as measurements, such as the
+  Qdrant version, the Alembic head, `quick_check`, the paging step's RAG
+  settings, and the Lemonade version, start time and uptime. The kit
+  constrains the ones it can check, and turns a value that fails its check
+  into the summary: a cited source name other than the handbook's, a score
+  that is not a finite number, a malformed language code, or an unknown
+  tool name. Every public file passes the public-safety check and the
+  gitleaks gate below before it is written. The private file below keeps
+  every value whole, and a summary matches its text by the digest. The kit's stdout and the
   lane logs also print full details: they are operator-private and never
   committed.
 - Before the public copy is written, the kit runs the public-safety check and
@@ -1025,9 +1031,11 @@ no receipt in rehearsal mode.
   a secret. Every run past argument parsing writes one, including a
   precondition failure (a missing `--root` or `--origin`, or an unreachable
   Lemonade or Open WebUI, exits 75 with a receipt) and a malformed response (a
-  FAIL row). No upstream free text reaches the public receipt; upstream
-  identifiers appear only in the same kit-constrained form as in the trial
-  evidence. A non-PASS detail, a precondition, and upstream text in the
+  FAIL row). The receipt follows the trial evidence's rule: no upstream free
+  text reaches the public receipt, structured upstream values are recorded
+  as measurements, and the kit turns a value that fails its check (a cited
+  source name other than the handbook's, a non-numeric score, a malformed
+  language code) into the fixed summary. A non-PASS detail, a precondition, and upstream text in the
   values appear only as the same fixed summary the trial evidence uses; the
   full text goes to a private receipt beside it, `<out>.private.json` (mode
   0600, never committed). The gate runs first and uses the same rules as the
