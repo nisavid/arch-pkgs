@@ -162,7 +162,8 @@ from `2059571` to `86549fa`: a tree check against `2059571` would compare the
 
 The manifest is edited in place and keeps its file name and `recorded`
 date, because its tests and both runbooks name this file as the candidate of
-record, and the acceptance kit takes it through `--manifest`. Git history keeps the 1.2.1-1 binding.
+record; the acceptance kit does not depend on the name, since it takes the
+file through `--manifest`. Git history keeps the 1.2.1-1 binding.
 
 ## Archives stay outside git
 

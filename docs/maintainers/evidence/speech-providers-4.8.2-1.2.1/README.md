@@ -14,7 +14,8 @@ reviews this evidence. The Open WebUI household-stack cutover owns production
 installation.
 
 `python-faster-whisper` 1.2.1-1 below is superseded by
-[1.2.1-2](../python-faster-whisper-1.2.1-2/) (#124) and is no longer a
+[1.2.1-2](../python-faster-whisper-1.2.1-2/)
+([#124](https://github.com/nisavid/arch-pkgs/issues/124)) and is no longer a
 candidate; the CTranslate2 evidence here still applies.
 
 | Archive | Size | SHA-256 |
