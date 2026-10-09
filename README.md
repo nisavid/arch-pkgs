@@ -5,8 +5,8 @@ Personal Arch Linux packages for a local AI application stack.
 This repository collects packages that are useful enough to keep close, patched,
 and installable through a local pacman repository. It is not a public distro or a
 general AUR mirror. It is a small workspace for reproducible local packages:
-vector storage, Haystack services, their Python dependencies, and an
-experimental GPU inspection tool.
+vector storage, Haystack services, their Python dependencies, a web-development
+toolchain, and an experimental GPU inspection tool.
 Its retired Thorium Browser recipe stays only until cleanup; the AUR provides
 Alacrium, its successor.
 
@@ -28,6 +28,8 @@ Start with the package family that matches what you want to install:
   (`alacrium-browser` or `alacrium-browser-bin`) instead.
 - [`utilyze`](packages/utilyze/) is an experimental NVIDIA GPU utilization TUI
   with Arch runtime, config, update, and telemetry-consent patches.
+- [`vite-plus`](packages/vite-plus/) packages the Vite+ global launcher and
+  JavaScript toolchain, with builds isolated from managed Node/npm shims.
 
 > [!NOTE]
 > `utilyze` is packaged and partially verified, but it still needs runtime
