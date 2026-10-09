@@ -35,6 +35,10 @@ Start with the package family that matches what you want to install:
 > [`packages/utilyze/README.Arch.md`](packages/utilyze/README.Arch.md) before
 > first use.
 
+The opt-in Sequoia PQC lanes remain deferred for qualification. Their
+[maintained procedure](docs/maintainers/sequoia-pqc-variants.md) uses a separate
+staged run and records the remaining build and acceptance gates.
+
 ## Start Here
 
 If you want one package quickly, build and install it from its package directory:

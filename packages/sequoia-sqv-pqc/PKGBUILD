@@ -1,0 +1,102 @@
+# Maintainer: Ivan D Vasin <ivan@nisavid.io>
+
+pkgname=sequoia-sqv-pqc
+pkgver=1.5.0
+pkgrel=4
+pkgdesc='Simple OpenPGP signature verification program with the OpenSSL PQC backend'
+arch=(x86_64)
+url='https://gitlab.com/sequoia-pgp/sequoia-sqv'
+license=(LGPL-2.0-or-later)
+groups=(sequoia)
+depends=(
+  glibc
+  libgcc
+  'openssl>=3.5'
+  libcrypto.so=3-64
+  libssl.so=3-64
+)
+makedepends=(
+  cargo
+  clang
+  git
+)
+provides=("sequoia-sqv=${pkgver}")
+conflicts=(sequoia-sqv)
+source=(
+  git+https://gitlab.com/sequoia-pgp/sequoia-sqv.git#tag=v${pkgver}?signed
+  sequoia-openpgp-2.4.1.patch
+)
+sha512sums=(
+  'a6ca500b41c29fa697e872888f71db3c7dde99c559efbac3e0b30af019428d0c7afaf6546e616ffdf2cd3a9f65d5fee02d860af06173d70e2e1de84497800576'
+  '8e5d1a7be38147b6f9d1c66f05242c286c8301bcefa608f399006a1eef720c102844ecf2962de8a96f3a4038280ce8c8643f4b54b5fe91a1228a514dae73789f'
+)
+b2sums=(
+  'f03157bb71fdf36c035688e025951384cc92c4206ed4c542820287e3f127bf17e89356c610738248f33bd3d3412762bff95ebb3512cf0f46e9e52dde897c5954'
+  'da119a89d16d6c121fa00cd52eda6d185e8e5ba47f8f6adf02d08d21d7e7c6ea0744ba8e6340bca1d07bf872b470fbb029534b75c92a600b47c603802f5cdcbb'
+)
+validpgpkeys=(
+  D2F2C5D45BE9FDE6A4EE0AAF31855247603831FD  # justus@sequoia-pgp.org
+  CBCD8F030588653EEDD7E2659B7DD433F254904A  # justus@sequoia-pgp.org
+  8F17777118A33DDA9BA48E62AACB3243630052D9  # Neal H. Walfield <neal@sequoia-pgp.org>
+)
+
+_source_commit=e0dbf9133a1bf605eb2ead3869d9722d8dfc8252
+_sequoia_openpgp_version=2.4.1
+_sequoia_openpgp_checksum=0fbc8f9818a6fad141d85993777ba298ee52c80a09bd23d45dda461a6b7c83cb
+
+prepare() {
+  cd sequoia-sqv
+  local source_commit
+  source_commit=$(git rev-parse HEAD)
+  [[ $source_commit == "$_source_commit" ]] || {
+    printf 'unexpected source commit: %s\n' "$source_commit" >&2
+    return 1
+  }
+  patch -Np1 -i "$srcdir/sequoia-openpgp-2.4.1.patch"
+  local locked_sequoia_openpgp
+  locked_sequoia_openpgp=$(awk '
+    $0 == "name = \"sequoia-openpgp\"" { in_package = 1; next }
+    in_package && /^version = / { version = $3; gsub(/"/, "", version); next }
+    in_package && /^checksum = / { checksum = $3; gsub(/"/, "", checksum); print version ":" checksum; exit }
+  ' Cargo.lock)
+  [[ $locked_sequoia_openpgp == "${_sequoia_openpgp_version}:${_sequoia_openpgp_checksum}" ]] || {
+    printf 'unexpected sequoia-openpgp lock: %s\n' "$locked_sequoia_openpgp" >&2
+    return 1
+  }
+  cargo fetch --locked --target "$(rustc --print host-tuple)"
+}
+
+build() {
+  local cargo_home="${CARGO_HOME:-${HOME}/.cargo}"
+  cd sequoia-sqv
+  export CARGO_TARGET_DIR="$srcdir/sequoia-sqv/target"
+  export ASSET_OUT_DIR="$srcdir/sequoia-sqv"
+  export OPENSSL_NO_VENDOR=1
+  export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=${srcdir}=/usr/src/debug/${pkgname} --remap-path-prefix=${cargo_home}=/usr/src/debug/cargo"
+  cargo build --release --frozen --no-default-features \
+    --features crypto-openssl
+}
+
+check() {
+  local cargo_home="${CARGO_HOME:-${HOME}/.cargo}"
+  cd sequoia-sqv
+  export CARGO_TARGET_DIR="$srcdir/sequoia-sqv/target"
+  export OPENSSL_NO_VENDOR=1
+  export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=${srcdir}=/usr/src/debug/${pkgname} --remap-path-prefix=${cargo_home}=/usr/src/debug/cargo"
+  cargo test --frozen --no-default-features --features crypto-openssl
+}
+
+package() {
+  cd sequoia-sqv
+  install -Dm 755 target/release/sqv -t "$pkgdir/usr/bin"
+
+  install -Dm 644 shell-completions/sqv.bash \
+    "$pkgdir/usr/share/bash-completion/completions/sqv"
+  install -Dm 644 shell-completions/_sqv \
+    "$pkgdir/usr/share/zsh/site-functions/_sqv"
+  install -Dm 644 shell-completions/sqv.fish \
+    "$pkgdir/usr/share/fish/vendor_completions.d/sqv.fish"
+  install -Dm 644 README.md -t "$pkgdir/usr/share/doc/$pkgname"
+}
+
+# vim: ts=2 sw=2 et:
