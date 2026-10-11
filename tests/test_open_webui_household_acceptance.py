@@ -1702,8 +1702,8 @@ class FailureDetailTests(unittest.TestCase):
             # The ceilings are unchanged; the phases say where the time went.
             self.assertEqual(restore["ceiling_s"], 40.0)
             self.assertEqual(restore["phases_s"], {"stop": 1.0, "restore_tuple": 15.0, "open_webui_start": 50.5,
-                                                   "sign_in": 0.25, "chat": 0.75})
-            self.assertEqual(restore["restore_s"], 67.5)
+                                                   "sign_in": 0.25, "retrieval_health": 0.0, "chat": 0.75})
+            self.assertEqual(restore["restore_s"], 66.75)
             self.assertEqual(restore["cited_chat"], {"status": 200, "detail": None, "fact_present": True,
                                                      "sources": {"count": 1, "names": [sc.HANDBOOK_NAME], "scores": [0.9]}})
             # Both runs miss the 40 s ceiling, so each drill fails with its record.
@@ -1712,9 +1712,55 @@ class FailureDetailTests(unittest.TestCase):
             rollback = json.loads(str(raised.exception))
         self.assertEqual(rollback["ceiling_s"], 40.0)
         self.assertEqual(rollback["phases_s"], {"qdrant_start": 2.0, "restore_tuple": 15.0, "support_units": 1.0,
-                                                "open_webui_start": 50.0, "sign_in": 0.25, "chat": 0.75})
-        self.assertEqual(rollback["state_restore_s"], 69.0)
+                                                "open_webui_start": 50.0, "sign_in": 0.25, "retrieval_health": 0.0, "chat": 0.75})
+        self.assertEqual(rollback["state_restore_s"], 68.25)
         self.assertIn("before_clock_s", rollback)
+
+    def test_the_cited_answers_time_is_outside_both_drills_ceilings(self):
+        # The gated clock stops when the restored service is ready. A slow
+        # chat model then adds to the chat phase only, so a restore inside the
+        # ceiling passes however long the cited answer takes.
+        laps = {"systemctl": 0.5, "restore_tuple": 2.0, "start_open_webui": 11.0, "admin_token": 0.25,
+                "cited_check": 60.0, "start_qdrant": 0.5, "start_support_units": 0.25}
+        with tempfile.TemporaryDirectory() as directory:
+            kit = make_kit(directory, rehearsal=True)
+            kit.raw.mkdir(parents=True)
+            kit.anchor.mkdir(parents=True)
+            (kit.anchor / "anchor.json").write_text("{}")
+            trial = kit_module.Trial(kit)
+            trial.listed_chat_model = "chat"
+            trial.seed_file = "f1"
+            with self.drill_mocks(kit, laps):
+                restore = trial.restore_drill()
+            self.assertEqual(restore["restore_s"], 14.75)
+            self.assertEqual(restore["phases_s"]["chat"], 60.0)
+            self.assertTrue(restore["cited_fact"])
+            with self.drill_mocks(kit, laps):
+                rollback = trial.rollback_drill()
+        self.assertEqual(rollback["state_restore_s"], 14.0)
+        self.assertEqual(rollback["phases_s"]["chat"], 60.0)
+        self.assertLess(rollback["state_restore_s"], rollback["ceiling_s"])
+
+    def test_a_restored_service_that_never_reports_healthy_fails_the_drill(self):
+        laps = {"systemctl": 0.5, "restore_tuple": 2.0, "start_open_webui": 11.0, "admin_token": 0.25}
+        with tempfile.TemporaryDirectory() as directory:
+            kit = make_kit(directory, rehearsal=True)
+            kit.raw.mkdir(parents=True)
+            kit.anchor.mkdir(parents=True)
+            (kit.anchor / "anchor.json").write_text("{}")
+            trial = kit_module.Trial(kit)
+            trial.listed_chat_model = "chat"
+            trial.seed_file = "f1"
+
+            def never(*_args, **_kwargs):
+                raise sc.ScenarioFailure("timed out waiting for authenticated retrieval health")
+
+            with self.drill_mocks(kit, laps), mock.patch.object(kit_module, "wait_until", never), \
+                    mock.patch.object(kit_module, "cited_check") as cited, \
+                    self.assertRaises(sc.ScenarioFailure) as raised:
+                trial.restore_drill()
+            cited.assert_not_called()
+            self.assertIn("authenticated retrieval health", str(raised.exception))
 
 
 class FailedStepValuesTests(unittest.TestCase):
@@ -1756,10 +1802,10 @@ class FailedStepValuesTests(unittest.TestCase):
                 step = self.run_step(trial, kit_module.RESTORE_DRILL, trial.restore_drill)
             self.assertEqual(step.result, sc.FAIL)
             # The ceiling overrun's measurements, not only the detail (a summary in public copies).
-            self.assertEqual(step.values["restore_s"], 67.5)
+            self.assertEqual(step.values["restore_s"], 66.75)
             self.assertEqual(step.values["ceiling_s"], kit_module.LIMITS["restore_s"])
             self.assertEqual(step.values["phases_s"], {"stop": 1.0, "restore_tuple": 15.0, "open_webui_start": 50.5,
-                                                       "sign_in": 0.25, "chat": 0.75})
+                                                       "sign_in": 0.25, "retrieval_health": 0.0, "chat": 0.75})
             self.assertTrue(step.values["cited_fact"])
             self.assertEqual(step.values["a_d3"], {"passes": True})
             self.assertEqual(step.values["pre_restore_divergence"], {"sentinel": True})
@@ -1773,11 +1819,11 @@ class FailedStepValuesTests(unittest.TestCase):
             with self.drill_mocks(kit, self.LAPS):
                 step = self.run_step(trial, kit_module.ROLLBACK_DRILL, trial.rollback_drill)
             self.assertEqual(step.result, sc.FAIL)
-            self.assertEqual(step.values["state_restore_s"], 69.0)
+            self.assertEqual(step.values["state_restore_s"], 68.25)
             self.assertEqual(step.values["ceiling_s"], kit_module.LIMITS["rollback_state_s"])
             self.assertEqual(step.values["phases_s"], {"qdrant_start": 2.0, "restore_tuple": 15.0,
                                                        "support_units": 1.0, "open_webui_start": 50.0,
-                                                       "sign_in": 0.25, "chat": 0.75})
+                                                       "sign_in": 0.25, "retrieval_health": 0.0, "chat": 0.75})
             self.assertIn("before_clock_s", step.values)
             self.assertEqual(step.values["legacy_service"], {"before": {}, "after": {}})
             self.assertFalse(step.values["acceptance_listener_on_8080"])
@@ -1798,7 +1844,7 @@ class FailedStepValuesTests(unittest.TestCase):
             self.assertEqual(step.result, sc.FAIL)
             self.assertEqual(step.detail, f"ScenarioFailure: {json.dumps(route, sort_keys=True)}")
             self.assertEqual(step.values["route"], route)
-            self.assertEqual(step.values["restore_s"], 67.5)
+            self.assertEqual(step.values["restore_s"], 66.75)
             self.assertNotIn("one_admin", step.values)
             self.assert_public_values(kit, trial, step)
 
@@ -1921,11 +1967,12 @@ class FailedStepValuesTests(unittest.TestCase):
                 # The detail reads as it did before the values were kept.
                 self.assertEqual(step.detail, f"{type(error).__name__}: {error}")
                 timing = "restore_s" if drill == kit_module.RESTORE_DRILL else "state_restore_s"
-                self.assertEqual(step.values[timing], 67.5 if drill == kit_module.RESTORE_DRILL else 69.0)
+                self.assertEqual(step.values[timing], 66.75 if drill == kit_module.RESTORE_DRILL else 68.25)
                 self.assertEqual(set(step.values["phases_s"]), (
-                    {"stop", "restore_tuple", "open_webui_start", "sign_in", "chat"}
+                    {"stop", "restore_tuple", "open_webui_start", "sign_in", "retrieval_health", "chat"}
                     if drill == kit_module.RESTORE_DRILL
-                    else {"qdrant_start", "restore_tuple", "support_units", "open_webui_start", "sign_in", "chat"}))
+                    else {"qdrant_start", "restore_tuple", "support_units", "open_webui_start", "sign_in",
+                          "retrieval_health", "chat"}))
                 self.assertIn("cited_chat", step.values)
                 if target == "one_admin":
                     self.assertIn("route", step.values)
@@ -1942,7 +1989,7 @@ class FailedStepValuesTests(unittest.TestCase):
                 step = self.run_step(trial, kit_module.ROLLBACK_DRILL, trial.rollback_drill)
             self.assertEqual((step.result, step.detail), (sc.FAIL, f"CalledProcessError: {failing}"))
             self.assertEqual(step.values["legacy_service"], {"before": {"state": "inactive"}})
-            self.assertEqual(step.values["state_restore_s"], 69.0)
+            self.assertEqual(step.values["state_restore_s"], 68.25)
             self.assert_public_values(kit, trial, step)
 
     def test_a_drill_that_fails_mid_restore_keeps_the_phases_it_measured(self):
@@ -3693,7 +3740,7 @@ class EvidenceTests(unittest.TestCase):
         # A changed step gets a new id and an evidence schema bump, never a
         # rewritten id; new steps bump the schema too.
         self.assertEqual(steps[7], "open-webui.acceptance.connections.no-stored-secret")
-        self.assertEqual(kit_module.SCHEMA, "open-webui-household-acceptance/v5")
+        self.assertEqual(kit_module.SCHEMA, "open-webui-household-acceptance/v6")
 
     def test_the_runbook_scenario_map_is_the_trial_map(self):
         runbook = (REPO_ROOT / "docs" / "maintainers" / "open-webui-household-acceptance.md").read_text(encoding="utf-8")
@@ -3756,7 +3803,7 @@ class EvidenceTests(unittest.TestCase):
             kit, trial = self.trial(directory, rehearsal=False)
             evidence = kit_module.build_evidence(kit, trial, 0, False)
             v1.assert_public_safe(evidence)
-            self.assertEqual(evidence["schema"], "open-webui-household-acceptance/v5")
+            self.assertEqual(evidence["schema"], "open-webui-household-acceptance/v6")
             self.assertEqual(
                 (evidence["trial_set_count"], evidence["restore_drills"], evidence["rollback_drills"]), (1, 1, 1)
             )

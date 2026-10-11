@@ -9,7 +9,7 @@ live-validated Lemonade provider, and runs **one** integrated trial set with
 one restore drill and one rollback drill.
 
 The kit is `tools/accept_open_webui_household.py` (evidence schema
-`open-webui-household-acceptance/v5`) plus the shared scenario module
+`open-webui-household-acceptance/v6`) plus the shared scenario module
 `tools/open_webui_household_scenarios.py`. The kit PR alone means *source
 updated*. The candidate set is *acceptance deployed* only after the trial's
 evidence merges.
@@ -330,8 +330,8 @@ only.
 | `open-webui.acceptance.gate.explicit-reads` | With the gate qualified, explicitly requested content is allowed whole: the all-full chat from full-context returns 200 with the canonical fact in its sources; the mixed chat also returns 200 with the canonical fact in its sources; and the native-tools chat's `view_knowledge_file` output contains the canonical fact, with the same single instructed retry when the plain attempt makes no `view_knowledge_file` call. Each native-tools chat is deleted afterwards; a failed delete fails the step. | exact |
 | `open-webui.resmoke.stt` (A-S7) | `jfk.flac` through local faster-whisper on the CPU (int8): language `en`, both expected phrases, at least 20 ordered words; no `WhisperModel initialization failed` in the journal. | pass/fail |
 | `open-webui.acceptance.privacy` (A-P1..P3, A-E2) | A-P1 recorded; peer samples only within the allowed set; the five telemetry values; Haystack absent from the acceptance environment. | pass/fail (A-P1 record) |
-| `open-webui.acceptance.drill.restore` (A-D1, A-D3) | One restore, clock from epoch reservation to ready plus the cited fact. The record splits the clock into phases: stop, `restore_tuple`, Open WebUI start, sign-in, and chat. | ceiling 40 s |
-| `open-webui.acceptance.drill.rollback` (A-D2, A-D3) | Archives match the anchor manifest; state restore timed, split into Qdrant start, `restore_tuple`, support units, Open WebUI start, sign-in, and chat phases; total window recorded; never `:8080`: the host's own `open-webui.service` state is unchanged across the drill and no acceptance process listens on `:8080`. | ceiling 40 s state; window recorded |
+| `open-webui.acceptance.drill.restore` (A-D1, A-D3) | One restore, clock from epoch reservation to ready: signed in, with the authenticated retrieval health at 200. The restored service must then return the cited fact; that answer's time is the chat model's, so it is recorded and not gated. The record splits the drill into phases: stop, `restore_tuple`, Open WebUI start, sign-in, retrieval health, and chat. | ceiling 40 s to ready; chat recorded |
+| `open-webui.acceptance.drill.rollback` (A-D2, A-D3) | Archives match the anchor manifest; state restore timed to ready as in the restore drill, and split into Qdrant start, `restore_tuple`, support units, Open WebUI start, sign-in, retrieval health, and chat phases; the cited fact is required and its time recorded; total window recorded; never `:8080`: the host's own `open-webui.service` state is unchanged across the drill and no acceptance process listens on `:8080`. | ceiling 40 s state to ready; chat and window recorded |
 | `open-webui.acceptance.qdrant.paging` | The generated paging corpus indexes with packaged hybrid search on: its file tenant and a knowledge base built from it each hold exactly 1,100 points, a knowledge-scoped chat returns non-empty sources that include the sentence planted in section 1,050, and a BM25-only query finds the knowledge tenant's first point past one scroll page. The step detail records both measured point counts. The knowledge base and file are deleted afterwards, and a failed delete fails the step; an upload whose processing fails or times out is deleted before the step fails. See [Qdrant paging](#qdrant-paging). | counts exact; timings recorded |
 | `open-webui.acceptance.failclosed.hybrid-error` | The reranker is healthy and health is 200. A knowledge base built from the indexed handbook gets one planted Qdrant point whose metadata payload is null, and Qdrant reads that point back in the knowledge tenant, which counts one point more than the copy, before any chat. A knowledge-scoped chat returns 503 with the fixed detail and no sources, because hybrid search fails for the only collection and 0005 refuses the unreranked vector fallback. Health stays 200 (no latch). After the point is deleted and the tenant is back to the copy's count, the same chat returns 200 with the canonical fact in non-empty sources that carry finite scores, with no restart or re-save. The knowledge base is deleted afterwards; a failed delete fails the step. See [Gate checks](#gate-checks). | exact |
 | `open-webui.acceptance.resources` (A-RES1..3) | `memory.events` `oom_kill` 0 for every unit and for the kit slice, whose count is hierarchical and so still covers a unit whose cgroup is gone; an active unit whose count cannot be read fails the gate as unobserved; and `NRestarts` 0 in every snapshot for every unit (systemd resets it on each planned start, and a snapshot precedes each one); peak memory, CPU, Qdrant sizes, snapshot and backup sizes, and the cache additions since `stage`, including those the rollback wipe removed, recorded and labelled. | gates: no OOM, no unplanned restart |
@@ -365,9 +365,10 @@ Notes on specific checks:
   sentinel, and adds a harmless extra credential. It records that the live
   sentinel and credential store differ from the anchor, reserves the next
   session epoch (the clock starts), wipes and restores the whole tuple, and
-  stops the clock when the service is ready and returns the cited fact. A
-  restore that misses its ceiling is recorded as the drill's failure; the
-  rollback drill still runs.
+  stops the clock when the service is ready: signed in, with the
+  authenticated retrieval health at 200. It then requires the cited fact,
+  outside the clock. A restore that misses its ceiling is recorded as the
+  drill's failure; the rollback drill still runs.
 - **The anchor check.** The restore drill checks every anchor member
   against `anchor.json` right after it writes the anchor, before its marker
   change; the rollback drill checks it before it stops or removes anything;
@@ -793,6 +794,13 @@ instead.
   `docs/maintainers/evidence/open-webui-household-acceptance-<YYYY-MM-DD>.json`.
   It lands as a follow-up commit on the kit PR, or as a stacked PR if the kit
   has already merged. The ticket closes only when that evidence merges.
+- Schema `v6` changed what the drill clocks mean. `restore_s` and
+  `state_restore_s` stop when the restored service is ready and leave out
+  the cited answer, which the `chat` phase records. In `v5` evidence, the
+  2026-10-11 record included, both clocks ran through the cited answer. The
+  owner ruled on 2026-10-11 that the 40 s ceiling had been sized without
+  chat generation: the envelope's cited chat took 141 ms against a stand-in
+  chat model, and the production chat model took 33 to 47 s.
 - It binds the archive identities with each archive's source commit, the
   manifest's declared external inputs, the supporting packages (host pacman
   identity or verified archive), the host provider identities, the
