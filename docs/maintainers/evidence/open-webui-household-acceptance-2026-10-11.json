@@ -1,0 +1,1977 @@
+{
+  "canary_texts": {
+    "query": "Which key opens the seed cabinet?",
+    "relevant": "The brass key opens the seed cabinet.",
+    "unrelated": "Bananas ripen faster in a closed paper bag."
+  },
+  "conditions": [
+    "credentials: 0400-file fallback; systemd-creds --user unavailable",
+    "lemonade restart: not detectable from /api/v1/health; the operator's service start times are the record"
+  ],
+  "credential_route": "plaintext-0400",
+  "disposition": "not accepted",
+  "exit_code": 1,
+  "expected_source_name": "winter-garden-handbook.md",
+  "kit_commit": "30e043bf7ec754f15d2f4b9424832208b1500759",
+  "lemonade": {
+    "post": {
+      "loaded_models": [
+        "Qwen3.6-35B-A3B-MTP-GGUF-UD-Q4_K_XL",
+        "zembed-1-Q4_K_M-GGUF-Q4_K_M",
+        "zerank-2-GGUF"
+      ],
+      "version": "11.9.0"
+    },
+    "pre": {
+      "loaded_models": [
+        "Qwen3.6-35B-A3B-MTP-GGUF-UD-Q4_K_XL",
+        "zembed-1-Q4_K_M-GGUF-Q4_K_M",
+        "zerank-2-GGUF"
+      ],
+      "version": "11.9.0"
+    },
+    "receipt_ids": [
+      "lemonade.pins.service-consumer-pins",
+      "lemonade.pooling.zembed-1-q4-k-m.embeddings",
+      "lemonade.reranking.zerank-2.selected-logit",
+      "lemonade.reranking.zerank-2.selected-logit.service",
+      "lemonade.pins.persistence-startup-restore",
+      "arch-strix-halo-pkgs@9c2a53c:current-state#2026-09-25-lemonade-m6-redeploy-and-revalidation"
+    ],
+    "restarted": null
+  },
+  "limits": {
+    "restart_s": 25.0,
+    "restore_s": 40.0,
+    "rollback_state_s": 40.0
+  },
+  "mode": "record",
+  "models": {
+    "chat": "user.Qwen3.6-35B-A3B-MTP-GGUF-UD-Q4_K_XL",
+    "embedding": "zembed-1-Q4_K_M-GGUF-Q4_K_M",
+    "reranking": "zerank-2-GGUF"
+  },
+  "production_expectation": {
+    "entry": {
+      "RAG_EMBEDDING_CONTENT_PREFIX": "<|im_start|>system\ndocument<|im_end|>\n<|im_start|>user\n",
+      "RAG_EMBEDDING_MODEL": "zembed-1-Q4_K_M-GGUF-Q4_K_M",
+      "RAG_EMBEDDING_QUERY_PREFIX": "<|im_start|>system\nquery<|im_end|>\n<|im_start|>user\n",
+      "RAG_RERANKING_MODEL": "zerank-2-GGUF",
+      "archive": "open-webui-0.11.4-2-x86_64.pkg.tar.zst",
+      "archive_sha256": "31f3fbefc2ef3c4a6e8b8ee885372a1020de563c8845904d9a716fed5896d77a"
+    },
+    "version": "0.11.4-2"
+  },
+  "provider": "lemond",
+  "recorded_at": "2026-10-11T05:26:20Z",
+  "restore_drills": 1,
+  "rollback_drills": 1,
+  "schema": "open-webui-household-acceptance/v5",
+  "steps": [
+    {
+      "content_type": null,
+      "detail": "ok",
+      "duration_s": 3.619,
+      "error_type": null,
+      "id": "open-webui.acceptance.identity.archives",
+      "result": "PASS",
+      "values": {
+        "archives": [
+          {
+            "name": "open-webui-0.11.4-2-x86_64.pkg.tar.zst",
+            "sha256": "31f3fbefc2ef3c4a6e8b8ee885372a1020de563c8845904d9a716fed5896d77a",
+            "size": 186956865,
+            "source_commit": "2059571d63b02ee1d66b3dfed943c7554a643876",
+            "source_commit_basis": "recorded-build-commit"
+          },
+          {
+            "name": "python-rapidocr-3.9.2-1-any.pkg.tar.zst",
+            "sha256": "0e70fb599a535f9bb1c0c0b3a2f88abe9993f7632eba8e2c618826c7f01bf99b",
+            "size": 27198440,
+            "source_commit": "f25fd53b2b059b278b68a9bb4f661bdc2a06dc34",
+            "source_commit_basis": "recorded-build-commit"
+          },
+          {
+            "name": "qdrant-1.19.1-1-x86_64.pkg.tar.zst",
+            "sha256": "56208d6725771df687563b9d12e3c963b39c63120b1412f2335411f32c21ed85",
+            "size": 28289048,
+            "source_commit": "41208bdcd3ecd4f73a4e1c27a3a7b4f7a65bc4ae",
+            "source_commit_basis": "recorded-build-commit"
+          },
+          {
+            "name": "qdrant-migration-1.18.3-1-x86_64.pkg.tar.zst",
+            "sha256": "591f16328fcff0fc0193353a65f4c783afc1d24258ae251d3a8927283276ce9e",
+            "size": 26721008,
+            "source_commit": "51a55e7866e37887ab206372a075d814094ef7fe",
+            "source_commit_basis": "recorded-build-commit"
+          },
+          {
+            "name": "qdrant-web-ui-0.2.18-1-any.pkg.tar.zst",
+            "sha256": "962d2b7659fb66bd2eb3b2f425ef90a91cbe7701a66c31b4fd622caeb0e0f283",
+            "size": 5728430,
+            "source_commit": "41208bdcd3ecd4f73a4e1c27a3a7b4f7a65bc4ae",
+            "source_commit_basis": "recorded-build-commit"
+          },
+          {
+            "name": "python-faster-whisper-1.2.1-2-any.pkg.tar.zst",
+            "sha256": "9d8bdab118453c3a3cfded8a0430a526784e2ee4c9bce5038171f4de3a29f89b",
+            "size": 1088665,
+            "source_commit": "86549fa8062d792861d27d0f3faf722a733bcaaa",
+            "source_commit_basis": "recorded-build-commit"
+          }
+        ],
+        "bound_not_deployed": [
+          {
+            "name": "ctranslate2-4.8.2-1-x86_64.pkg.tar.zst",
+            "package": "ctranslate2",
+            "sha256": "d0843d9254afde3dedd7d92e6e218aae63d559926f3ebffcdbf2827373d8267b",
+            "size": 1055772,
+            "source": "speech",
+            "source_commit": "0b4b32705c7873f34405daccb415edc59ca58833",
+            "source_commit_basis": "recorded-build-commit",
+            "status": "bound, not deployed (host provider python-ctranslate2-gfx1151 provides and conflicts)"
+          },
+          {
+            "name": "python-ctranslate2-4.8.2-1-x86_64.pkg.tar.zst",
+            "package": "python-ctranslate2",
+            "sha256": "6c8e5813e12e1a36d68af357afdce744481eca359a4d1576bfcd2d46ec765d0e",
+            "size": 431574,
+            "source": "speech",
+            "source_commit": "0b4b32705c7873f34405daccb415edc59ca58833",
+            "source_commit_basis": "recorded-build-commit",
+            "status": "bound, not deployed (host provider python-ctranslate2-gfx1151 provides and conflicts)"
+          }
+        ],
+        "external_inputs_declared": [
+          {
+            "evidence": [
+              "https://github.com/nisavid/arch-strix-halo-pkgs/blob/ac51a22f4444bc0e70bcfaa5be0fde7539d13533/packages/ctranslate2-gfx1151/PKGBUILD",
+              "docs/maintainers/evidence/speech-providers-4.8.2-1.2.1/README.md#host-provider-seam"
+            ],
+            "origin": "https://github.com/nisavid/arch-strix-halo-pkgs",
+            "package": "python-ctranslate2-gfx1151",
+            "role": "host speech provider; provides and conflicts with python-ctranslate2",
+            "version": "4.7.2-1"
+          },
+          {
+            "evidence": [
+              "https://github.com/nisavid/arch-pkgs/issues/63#issuecomment-5789382398"
+            ],
+            "origin": "https://aur.archlinux.org/packages/python-sentence-transformers",
+            "package": "python-sentence-transformers",
+            "role": "knowingly foreign provider of record; Open WebUI only imports it",
+            "version": "5.7.0-1"
+          }
+        ],
+        "host_providers": {
+          "bubblewrap": "0.13.0-1.1",
+          "python": "3.14.6-1",
+          "python-ctranslate2-gfx1151": "4.7.2-1",
+          "socat": "1.8.1.3-1.1",
+          "valkey": "9.1.0-1"
+        },
+        "jfk_flac_sha256": "63a4b1e4c1dc655ac70961ffbf518acd249df237e5a0152faae9a4a836949715",
+        "manifest": {
+          "adoption_main_commit": "86549fa8062d792861d27d0f3faf722a733bcaaa",
+          "candidate_set": "open-webui-household",
+          "schema": "arch-pkgs-candidate-set/v1",
+          "sha256": "dea4c77871358a2863dedf94199d921ff828e951b76ffafcfab5c534b27ca94d"
+        },
+        "module_origins": {
+          "antlr4": "/usr/lib/python3.14/site-packages/antlr4/__init__.py",
+          "ctranslate2": "/usr/lib/python3.14/site-packages/ctranslate2/__init__.py",
+          "faster_whisper": "<root>/tree/python-faster-whisper/usr/lib/python3.14/site-packages/faster_whisper/__init__.py",
+          "omegaconf": "/usr/lib/python3.14/site-packages/omegaconf/__init__.py",
+          "open_webui": "<root>/tree/open-webui/opt/open-webui/lib/python3.14/site-packages/open_webui/__init__.py",
+          "rapidocr": "<root>/tree/python-rapidocr/usr/lib/python3.14/site-packages/rapidocr/__init__.py"
+        },
+        "providers_of_record": {
+          "absent": [],
+          "note": "knowingly-foreign providers of record: the trial exercises the host provider set (owner decision, option B); no provider is overlaid",
+          "packages": [
+            {
+              "architecture": "any",
+              "build_date": "Sun Oct  4 15:25:56 2026",
+              "foreign": true,
+              "install_reason": "Explicitly installed",
+              "package": "python-sentence-transformers",
+              "source": "host",
+              "version": "6.1.0-1"
+            },
+            {
+              "architecture": "any",
+              "build_date": "Thu May  7 04:56:51 2026",
+              "foreign": true,
+              "install_reason": "Explicitly installed",
+              "package": "python-accelerate-gfx1151",
+              "source": "host",
+              "version": "1.13.0-1"
+            },
+            {
+              "architecture": "any",
+              "build_date": "Thu May 14 07:34:31 2026",
+              "foreign": true,
+              "install_reason": "Explicitly installed",
+              "package": "python-transformers-gfx1151",
+              "source": "host",
+              "version": "5.8.1-1"
+            },
+            {
+              "architecture": "x86_64",
+              "build_date": "Mon Jun 15 06:44:35 2026",
+              "foreign": true,
+              "install_reason": "Explicitly installed",
+              "package": "python-pytorch-opt-rocm-gfx1151",
+              "source": "host",
+              "version": "2.12.0-4"
+            },
+            {
+              "architecture": "x86_64",
+              "build_date": "Fri Sep  4 18:50:01 2026",
+              "foreign": false,
+              "install_reason": "Explicitly installed",
+              "package": "python-onnxruntime-opt-rocm",
+              "source": "host",
+              "version": "1.29.0-3"
+            },
+            {
+              "architecture": "x86_64",
+              "build_date": "Sun May 24 20:23:33 2026",
+              "foreign": true,
+              "install_reason": "Explicitly installed",
+              "package": "python-ctranslate2-gfx1151",
+              "source": "host",
+              "version": "4.7.2-1"
+            },
+            {
+              "architecture": "any",
+              "build_date": "Thu May 14 09:08:18 2026",
+              "foreign": true,
+              "install_reason": "Explicitly installed",
+              "package": "python-faster-whisper",
+              "source": "host",
+              "version": "1.2.1-1"
+            }
+          ]
+        },
+        "speech": {
+          "compute_type": "int8 (upstream default)",
+          "device": "cpu",
+          "hf_hub_offline": "1",
+          "provider": "python-ctranslate2-gfx1151 4.7.2-1"
+        },
+        "supporting": [
+          {
+            "architecture": "x86_64_v4",
+            "build_date": "Sat Jun 13 18:52:33 2026",
+            "install_reason": "Explicitly installed",
+            "package": "caddy",
+            "source": "host",
+            "version": "2.11.4-1.1"
+          },
+          {
+            "architecture": "any",
+            "build_date": "Thu Jun 11 21:06:17 2026",
+            "install_reason": "Installed as a dependency for another package",
+            "package": "python-omegaconf",
+            "source": "host",
+            "version": "2.3.1-1"
+          },
+          {
+            "architecture": "any",
+            "build_date": "Sat Dec 20 09:38:05 2025",
+            "install_reason": "Installed as a dependency for another package",
+            "package": "python-antlr4",
+            "source": "host",
+            "version": "4.13.2-3"
+          }
+        ],
+        "whisper": {
+          "files": [
+            {
+              "name": "config.json",
+              "sha256": "56a6d8110d311f19c8f0471e562832c7527f146b567275bfca59fcf7c184da9a"
+            },
+            {
+              "name": "model.bin",
+              "sha256": "d01c3014881c9c6f3133c182f3d2887eb6ca1c789a7538c5c007196857a0a6a9"
+            },
+            {
+              "name": "tokenizer.json",
+              "sha256": "fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab"
+            },
+            {
+              "name": "vocabulary.txt",
+              "sha256": "34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913"
+            }
+          ],
+          "model": "base",
+          "repository": "Systran/faster-whisper-base",
+          "revision": "ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66"
+        }
+      }
+    },
+    {
+      "content_type": null,
+      "detail": "ok",
+      "duration_s": 0.33,
+      "error_type": null,
+      "id": "open-webui.acceptance.identity.unit-properties",
+      "result": "PASS",
+      "values": {
+        "effective": {
+          "IPAddressAllow": "loopback/128 loopback/8",
+          "IPAddressDeny": "::/0 0.0.0.0/0"
+        },
+        "journal_warning": null,
+        "rows": [
+          {
+            "acceptance": null,
+            "packaged": "network-online.target",
+            "property": "After",
+            "reason": "a system target the user manager cannot order against",
+            "status": "dropped",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "network-online.target",
+            "property": "Wants",
+            "reason": "a system target the user manager cannot pull in",
+            "status": "dropped",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "open-webui",
+            "property": "User",
+            "reason": "the user manager runs units as the invoking user",
+            "status": "dropped",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "open-webui",
+            "property": "Group",
+            "reason": "the user manager runs units as the invoking user",
+            "status": "dropped",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "open-webui-proxy",
+            "property": "SupplementaryGroups",
+            "reason": "the user manager cannot add groups",
+            "status": "dropped",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "open-webui",
+            "property": "StateDirectory",
+            "reason": "the kit creates state under the acceptance root",
+            "status": "dropped",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "0750",
+            "property": "StateDirectoryMode",
+            "reason": "the kit creates state under the acceptance root",
+            "status": "dropped",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "open-webui",
+            "property": "RuntimeDirectory",
+            "reason": "the socket lives under $XDG_RUNTIME_DIR/owui-acc",
+            "status": "dropped",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "0750",
+            "property": "RuntimeDirectoryMode",
+            "reason": "the socket lives under $XDG_RUNTIME_DIR/owui-acc",
+            "status": "dropped",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": [
+              "WorkingDirectory=<root>/state/open-webui"
+            ],
+            "packaged": "/var/lib/open-webui",
+            "property": "WorkingDirectory",
+            "reason": "state lives under the acceptance root",
+            "status": "rewritten",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": [
+              "Environment=HOME=<root>/state/open-webui"
+            ],
+            "packaged": "HOME=/var/lib/open-webui",
+            "property": "Environment",
+            "reason": "HOME and caches live under the acceptance root",
+            "status": "rewritten",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": [
+              "EnvironmentFile=<root>/tree/open-webui/etc/open-webui/open-webui.env"
+            ],
+            "packaged": "/etc/open-webui/open-webui.env",
+            "property": "EnvironmentFile",
+            "reason": "the packaged file is read from the extracted candidate tree, and the optional host profile from the kit's rendering of the candidate's example; the acceptance overlay is read after both",
+            "status": "rewritten",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": [
+              "EnvironmentFile=-<root>/etc/household.env"
+            ],
+            "packaged": "-/etc/open-webui/household.env",
+            "property": "EnvironmentFile",
+            "reason": "the packaged file is read from the extracted candidate tree, and the optional host profile from the kit's rendering of the candidate's example; the acceptance overlay is read after both",
+            "status": "rewritten",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": [
+              "LoadCredential webui-secret-key <- <root>/credstore/webui-secret-key"
+            ],
+            "packaged": "webui-secret-key <- /etc/credstore.encrypted/open-webui.webui-secret-key",
+            "property": "LoadCredentialEncrypted",
+            "reason": "sources live in the acceptance credstore",
+            "status": "rewritten",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": [
+              "LoadCredential oauth-client-info-encryption-key <- <root>/credstore/oauth-client-info-encryption-key"
+            ],
+            "packaged": "oauth-client-info-encryption-key <- /etc/credstore.encrypted/open-webui.oauth-client-info-encryption-key",
+            "property": "LoadCredentialEncrypted",
+            "reason": "sources live in the acceptance credstore",
+            "status": "rewritten",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": [
+              "LoadCredential oauth-session-token-encryption-key <- <root>/credstore/oauth-session-token-encryption-key"
+            ],
+            "packaged": "oauth-session-token-encryption-key <- /etc/credstore.encrypted/open-webui.oauth-session-token-encryption-key",
+            "property": "LoadCredentialEncrypted",
+            "reason": "sources live in the acceptance credstore",
+            "status": "rewritten",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": [
+              "LoadCredential valkey-url <- <root>/credstore/valkey-url"
+            ],
+            "packaged": "valkey-url <- /etc/credstore.encrypted/open-webui.valkey-url",
+            "property": "LoadCredentialEncrypted",
+            "reason": "sources live in the acceptance credstore",
+            "status": "rewritten",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": [
+              "LoadCredential qdrant-runtime-api-key <- <root>/credstore/qdrant-runtime-api-key"
+            ],
+            "packaged": "qdrant-runtime-api-key <- /etc/credstore.encrypted/open-webui.qdrant-runtime-api-key",
+            "property": "LoadCredentialEncrypted",
+            "reason": "sources live in the acceptance credstore",
+            "status": "rewritten",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": [
+              "LoadCredential session-epoch <- <root>/ledger/current"
+            ],
+            "packaged": "session-epoch <- /var/lib/open-webui-session-epoch/current",
+            "property": "LoadCredential",
+            "reason": "sources live under the acceptance root",
+            "status": "rewritten",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "/bin/sh -c 'if [ -e /etc/open-webui/household.env ] || [ -L /etc/open-webui/household.env ]; then [ -f /etc/open-webui/household.env ] && [ -r /etc/open-webui/household.env ] || { echo \"open-webui: /etc/open-webui/household.env exists but is not a file this service can read\" >&2; exit 1; }; fi'",
+            "property": "ExecStartPre",
+            "reason": "a privileged runtime-directory step, or the host-profile read guard; the kit checks its rendered profile itself before every start",
+            "status": "dropped",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "+/usr/bin/chgrp open-webui-proxy /run/open-webui",
+            "property": "ExecStartPre",
+            "reason": "a privileged runtime-directory step, or the host-profile read guard; the kit checks its rendered profile itself before every start",
+            "status": "dropped",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "+/usr/bin/chmod 2750 /run/open-webui",
+            "property": "ExecStartPre",
+            "reason": "a privileged runtime-directory step, or the host-profile read guard; the kit checks its rendered profile itself before every start",
+            "status": "dropped",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": [
+              "ExecStart=/usr/bin/bwrap --dev-bind / / --ro-bind <root>/tree/open-webui/opt/open-webui /opt/open-webui -- <root>/tree/open-webui/usr/bin/open-webui serve --uds $XDG_RUNTIME_DIR/owui-acc/open-webui.sock"
+            ],
+            "packaged": "/usr/bin/open-webui serve --uds /run/open-webui/open-webui.sock",
+            "property": "ExecStart",
+            "reason": "runs the extracted candidate bytes",
+            "status": "rewritten",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "true",
+            "property": "PrivateTmp",
+            "reason": "sandboxing the user manager cannot apply",
+            "status": "dropped",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "true",
+            "property": "ProtectHome",
+            "reason": "sandboxing the user manager cannot apply",
+            "status": "dropped",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "strict",
+            "property": "ProtectSystem",
+            "reason": "sandboxing the user manager cannot apply",
+            "status": "dropped",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "true",
+            "property": "ProtectControlGroups",
+            "reason": "sandboxing the user manager cannot apply",
+            "status": "dropped",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "true",
+            "property": "ProtectKernelModules",
+            "reason": "sandboxing the user manager cannot apply",
+            "status": "dropped",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "true",
+            "property": "ProtectKernelTunables",
+            "reason": "sandboxing the user manager cannot apply",
+            "status": "dropped",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "AF_UNIX AF_INET AF_INET6",
+            "property": "RestrictAddressFamilies",
+            "reason": "sandboxing the user manager cannot apply",
+            "status": "dropped",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "true",
+            "property": "RestrictRealtime",
+            "reason": "sandboxing the user manager cannot apply",
+            "status": "dropped",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "true",
+            "property": "RestrictSUIDSGID",
+            "reason": "sandboxing the user manager cannot apply",
+            "status": "dropped",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "native",
+            "property": "SystemCallArchitectures",
+            "reason": "sandboxing the user manager cannot apply",
+            "status": "dropped",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": "any",
+            "packaged": "any",
+            "property": "IPAddressDeny",
+            "reason": "the user manager cannot attach the BPF address filter",
+            "status": "configured-not-enforced",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": "localhost",
+            "packaged": "localhost",
+            "property": "IPAddressAllow",
+            "reason": "the user manager cannot attach the BPF address filter",
+            "status": "configured-not-enforced",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "/var/lib/open-webui",
+            "property": "ReadWritePaths",
+            "reason": "belongs to the dropped ProtectSystem sandbox",
+            "status": "dropped",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "multi-user.target",
+            "property": "WantedBy",
+            "reason": "runtime units are started explicitly, never enabled",
+            "status": "dropped",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "network-online.target",
+            "property": "After",
+            "reason": "a system target the user manager cannot order against",
+            "status": "dropped",
+            "unit": "qdrant.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "network-online.target",
+            "property": "Wants",
+            "reason": "a system target the user manager cannot pull in",
+            "status": "dropped",
+            "unit": "qdrant.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "qdrant",
+            "property": "User",
+            "reason": "the user manager runs units as the invoking user",
+            "status": "dropped",
+            "unit": "qdrant.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "qdrant",
+            "property": "Group",
+            "reason": "the user manager runs units as the invoking user",
+            "status": "dropped",
+            "unit": "qdrant.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "qdrant",
+            "property": "StateDirectory",
+            "reason": "the kit creates state under the acceptance root",
+            "status": "dropped",
+            "unit": "qdrant.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "0750",
+            "property": "StateDirectoryMode",
+            "reason": "the kit creates state under the acceptance root",
+            "status": "dropped",
+            "unit": "qdrant.service"
+          },
+          {
+            "acceptance": [
+              "WorkingDirectory=<root>/state/qdrant"
+            ],
+            "packaged": "/var/lib/qdrant",
+            "property": "WorkingDirectory",
+            "reason": "state lives under the acceptance root",
+            "status": "rewritten",
+            "unit": "qdrant.service"
+          },
+          {
+            "acceptance": [
+              "LoadCredential qdrant-admin-key <- <root>/credstore/qdrant-admin-key"
+            ],
+            "packaged": "/etc/qdrant/qdrant.env",
+            "property": "EnvironmentFile",
+            "reason": "the packaged file is read from the extracted candidate tree, and the optional host profile from the kit's rendering of the candidate's example; the acceptance overlay is read after both",
+            "status": "rewritten",
+            "unit": "qdrant.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "/usr/lib/qdrant/qdrant-secret-preflight /etc/qdrant/qdrant.env",
+            "property": "ExecStartPre",
+            "reason": "a privileged runtime-directory step, or the host-profile read guard; the kit checks its rendered profile itself before every start",
+            "status": "dropped",
+            "unit": "qdrant.service"
+          },
+          {
+            "acceptance": [
+              "ExecStart=<root>/etc/qdrant-credential-shim <root>/tree/qdrant/usr/bin/qdrant --config-path <root>/tree/qdrant/etc/qdrant/config.yaml"
+            ],
+            "packaged": "/usr/bin/qdrant --config-path /etc/qdrant/config.yaml",
+            "property": "ExecStart",
+            "reason": "runs the extracted candidate bytes",
+            "status": "rewritten",
+            "unit": "qdrant.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "",
+            "property": "CapabilityBoundingSet",
+            "reason": "capability sets need the system manager",
+            "status": "dropped",
+            "unit": "qdrant.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "",
+            "property": "AmbientCapabilities",
+            "reason": "capability sets need the system manager",
+            "status": "dropped",
+            "unit": "qdrant.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "true",
+            "property": "PrivateDevices",
+            "reason": "sandboxing the user manager cannot apply",
+            "status": "dropped",
+            "unit": "qdrant.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "true",
+            "property": "PrivateTmp",
+            "reason": "sandboxing the user manager cannot apply",
+            "status": "dropped",
+            "unit": "qdrant.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "true",
+            "property": "ProtectClock",
+            "reason": "sandboxing the user manager cannot apply",
+            "status": "dropped",
+            "unit": "qdrant.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "true",
+            "property": "ProtectHostname",
+            "reason": "sandboxing the user manager cannot apply",
+            "status": "dropped",
+            "unit": "qdrant.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "true",
+            "property": "ProtectHome",
+            "reason": "sandboxing the user manager cannot apply",
+            "status": "dropped",
+            "unit": "qdrant.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "strict",
+            "property": "ProtectSystem",
+            "reason": "sandboxing the user manager cannot apply",
+            "status": "dropped",
+            "unit": "qdrant.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "true",
+            "property": "ProtectControlGroups",
+            "reason": "sandboxing the user manager cannot apply",
+            "status": "dropped",
+            "unit": "qdrant.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "true",
+            "property": "ProtectKernelLogs",
+            "reason": "sandboxing the user manager cannot apply",
+            "status": "dropped",
+            "unit": "qdrant.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "true",
+            "property": "ProtectKernelModules",
+            "reason": "sandboxing the user manager cannot apply",
+            "status": "dropped",
+            "unit": "qdrant.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "true",
+            "property": "ProtectKernelTunables",
+            "reason": "sandboxing the user manager cannot apply",
+            "status": "dropped",
+            "unit": "qdrant.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "invisible",
+            "property": "ProtectProc",
+            "reason": "sandboxing the user manager cannot apply",
+            "status": "dropped",
+            "unit": "qdrant.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "pid",
+            "property": "ProcSubset",
+            "reason": "sandboxing the user manager cannot apply",
+            "status": "dropped",
+            "unit": "qdrant.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "true",
+            "property": "LockPersonality",
+            "reason": "sandboxing the user manager cannot apply",
+            "status": "dropped",
+            "unit": "qdrant.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "true",
+            "property": "MemoryDenyWriteExecute",
+            "reason": "sandboxing the user manager cannot apply",
+            "status": "dropped",
+            "unit": "qdrant.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "true",
+            "property": "RemoveIPC",
+            "reason": "applies to a dedicated system user",
+            "status": "dropped",
+            "unit": "qdrant.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "AF_UNIX AF_INET AF_INET6",
+            "property": "RestrictAddressFamilies",
+            "reason": "sandboxing the user manager cannot apply",
+            "status": "dropped",
+            "unit": "qdrant.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "true",
+            "property": "RestrictNamespaces",
+            "reason": "sandboxing the user manager cannot apply",
+            "status": "dropped",
+            "unit": "qdrant.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "true",
+            "property": "RestrictRealtime",
+            "reason": "sandboxing the user manager cannot apply",
+            "status": "dropped",
+            "unit": "qdrant.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "true",
+            "property": "RestrictSUIDSGID",
+            "reason": "sandboxing the user manager cannot apply",
+            "status": "dropped",
+            "unit": "qdrant.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "native",
+            "property": "SystemCallArchitectures",
+            "reason": "sandboxing the user manager cannot apply",
+            "status": "dropped",
+            "unit": "qdrant.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "@system-service",
+            "property": "SystemCallFilter",
+            "reason": "sandboxing the user manager cannot apply",
+            "status": "dropped",
+            "unit": "qdrant.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "EPERM",
+            "property": "SystemCallErrorNumber",
+            "reason": "sandboxing the user manager cannot apply",
+            "status": "dropped",
+            "unit": "qdrant.service"
+          },
+          {
+            "acceptance": "any",
+            "packaged": "any",
+            "property": "IPAddressDeny",
+            "reason": "the user manager cannot attach the BPF address filter",
+            "status": "configured-not-enforced",
+            "unit": "qdrant.service"
+          },
+          {
+            "acceptance": "localhost",
+            "packaged": "localhost",
+            "property": "IPAddressAllow",
+            "reason": "the user manager cannot attach the BPF address filter",
+            "status": "configured-not-enforced",
+            "unit": "qdrant.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "/var/lib/qdrant",
+            "property": "ReadWritePaths",
+            "reason": "belongs to the dropped ProtectSystem sandbox",
+            "status": "dropped",
+            "unit": "qdrant.service"
+          },
+          {
+            "acceptance": null,
+            "packaged": "multi-user.target",
+            "property": "WantedBy",
+            "reason": "runtime units are started explicitly, never enabled",
+            "status": "dropped",
+            "unit": "qdrant.service"
+          },
+          {
+            "acceptance": "<root>/state/open-webui/cache",
+            "packaged": "/var/lib/open-webui/cache",
+            "property": "acceptance.env CACHE_DIR",
+            "reason": "allowlisted acceptance overlay key",
+            "status": "overlay",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": "sqlite:///<root>/state/open-webui/data/webui.db",
+            "packaged": "sqlite:////var/lib/open-webui/data/webui.db",
+            "property": "acceptance.env DATABASE_URL",
+            "reason": "allowlisted acceptance overlay key",
+            "status": "overlay",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": "<root>/state/open-webui/data",
+            "packaged": "/var/lib/open-webui/data",
+            "property": "acceptance.env DATA_DIR",
+            "reason": "allowlisted acceptance overlay key",
+            "status": "overlay",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": "<root>/state/open-webui/cache/huggingface",
+            "packaged": "/var/lib/open-webui/cache/huggingface",
+            "property": "acceptance.env HF_HOME",
+            "reason": "allowlisted acceptance overlay key",
+            "status": "overlay",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": "http://loopback:16333",
+            "packaged": "http://loopback:6333",
+            "property": "acceptance.env QDRANT_URI",
+            "reason": "allowlisted acceptance overlay key",
+            "status": "overlay",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": "http://loopback:13306/api/v1/rerank",
+            "packaged": "http://loopback:13305/api/v1/rerank",
+            "property": "acceptance.env RAG_EXTERNAL_RERANKER_URL",
+            "reason": "allowlisted acceptance overlay key, over the rendered profile",
+            "status": "overlay",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": "<root>/state/open-webui/cache/embedding/models",
+            "packaged": "/var/lib/open-webui/cache/embedding/models",
+            "property": "acceptance.env SENTENCE_TRANSFORMERS_HOME",
+            "reason": "allowlisted acceptance overlay key",
+            "status": "overlay",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": "<root>/state/open-webui/static",
+            "packaged": "/var/lib/open-webui/static",
+            "property": "acceptance.env STATIC_DIR",
+            "reason": "allowlisted acceptance overlay key",
+            "status": "overlay",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": "<root>/state/open-webui/cache/tiktoken",
+            "packaged": "/var/lib/open-webui/cache/tiktoken",
+            "property": "acceptance.env TIKTOKEN_CACHE_DIR",
+            "reason": "allowlisted acceptance overlay key",
+            "status": "overlay",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": "<root>/state/open-webui/cache/whisper/models",
+            "packaged": "/var/lib/open-webui/cache/whisper/models",
+            "property": "acceptance.env WHISPER_MODEL_DIR",
+            "reason": "allowlisted acceptance overlay key",
+            "status": "overlay",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": "<root>/etc/household.env: the candidate's example with <lemond> set to the kit's provider origin",
+            "packaged": "/etc/open-webui/household.env (host-owned, optional; filled from /usr/share/open-webui/household.env.example)",
+            "property": "household profile",
+            "reason": "one rendered profile; a placeholder left or a drifted file refuses every start",
+            "status": "recorded",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": "<root>/ledger/current through unshare -r",
+            "packaged": "/var/lib/open-webui-session-epoch/current (root)",
+            "property": "session-epoch ledger",
+            "reason": "the root ledger is exercised only in the production install",
+            "status": "recorded",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": "$XDG_RUNTIME_DIR/owui-acc/open-webui.sock",
+            "packaged": "/run/open-webui/open-webui.sock",
+            "property": "socket",
+            "reason": "user runtime directory",
+            "status": "recorded",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": "Caddy on loopback:18443, tls internal",
+            "packaged": "open-webui-tailnet.service: Tailscale Serve to the socket (packaged since 0.11.0-6; owner-run in production)",
+            "property": "route",
+            "reason": "acceptance route; no trust-store install; the tailnet sidecar is not deployed here",
+            "status": "recorded",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": "plaintext-0400",
+            "packaged": "systemd-creds (system)",
+            "property": "credentials",
+            "reason": "0400 files: a weaker restore proof",
+            "status": "recorded",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": "packaged wrapper inside bwrap; only /opt/open-webui shadowed",
+            "packaged": "/usr/bin/open-webui",
+            "property": "launch",
+            "reason": "exact candidate bytes without installing them",
+            "status": "recorded",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": "1",
+            "packaged": null,
+            "property": "Environment HF_HUB_OFFLINE",
+            "reason": "local Whisper setting (ruling 11); the production drop-in carries the same value",
+            "status": "recorded",
+            "unit": "open-webui.service"
+          },
+          {
+            "acceptance": "base",
+            "packaged": null,
+            "property": "Environment WHISPER_MODEL",
+            "reason": "local Whisper setting (ruling 11); the production drop-in carries the same value",
+            "status": "recorded",
+            "unit": "open-webui.service"
+          }
+        ]
+      }
+    },
+    {
+      "content_type": null,
+      "detail": "ok",
+      "duration_s": 0.011,
+      "error_type": null,
+      "id": "open-webui.acceptance.ready.first-start",
+      "result": "PASS",
+      "values": {
+        "alembic_head": "d4c1a8e37b62",
+        "migration_errors": 0,
+        "qdrant_fresh": true,
+        "ready_s": 31.294
+      }
+    },
+    {
+      "content_type": null,
+      "detail": "ok",
+      "duration_s": 0.001,
+      "error_type": null,
+      "id": "open-webui.acceptance.profile.persisted",
+      "result": "PASS",
+      "values": {
+        "absent": [],
+        "environment_keys": [
+          "RAG_EMBEDDING_CONTENT_PREFIX",
+          "RAG_EMBEDDING_QUERY_PREFIX"
+        ],
+        "mismatched": [],
+        "overlay_keys": [
+          "RAG_EXTERNAL_RERANKER_URL"
+        ],
+        "persisted_keys": [
+          "ENABLE_CALENDAR",
+          "ENABLE_EVALUATION_ARENA_MODELS",
+          "ENABLE_OPENAI_API",
+          "ENABLE_RETRIEVAL_QUERY_GENERATION",
+          "OPENAI_API_BASE_URLS",
+          "OPENAI_API_KEYS",
+          "RAG_EMBEDDING_BATCH_SIZE",
+          "RAG_EMBEDDING_CONCURRENT_REQUESTS",
+          "RAG_EMBEDDING_ENGINE",
+          "RAG_EMBEDDING_MODEL",
+          "RAG_EXTERNAL_RERANKER_URL",
+          "RAG_OPENAI_API_BASE_URL",
+          "RAG_RERANKING_BATCH_SIZE",
+          "RAG_RERANKING_MODEL"
+        ],
+        "unclassified": []
+      }
+    },
+    {
+      "content_type": null,
+      "detail": "ok",
+      "duration_s": 16.724,
+      "error_type": null,
+      "id": "open-webui.acceptance.auth.one-admin",
+      "result": "PASS",
+      "values": {
+        "admin_count": 1,
+        "enable_signup": false,
+        "user_count": 1
+      }
+    },
+    {
+      "content_type": null,
+      "detail": "ok",
+      "duration_s": 11.452,
+      "error_type": null,
+      "id": "open-webui.acceptance.ready.restart",
+      "result": "PASS",
+      "values": {
+        "ceiling_s": 25.0,
+        "restart_to_ready_s": 11.354
+      }
+    },
+    {
+      "content_type": null,
+      "detail": "ok",
+      "duration_s": 0.036,
+      "error_type": null,
+      "id": "open-webui.acceptance.qdrant.g4",
+      "result": "PASS",
+      "values": {
+        "collections": {
+          "open-webui-rag-v1_files": {
+            "distance": "Cosine",
+            "indexes": [
+              "metadata.file_id",
+              "metadata.hash",
+              "tenant_id"
+            ],
+            "points": 0,
+            "present": true,
+            "size": 2560
+          },
+          "open-webui-rag-v1_hash-based": {
+            "distance": "Cosine",
+            "indexes": [
+              "metadata.file_id",
+              "metadata.hash",
+              "tenant_id"
+            ],
+            "points": 0,
+            "present": true,
+            "size": 2560
+          },
+          "open-webui-rag-v1_knowledge": {
+            "distance": "Cosine",
+            "indexes": [
+              "metadata.file_id",
+              "metadata.hash",
+              "tenant_id"
+            ],
+            "points": 0,
+            "present": true,
+            "size": 2560
+          },
+          "open-webui-rag-v1_memories": {
+            "distance": "Cosine",
+            "indexes": [
+              "metadata.file_id",
+              "metadata.hash",
+              "tenant_id"
+            ],
+            "points": 0,
+            "present": true,
+            "size": 2560
+          },
+          "open-webui-rag-v1_web-search": {
+            "distance": "Cosine",
+            "indexes": [
+              "metadata.file_id",
+              "metadata.hash",
+              "tenant_id"
+            ],
+            "points": 0,
+            "present": true,
+            "size": 2560
+          }
+        },
+        "fresh_state": true,
+        "negative_probes": {
+          "prw_create": 403,
+          "prw_delete": 403,
+          "r_upsert": 403
+        },
+        "runtime_holds_admin_key": false,
+        "runtime_roles": [
+          "prw"
+        ],
+        "version": "1.19.1"
+      }
+    },
+    {
+      "content_type": null,
+      "detail": "ok",
+      "duration_s": 0.01,
+      "error_type": null,
+      "id": "open-webui.acceptance.connections.no-stored-secret",
+      "result": "PASS",
+      "values": {
+        "nonempty_key_fields": [],
+        "runtime_credentials": [
+          "oauth-client-info-encryption-key",
+          "oauth-session-token-encryption-key",
+          "qdrant-runtime-api-key",
+          "session-epoch",
+          "valkey-url",
+          "webui-secret-key"
+        ]
+      }
+    },
+    {
+      "content_type": null,
+      "detail": "ok",
+      "duration_s": 0.529,
+      "error_type": null,
+      "id": "open-webui.acceptance.handbook-indexed",
+      "result": "PASS",
+      "values": {}
+    },
+    {
+      "content_type": null,
+      "detail": "ok",
+      "duration_s": 0.138,
+      "error_type": null,
+      "id": "open-webui.resmoke.zembed-canary",
+      "result": "PASS",
+      "values": {
+        "dimensions": 2560,
+        "margin": 0.34887,
+        "prefix_source": "process-environ",
+        "stored_vector_cosine": 0.998909,
+        "texts": {
+          "query": "Which key opens the seed cabinet?",
+          "relevant": "The brass key opens the seed cabinet.",
+          "unrelated": "Bananas ripen faster in a closed paper bag."
+        },
+        "vectors": {
+          "direct_chunk": {
+            "dimensions": 2560,
+            "norm": 0.999999976
+          },
+          "query": {
+            "dimensions": 2560,
+            "norm": 1.000000021
+          },
+          "relevant": {
+            "dimensions": 2560,
+            "norm": 0.99999999
+          },
+          "stored_chunk": {
+            "dimensions": 2560,
+            "norm": 1.000000001
+          },
+          "unrelated": {
+            "dimensions": 2560,
+            "norm": 1.000000018
+          }
+        }
+      }
+    },
+    {
+      "content_type": null,
+      "detail": "ok",
+      "duration_s": 0.077,
+      "error_type": null,
+      "id": "open-webui.resmoke.zerank-qualification",
+      "result": "PASS",
+      "values": {
+        "health": "qualified",
+        "scores": [
+          0.948957,
+          0.057019
+        ]
+      }
+    },
+    {
+      "content_type": null,
+      "detail": "ok",
+      "duration_s": 0.114,
+      "error_type": null,
+      "id": "open-webui.acceptance.route.caddy-uds",
+      "result": "PASS",
+      "values": {
+        "https_status": 200,
+        "listener_findings": [],
+        "websocket_status": 101
+      }
+    },
+    {
+      "content_type": null,
+      "detail": "ok",
+      "duration_s": 47.122,
+      "error_type": null,
+      "id": "open-webui.resmoke.cited-answer",
+      "result": "PASS",
+      "values": {
+        "expected_source_name": "winter-garden-handbook.md",
+        "fact_present": true,
+        "sources": {
+          "count": 1,
+          "names": [
+            "winter-garden-handbook.md"
+          ],
+          "scores": [
+            0.880375851268861,
+            0.08141368151017091,
+            0.08045671357349961
+          ]
+        },
+        "timings": {
+          "chat_s": 46.56,
+          "index_s": 0.513,
+          "upload_s": 0.01
+        }
+      }
+    },
+    {
+      "content_type": null,
+      "detail": "ok",
+      "duration_s": 2.627,
+      "error_type": null,
+      "id": "open-webui.acceptance.failclosed.reranker-down",
+      "result": "PASS",
+      "values": {
+        "file_chat_detail": null,
+        "file_chat_sources": 0,
+        "file_chat_status": 503,
+        "fixed_detail": true,
+        "health_status": 503,
+        "latching_retrieval_status": 503,
+        "plain_chat_detail": null,
+        "plain_chat_status": 200,
+        "retrieval_status": 503
+      }
+    },
+    {
+      "content_type": null,
+      "detail": "ok",
+      "duration_s": 0.03,
+      "error_type": null,
+      "id": "open-webui.acceptance.failclosed.full-context",
+      "result": "PASS",
+      "values": {
+        "chats": {
+          "all-full": {
+            "detail": null,
+            "fixed_detail": true,
+            "handbook_text": false,
+            "sources": 0,
+            "status": 503
+          },
+          "mixed": {
+            "detail": null,
+            "fixed_detail": true,
+            "handbook_text": false,
+            "sources": 0,
+            "status": 503
+          }
+        },
+        "health_after": 503,
+        "health_before": 503
+      }
+    },
+    {
+      "content_type": null,
+      "detail": "ok",
+      "duration_s": 9.194,
+      "error_type": null,
+      "id": "open-webui.acceptance.failclosed.native-tools",
+      "result": "PASS",
+      "values": {
+        "completion_s": 9.167,
+        "handbook_text": false,
+        "health_after": 503,
+        "health_before": 503,
+        "knowledge_tool_outputs": [
+          "{\"error\": \"Document retrieval is temporarily unavailable while its inference provider is unhealthy.\", \"status\": 503}"
+        ],
+        "mode": "plain",
+        "timeout_s": 300.0,
+        "tools_called": [
+          "view_knowledge_file"
+        ]
+      }
+    },
+    {
+      "content_type": null,
+      "detail": "ok",
+      "duration_s": 34.635,
+      "error_type": null,
+      "id": "open-webui.acceptance.failclosed.recovery",
+      "result": "PASS",
+      "values": {
+        "cited_chat": {
+          "detail": null,
+          "fact_present": true,
+          "sources": {
+            "count": 1,
+            "names": [
+              "winter-garden-handbook.md"
+            ],
+            "scores": [
+              0.880375851268861,
+              0.08141368151017091,
+              0.08057522861112341
+            ]
+          },
+          "status": 200
+        },
+        "cited_fact": true,
+        "health_after_resave": 200,
+        "latched_status": 503
+      }
+    },
+    {
+      "content_type": null,
+      "detail": "ok",
+      "duration_s": 54.016,
+      "error_type": null,
+      "id": "open-webui.acceptance.gate.explicit-reads",
+      "result": "PASS",
+      "values": {
+        "chats": {
+          "all-full": {
+            "detail": null,
+            "fact_in_sources": true,
+            "sources": 1,
+            "status": 200
+          },
+          "mixed": {
+            "detail": null,
+            "fact_in_sources": true,
+            "sources": 2,
+            "status": 200
+          }
+        },
+        "completion_s": 10.217,
+        "health": 200,
+        "mode": "plain",
+        "timeout_s": 300.0,
+        "tools_called": [
+          "view_knowledge_file"
+        ],
+        "view_knowledge_file_calls": 1,
+        "view_knowledge_file_holds_fact": true
+      }
+    },
+    {
+      "content_type": null,
+      "detail": "ok",
+      "duration_s": 4.618,
+      "error_type": null,
+      "id": "open-webui.resmoke.stt",
+      "result": "PASS",
+      "values": {
+        "language": null,
+        "transcription_s": 4.475,
+        "whisper": {
+          "files": [
+            {
+              "name": "config.json",
+              "sha256": "56a6d8110d311f19c8f0471e562832c7527f146b567275bfca59fcf7c184da9a"
+            },
+            {
+              "name": "model.bin",
+              "sha256": "d01c3014881c9c6f3133c182f3d2887eb6ca1c789a7538c5c007196857a0a6a9"
+            },
+            {
+              "name": "tokenizer.json",
+              "sha256": "fb7b63191e9bb045082c79fd742a3106a12c99513ab30df4a0d47fa6cb6fd0ab"
+            },
+            {
+              "name": "vocabulary.txt",
+              "sha256": "34ce3fe1c5041027b3f8d42912270993f986dbc4bb34cf27f951e34a1e453913"
+            }
+          ],
+          "model": "base",
+          "repository": "Systran/faster-whisper-base",
+          "revision": "ebe41f70d5b6dfa9166e2c581c45c9c0cfc57b66"
+        },
+        "word_count": 22
+      }
+    },
+    {
+      "content_type": null,
+      "detail": "ok",
+      "duration_s": 0.054,
+      "error_type": null,
+      "id": "open-webui.acceptance.privacy",
+      "result": "PASS",
+      "values": {
+        "haystack": {
+          "env_keys": [],
+          "host_service_active": false,
+          "host_service_enabled": false,
+          "module_mapped": false,
+          "unit_in_slice": false
+        },
+        "ip_address_policy": {
+          "IPAddressAllow": "loopback/128 loopback/8",
+          "IPAddressDeny": "::/0 0.0.0.0/0"
+        },
+        "ip_address_policy_enforced": false,
+        "peer_samples": 1522,
+        "peer_violations": [],
+        "remote_provider_peers": {
+          "allowed": 0,
+          "lookup_at_check": "ok",
+          "recorded": 0
+        },
+        "telemetry": {
+          "ANONYMIZED_TELEMETRY": "false",
+          "DO_NOT_TRACK": "true",
+          "ENABLE_VERSION_UPDATE_CHECK": "false",
+          "OFFLINE_MODE": "true",
+          "SCARF_NO_ANALYTICS": "true"
+        }
+      }
+    },
+    {
+      "content_type": null,
+      "detail": "ScenarioFailure; 1863 bytes; sha256:6dd92ec04e399640; full detail kept in the private copy",
+      "duration_s": 66.763,
+      "error_type": "ScenarioFailure",
+      "id": "open-webui.acceptance.drill.restore",
+      "result": "FAIL",
+      "values": {
+        "a_d3": {
+          "alembic_head": "d4c1a8e37b62",
+          "collections_match": true,
+          "digests_match": true,
+          "epoch_above_bound": true,
+          "fresh_login": true,
+          "passes": true,
+          "pre_backup_session_status": 401,
+          "quick_check": "ok",
+          "tuple_match": true,
+          "valkey_sentinel_present": true
+        },
+        "ceiling_s": 40.0,
+        "cited_chat": {
+          "detail": null,
+          "fact_present": true,
+          "sources": {
+            "count": 1,
+            "names": [
+              "winter-garden-handbook.md"
+            ],
+            "scores": [
+              0.8819284567091654,
+              0.08141368151017091,
+              0.08057522861112341
+            ]
+          },
+          "status": 200
+        },
+        "cited_fact": true,
+        "one_admin": {
+          "admin_count": 1,
+          "enable_signup": false,
+          "user_count": 1
+        },
+        "phases_s": {
+          "chat": 34.505,
+          "open_webui_start": 12.142,
+          "restore_tuple": 2.156,
+          "sign_in": 0.189,
+          "stop": 0.237
+        },
+        "pre_restore_divergence": {
+          "credstore_changed": true,
+          "valkey_sentinel_changed": true
+        },
+        "reserved_epoch_above_bound": true,
+        "resources_before": {
+          "label": "before restore",
+          "slice": {
+            "oom_kill": 0,
+            "state": "active",
+            "unit": "builds-owui_acc.slice"
+          },
+          "t": 1791696278.3751717,
+          "units": {
+            "owui-acc-caddy.service": {
+              "CPUUsageNSec": null,
+              "NRestarts": 0,
+              "state": "inactive"
+            },
+            "owui-acc-open-webui.service": {
+              "CPUUsageNSec": 10651593000,
+              "NRestarts": 0,
+              "memory_peak": 483090432,
+              "oom_kill": 0,
+              "state": "active"
+            },
+            "owui-acc-qdrant.service": {
+              "CPUUsageNSec": 2031816000,
+              "NRestarts": 0,
+              "memory_peak": 727474176,
+              "oom_kill": 0,
+              "state": "active"
+            },
+            "owui-acc-rerank-relay.service": {
+              "CPUUsageNSec": 9129000,
+              "NRestarts": 0,
+              "memory_peak": 2355200,
+              "oom_kill": 0,
+              "state": "active"
+            },
+            "owui-acc-sampler.service": {
+              "CPUUsageNSec": 13463480000,
+              "NRestarts": 0,
+              "memory_peak": 41123840,
+              "oom_kill": 0,
+              "state": "active"
+            },
+            "owui-acc-valkey.service": {
+              "CPUUsageNSec": 23299000,
+              "NRestarts": 0,
+              "memory_peak": 11264000,
+              "oom_kill": 0,
+              "state": "active"
+            }
+          }
+        },
+        "restore_s": 49.23,
+        "route": {
+          "https_status": 200,
+          "listener_findings": [],
+          "websocket_status": 101
+        }
+      }
+    },
+    {
+      "content_type": null,
+      "detail": "ScenarioFailure; 2244 bytes; sha256:2fbfc30ed6f8182e; full detail kept in the private copy",
+      "duration_s": 51.527,
+      "error_type": "ScenarioFailure",
+      "id": "open-webui.acceptance.drill.rollback",
+      "result": "FAIL",
+      "values": {
+        "a_d3": {
+          "alembic_head": "d4c1a8e37b62",
+          "collections_match": true,
+          "digests_match": true,
+          "epoch_above_bound": true,
+          "fresh_login": true,
+          "passes": true,
+          "pre_backup_session_status": 401,
+          "quick_check": "ok",
+          "tuple_match": true,
+          "valkey_sentinel_present": true
+        },
+        "acceptance_listener_on_8080": false,
+        "archives_match_anchor": true,
+        "before_clock_s": 2.954,
+        "ceiling_s": 40.0,
+        "cited_chat": {
+          "detail": null,
+          "fact_present": true,
+          "sources": {
+            "count": 1,
+            "names": [
+              "winter-garden-handbook.md"
+            ],
+            "scores": [
+              0.8819284567091654,
+              0.08141368151017091,
+              0.08057522861112341
+            ]
+          },
+          "status": 200
+        },
+        "cited_fact": true,
+        "legacy_service": {
+          "after": {
+            "ActiveEnterTimestampMonotonic": "38386666",
+            "ActiveState": "active",
+            "UnitFileState": "enabled"
+          },
+          "before": {
+            "ActiveEnterTimestampMonotonic": "38386666",
+            "ActiveState": "active",
+            "UnitFileState": "enabled"
+          }
+        },
+        "legacy_service_touched": false,
+        "one_admin": {
+          "admin_count": 1,
+          "enable_signup": false,
+          "user_count": 1
+        },
+        "phases_s": {
+          "chat": 33.357,
+          "open_webui_start": 11.103,
+          "qdrant_start": 0.507,
+          "restore_tuple": 2.208,
+          "sign_in": 0.198,
+          "support_units": 0.024
+        },
+        "reserved_epoch_above_bound": true,
+        "resources_before": {
+          "label": "before rollback",
+          "slice": {
+            "oom_kill": 0,
+            "state": "active",
+            "unit": "builds-owui_acc.slice"
+          },
+          "t": 1791696328.6084833,
+          "units": {
+            "owui-acc-caddy.service": {
+              "CPUUsageNSec": 44448000,
+              "NRestarts": 0,
+              "memory_peak": 54898688,
+              "oom_kill": 0,
+              "state": "active"
+            },
+            "owui-acc-open-webui.service": {
+              "CPUUsageNSec": 11583154000,
+              "NRestarts": 0,
+              "memory_peak": 447954944,
+              "oom_kill": 0,
+              "state": "active"
+            },
+            "owui-acc-qdrant.service": {
+              "CPUUsageNSec": 3070312000,
+              "NRestarts": 0,
+              "memory_peak": 1437863936,
+              "oom_kill": 0,
+              "state": "active"
+            },
+            "owui-acc-rerank-relay.service": {
+              "CPUUsageNSec": 11414000,
+              "NRestarts": 0,
+              "memory_peak": 2355200,
+              "oom_kill": 0,
+              "state": "active"
+            },
+            "owui-acc-sampler.service": {
+              "CPUUsageNSec": 16417031000,
+              "NRestarts": 0,
+              "memory_peak": 47382528,
+              "oom_kill": 0,
+              "state": "active"
+            },
+            "owui-acc-valkey.service": {
+              "CPUUsageNSec": 87499000,
+              "NRestarts": 0,
+              "memory_peak": 9846784,
+              "oom_kill": 0,
+              "state": "active"
+            }
+          }
+        },
+        "route": {
+          "https_status": 200,
+          "listener_findings": [],
+          "websocket_status": 101
+        },
+        "state_restore_s": 47.398,
+        "window_s": 51.338
+      }
+    },
+    {
+      "content_type": null,
+      "detail": "ok",
+      "duration_s": 0.073,
+      "error_type": null,
+      "id": "open-webui.acceptance.resources",
+      "result": "PASS",
+      "values": {
+        "anchor": {
+          "allocated_bytes": 4804608,
+          "apparent_bytes": 4731648
+        },
+        "cache_inventory": {
+          "generated": [
+            "state/caddy/xdg-data/caddy/autosave.json",
+            "state/caddy/xdg-data/caddy/instance.uuid"
+          ],
+          "model_or_asset_like": [],
+          "new_files": [
+            "state/caddy/xdg-data/caddy/autosave.json",
+            "state/caddy/xdg-data/caddy/instance.uuid"
+          ],
+          "partial": false,
+          "partial_reason": null,
+          "pre_rollback_snapshot": true
+        },
+        "cpu_usage_nsec_max": {
+          "owui-acc-caddy.service": 265480000,
+          "owui-acc-open-webui.service": 24457727000,
+          "owui-acc-qdrant.service": 3070312000,
+          "owui-acc-rerank-relay.service": 11414000,
+          "owui-acc-sampler.service": 16417031000,
+          "owui-acc-valkey.service": 436271000
+        },
+        "end_of_trial_snapshot": {
+          "label": "end of trial",
+          "slice": {
+            "oom_kill": 0,
+            "state": "active",
+            "unit": "builds-owui_acc.slice"
+          },
+          "t": 1791696380.1229076,
+          "units": {
+            "owui-acc-caddy.service": {
+              "CPUUsageNSec": 73117000,
+              "NRestarts": 0,
+              "memory_peak": 33398784,
+              "oom_kill": 0,
+              "state": "active"
+            },
+            "owui-acc-open-webui.service": {
+              "CPUUsageNSec": 11098787000,
+              "NRestarts": 0,
+              "memory_peak": 405356544,
+              "oom_kill": 0,
+              "state": "active"
+            },
+            "owui-acc-qdrant.service": {
+              "CPUUsageNSec": 1198787000,
+              "NRestarts": 0,
+              "memory_peak": 967974912,
+              "oom_kill": 0,
+              "state": "active"
+            },
+            "owui-acc-rerank-relay.service": {
+              "CPUUsageNSec": 6903000,
+              "NRestarts": 0,
+              "memory_peak": 2621440,
+              "oom_kill": 0,
+              "state": "active"
+            },
+            "owui-acc-sampler.service": {
+              "CPUUsageNSec": 2889141000,
+              "NRestarts": 0,
+              "memory_peak": 39571456,
+              "oom_kill": 0,
+              "state": "active"
+            },
+            "owui-acc-valkey.service": {
+              "CPUUsageNSec": 83334000,
+              "NRestarts": 0,
+              "memory_peak": 10960896,
+              "oom_kill": 0,
+              "state": "active"
+            }
+          }
+        },
+        "memory_peak_max_bytes": {
+          "owui-acc-caddy.service": 73359360,
+          "owui-acc-open-webui.service": 1642414080,
+          "owui-acc-qdrant.service": 1437863936,
+          "owui-acc-rerank-relay.service": 2621440,
+          "owui-acc-sampler.service": 47382528,
+          "owui-acc-valkey.service": 13619200
+        },
+        "oom_kills": {
+          "builds-owui_acc.slice": 0,
+          "owui-acc-caddy.service": 0,
+          "owui-acc-open-webui.service": 0,
+          "owui-acc-qdrant.service": 0,
+          "owui-acc-rerank-relay.service": 0,
+          "owui-acc-sampler.service": 0,
+          "owui-acc-valkey.service": 0
+        },
+        "oom_unobserved": [],
+        "passes": true,
+        "points": {
+          "open-webui-rag-v1_files": 3,
+          "open-webui-rag-v1_hash-based": 0,
+          "open-webui-rag-v1_knowledge": 0,
+          "open-webui-rag-v1_memories": 0,
+          "open-webui-rag-v1_web-search": 0
+        },
+        "qdrant_storage": {
+          "allocated_bytes": 3338240,
+          "apparent_bytes": 2714851885
+        },
+        "snapshot_bytes": {
+          "open-webui-rag-v1_files": 649728,
+          "open-webui-rag-v1_hash-based": 371200,
+          "open-webui-rag-v1_knowledge": 371200,
+          "open-webui-rag-v1_memories": 371200,
+          "open-webui-rag-v1_web-search": 371200
+        },
+        "unplanned_restarts": {
+          "owui-acc-caddy.service": 0,
+          "owui-acc-open-webui.service": 0,
+          "owui-acc-qdrant.service": 0,
+          "owui-acc-rerank-relay.service": 0,
+          "owui-acc-sampler.service": 0,
+          "owui-acc-valkey.service": 0
+        }
+      }
+    },
+    {
+      "content_type": null,
+      "detail": "ok",
+      "duration_s": 0.0,
+      "error_type": null,
+      "id": "open-webui.acceptance.evidence",
+      "result": "PASS",
+      "values": {
+        "restore_drills": 1,
+        "rollback_drills": 1,
+        "trial_set_count": 1
+      }
+    }
+  ],
+  "trial_set_count": 1
+}
