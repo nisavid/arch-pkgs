@@ -884,12 +884,13 @@ instead.
   the public record into `--evidence-out`, which defaults to this
   repository's `docs/maintainers/evidence`, so for that trial pass
   `--evidence-out` a directory outside the repository and rename the copy.
-- The record carries `production_expectation`, the frozen production-settings entry
-  for the deployed `open-webui` archive (for this trial, the `0.11.4-2`
-  entry), and the trial prints it. The evidence commit adds that entry to
-  `PRODUCTION_EXPECTATIONS` in `tools/open_webui_household_scenarios.py`; a
-  test ties every entry to committed acceptance evidence, so no entry lands
-  before the trial's evidence does.
+- The record carries `production_expectation`, the frozen
+  production-settings entry for the deployed `open-webui` archive (for this
+  trial, the `0.11.4-2` entry), and the trial prints it. Only the evidence
+  commit of a record whose `disposition` is `accepted` adds that entry to
+  `PRODUCTION_EXPECTATIONS` in `tools/open_webui_household_scenarios.py`; no
+  other record adds one. A test ties every entry to committed evidence that
+  is `accepted`, so no entry lands before that evidence does.
 - Every `/proc/<pid>/environ` read is filtered in memory to a fixed key
   allowlist (the five telemetry keys, the embedding prefixes and model, and
   the reranking model). Raw environ is never written anywhere.
