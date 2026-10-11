@@ -1,0 +1,29 @@
+pkgbase = sequoia-sqv-pqc
+	pkgdesc = Simple OpenPGP signature verification program with the OpenSSL PQC backend
+	pkgver = 1.5.0
+	pkgrel = 4
+	url = https://gitlab.com/sequoia-pgp/sequoia-sqv
+	arch = x86_64
+	groups = sequoia
+	license = LGPL-2.0-or-later
+	makedepends = cargo
+	makedepends = clang
+	makedepends = git
+	depends = glibc
+	depends = libgcc
+	depends = openssl>=3.5
+	depends = libcrypto.so=3-64
+	depends = libssl.so=3-64
+	provides = sequoia-sqv=1.5.0
+	conflicts = sequoia-sqv
+	source = git+https://gitlab.com/sequoia-pgp/sequoia-sqv.git#tag=v1.5.0?signed
+	source = sequoia-openpgp-2.4.1.patch
+	validpgpkeys = D2F2C5D45BE9FDE6A4EE0AAF31855247603831FD
+	validpgpkeys = CBCD8F030588653EEDD7E2659B7DD433F254904A
+	validpgpkeys = 8F17777118A33DDA9BA48E62AACB3243630052D9
+	sha512sums = a6ca500b41c29fa697e872888f71db3c7dde99c559efbac3e0b30af019428d0c7afaf6546e616ffdf2cd3a9f65d5fee02d860af06173d70e2e1de84497800576
+	sha512sums = 8e5d1a7be38147b6f9d1c66f05242c286c8301bcefa608f399006a1eef720c102844ecf2962de8a96f3a4038280ce8c8643f4b54b5fe91a1228a514dae73789f
+	b2sums = f03157bb71fdf36c035688e025951384cc92c4206ed4c542820287e3f127bf17e89356c610738248f33bd3d3412762bff95ebb3512cf0f46e9e52dde897c5954
+	b2sums = da119a89d16d6c121fa00cd52eda6d185e8e5ba47f8f6adf02d08d21d7e7c6ea0744ba8e6340bca1d07bf872b470fbb029534b75c92a600b47c603802f5cdcbb
+
+pkgname = sequoia-sqv-pqc
