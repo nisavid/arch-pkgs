@@ -190,8 +190,8 @@ PAYLOAD_INDEXES = (
 # readiness.  v5 records carry "open-webui.acceptance.drill.restore" and
 # "open-webui.acceptance.drill.rollback", whose clocks ran through the cited
 # answer.
-RESTORE_DRILL = "open-webui.acceptance.drill.restore-ready"
-ROLLBACK_DRILL = "open-webui.acceptance.drill.rollback-ready"
+RESTORE_DRILL = "open-webui.acceptance.drill.restore-to-ready"
+ROLLBACK_DRILL = "open-webui.acceptance.drill.rollback-to-ready"
 # The trial's scenario map, in run order.  One pass; no step repeats.
 TRIAL_STEPS: tuple[str, ...] = (
     "open-webui.acceptance.identity.archives",

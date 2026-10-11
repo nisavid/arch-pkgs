@@ -3752,7 +3752,7 @@ class EvidenceTests(unittest.TestCase):
                                       "open-webui.acceptance.auth.one-admin"))
         # The paging corpus and the planted hybrid-search fault run after both
         # drills, so their anchor and timings never carry those points.
-        rollback = steps.index("open-webui.acceptance.drill.rollback-ready")
+        rollback = steps.index("open-webui.acceptance.drill.rollback-to-ready")
         self.assertEqual(steps[rollback + 1:rollback + 3],
                          ("open-webui.acceptance.qdrant.paging", "open-webui.acceptance.failclosed.hybrid-error"))
         # Both closed-gate checks run while reranker-down's latch holds, before
@@ -3770,7 +3770,7 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual((kit_module.RESTORE_DRILL, kit_module.ROLLBACK_DRILL),
                          tuple(item for item in steps if ".drill." in item))
         # An id is never reused for a different requirement: a step that
-        # comes to gate something else gets a new id (v6 renamed both drills).
+        # comes to gate something else gets a new id (v6 gave both drills new ids).
         # A corrected check keeps its id.  Either change, and any new step,
         # bumps the evidence schema.
         self.assertEqual(steps[7], "open-webui.acceptance.connections.no-stored-secret")
@@ -4412,8 +4412,8 @@ class EvidenceTests(unittest.TestCase):
                             "open-webui.acceptance.handbook-indexed")
             self.assertEqual([step.id for step in trial.steps], expected)
             results = {step.id: step.result for step in trial.steps}
-            self.assertEqual(results["open-webui.acceptance.drill.restore-ready"], sc.FAIL)
-            self.assertEqual(results["open-webui.acceptance.drill.rollback-ready"], sc.PASS)
+            self.assertEqual(results["open-webui.acceptance.drill.restore-to-ready"], sc.FAIL)
+            self.assertEqual(results["open-webui.acceptance.drill.rollback-to-ready"], sc.PASS)
             self.assertEqual(results["open-webui.acceptance.qdrant.paging"], sc.PASS)
 
     def test_a_step_can_record_its_measured_detail(self):

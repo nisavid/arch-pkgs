@@ -330,8 +330,8 @@ only.
 | `open-webui.acceptance.gate.explicit-reads` | With the gate qualified, explicitly requested content is allowed whole: the all-full chat from full-context returns 200 with the canonical fact in its sources; the mixed chat also returns 200 with the canonical fact in its sources; and the native-tools chat's `view_knowledge_file` output contains the canonical fact, with the same single instructed retry when the plain attempt makes no `view_knowledge_file` call. Each native-tools chat is deleted afterwards; a failed delete fails the step. | exact |
 | `open-webui.resmoke.stt` (A-S7) | `jfk.flac` through local faster-whisper on the CPU (int8): language `en`, both expected phrases, at least 20 ordered words; no `WhisperModel initialization failed` in the journal. | pass/fail |
 | `open-webui.acceptance.privacy` (A-P1..P3, A-E2) | A-P1 recorded; peer samples only within the allowed set; the five telemetry values; Haystack absent from the acceptance environment. | pass/fail (A-P1 record) |
-| `open-webui.acceptance.drill.restore-ready` (A-D1, A-D3) | One restore, clock from epoch reservation to ready: signed in, with the authenticated retrieval health at 200. The restored service must then return the cited fact; that request's time (retrieval, rerank, and generation) is dominated by the chat model, so it is recorded and not gated. The record splits the drill into phases: stop, `restore_tuple`, Open WebUI start, sign-in, retrieval health, and chat. | ceiling 40 s to ready; chat recorded |
-| `open-webui.acceptance.drill.rollback-ready` (A-D2, A-D3) | Archives match the anchor manifest; state restore timed to ready as in the restore drill, and split into Qdrant start, `restore_tuple`, support units, Open WebUI start, sign-in, retrieval health, and chat phases; the cited fact is required and its time recorded; total window recorded; never `:8080`: the host's own `open-webui.service` state is unchanged across the drill and no acceptance process listens on `:8080`. | ceiling 40 s state to ready; chat and window recorded |
+| `open-webui.acceptance.drill.restore-to-ready` (A-D1, A-D3) | One restore, clock from epoch reservation to ready: signed in, with the authenticated retrieval health at 200. The restored service must then return the cited fact; that request's time (retrieval, rerank, and generation) is dominated by the chat model, so it is recorded and not gated. The record splits the drill into phases: stop, `restore_tuple`, Open WebUI start, sign-in, retrieval health, and chat. | ceiling 40 s to ready; chat recorded |
+| `open-webui.acceptance.drill.rollback-to-ready` (A-D2, A-D3) | Archives match the anchor manifest; state restore timed to ready as in the restore drill, and split into Qdrant start, `restore_tuple`, support units, Open WebUI start, sign-in, retrieval health, and chat phases; the cited fact is required and its time recorded; total window recorded; never `:8080`: the host's own `open-webui.service` state is unchanged across the drill and no acceptance process listens on `:8080`. | ceiling 40 s state to ready; chat and window recorded |
 | `open-webui.acceptance.qdrant.paging` | The generated paging corpus indexes with packaged hybrid search on: its file tenant and a knowledge base built from it each hold exactly 1,100 points, a knowledge-scoped chat returns non-empty sources that include the sentence planted in section 1,050, and a BM25-only query finds the knowledge tenant's first point past one scroll page. The step detail records both measured point counts. The knowledge base and file are deleted afterwards, and a failed delete fails the step; an upload whose processing fails or times out is deleted before the step fails. See [Qdrant paging](#qdrant-paging). | counts exact; timings recorded |
 | `open-webui.acceptance.failclosed.hybrid-error` | The reranker is healthy and health is 200. A knowledge base built from the indexed handbook gets one planted Qdrant point whose metadata payload is null, and Qdrant reads that point back in the knowledge tenant, which counts one point more than the copy, before any chat. A knowledge-scoped chat returns 503 with the fixed detail and no sources, because hybrid search fails for the only collection and 0005 refuses the unreranked vector fallback. Health stays 200 (no latch). After the point is deleted and the tenant is back to the copy's count, the same chat returns 200 with the canonical fact in non-empty sources that carry finite scores, with no restart or re-save. The knowledge base is deleted afterwards; a failed delete fails the step. See [Gate checks](#gate-checks). | exact |
 | `open-webui.acceptance.resources` (A-RES1..3) | `memory.events` `oom_kill` 0 for every unit and for the kit slice, whose count is hierarchical and so still covers a unit whose cgroup is gone; an active unit whose count cannot be read fails the gate as unobserved; and `NRestarts` 0 in every snapshot for every unit (systemd resets it on each planned start, and a snapshot precedes each one); peak memory, CPU, Qdrant sizes, snapshot and backup sizes, and the cache additions since `stage`, including those the rollback wipe removed, recorded and labelled. | gates: no OOM, no unplanned restart |
@@ -869,18 +869,22 @@ instead.
   [`evidence/open-webui-household-acceptance-2026-10-11.json`](evidence/open-webui-household-acceptance-2026-10-11.json)
   is such a record.
 - Read the drill clocks by schema. In `v6` records the drills are
-  `open-webui.acceptance.drill.restore-ready` and
-  `open-webui.acceptance.drill.rollback-ready`, and `restore_s` and
+  `open-webui.acceptance.drill.restore-to-ready` and
+  `open-webui.acceptance.drill.rollback-to-ready`, and `restore_s` and
   `state_restore_s` stop when the restored service is ready; the `chat`
   phase records the cited request. In `v5` records, the 2026-10-11 record
   included, the drills are `open-webui.acceptance.drill.restore` and
   `open-webui.acceptance.drill.rollback`, and both clocks ran through the
-  cited request.
+  cited request. The 2026-10-11 record was made by the kit at `30e043b`, so
+  its zembed canary already used the corrected stored-vector comparison.
 - The kit names the public copy by UTC date alone. Never overwrite a
   committed record: when a second record-mode trial ends on the same UTC
   date, commit its evidence under a suffixed name, such as
-  `open-webui-household-acceptance-<YYYY-MM-DD>-2.json`.
-- It records `production_expectation`, the frozen production-settings entry
+  `open-webui-household-acceptance-<YYYY-MM-DD>-2.json`. `teardown` copies
+  the public record into `--evidence-out`, which defaults to this
+  repository's `docs/maintainers/evidence`, so for that trial pass
+  `--evidence-out` a directory outside the repository and rename the copy.
+- The record carries `production_expectation`, the frozen production-settings entry
   for the deployed `open-webui` archive (for this trial, the `0.11.4-2`
   entry), and the trial prints it. The evidence commit adds that entry to
   `PRODUCTION_EXPECTATIONS` in `tools/open_webui_household_scenarios.py`; a
@@ -905,10 +909,10 @@ this repository makes no cross-repository writes.
 
 The ids are frozen in `tools/open_webui_household_scenarios.py`, and a test
 checks them. An id is never reused for a different requirement: a step that
-comes to gate something else gets a new id. Correcting how a step checks or
-records the same requirement keeps its id. Either change bumps the schema of
+comes to gate something else gets a new id. Correcting how a step checks the
+same requirement keeps its id. Either change bumps the schema of
 the records it alters (owner ruling, 2026-10-11). The same rule covers every
-trial step. They run in this order:
+trial step. The four re-smoke scenarios run in this order:
 
 1. `open-webui.resmoke.zembed-canary`
 2. `open-webui.resmoke.zerank-qualification`
