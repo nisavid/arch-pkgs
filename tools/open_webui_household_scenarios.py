@@ -48,8 +48,10 @@ import measure_open_webui_household as v1  # noqa: E402
 
 RECEIPT_SCHEMA = "open-webui-household-resmoke/v1"
 
-# Frozen.  A behavior change gets a new id and a schema bump, never a
-# rewritten id.  The group runs in this order.
+# Frozen.  An id is never reused for a different requirement: a step that
+# comes to gate something else gets a new id.  Correcting how a step checks
+# or records the same requirement keeps its id.  Either change bumps the
+# schema of the records it alters.  The group runs in this order.
 SCENARIO_IDS: tuple[str, ...] = (
     "open-webui.resmoke.zembed-canary",
     "open-webui.resmoke.zerank-qualification",

@@ -186,8 +186,12 @@ PAYLOAD_INDEXES = (
     {"field_name": "metadata.file_id", "field_schema": {"type": "keyword", "on_disk": False}},
 )
 
-RESTORE_DRILL = "open-webui.acceptance.drill.restore"
-ROLLBACK_DRILL = "open-webui.acceptance.drill.rollback"
+# Schema v6 gave both drills new ids when their clocks changed to stop at
+# readiness.  v5 records carry "open-webui.acceptance.drill.restore" and
+# "open-webui.acceptance.drill.rollback", whose clocks ran through the cited
+# answer.
+RESTORE_DRILL = "open-webui.acceptance.drill.restore-ready"
+ROLLBACK_DRILL = "open-webui.acceptance.drill.rollback-ready"
 # The trial's scenario map, in run order.  One pass; no step repeats.
 TRIAL_STEPS: tuple[str, ...] = (
     "open-webui.acceptance.identity.archives",
@@ -3589,11 +3593,12 @@ class Trial:
     def ready_after_restore(self, clock: PhaseClock, started: float) -> float:
         """Wait for the restored service to be ready; returns the drill's gated seconds.
 
-        The gated clock stops here, at the readiness the restart step uses:
-        signed in, with the authenticated retrieval health at 200.  The cited
-        answer that follows is still required, but its time is the chat
-        model's, not the restore's, so the drill records it as its own
-        ``chat`` phase outside the ceiling.
+        The gated clock stops here: signed in, with the authenticated
+        retrieval health at 200, the health the restart step also waits for.
+        The cited answer that follows is still required.  Its request
+        (retrieval, rerank, and generation) is dominated by the chat model,
+        not the restore, so the drill records it as its own ``chat`` phase
+        outside the ceiling.
         """
 
         wait_until(lambda: self.rag_health() == 200, 120, "authenticated retrieval health")
