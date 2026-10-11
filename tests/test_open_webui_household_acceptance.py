@@ -1678,6 +1678,9 @@ class FailureDetailTests(unittest.TestCase):
         stack = contextlib.ExitStack()
         stack.enter_context(mock.patch.multiple(kit_module, **patches))
         stack.enter_context(mock.patch.object(kit_module.time, "monotonic", side_effect=lambda: clock["now"]))
+        # A wait's sleep advances the fake clock, so a polled wait costs what it would.
+        stack.enter_context(mock.patch.object(
+            kit_module.time, "sleep", side_effect=lambda seconds: clock.__setitem__("now", clock["now"] + seconds)))
         stack.enter_context(mock.patch.object(kit_module.Kit, "qdrant", return_value=qdrant))
         stack.enter_context(mock.patch.object(kit_module.Kit, "store_credential"))
         stack.enter_context(mock.patch.object(kit_module.Kit, "caddy"))
@@ -1702,8 +1705,8 @@ class FailureDetailTests(unittest.TestCase):
             # The ceilings are unchanged; the phases say where the time went.
             self.assertEqual(restore["ceiling_s"], 40.0)
             self.assertEqual(restore["phases_s"], {"stop": 1.0, "restore_tuple": 15.0, "open_webui_start": 50.5,
-                                                   "sign_in": 0.25, "chat": 0.75})
-            self.assertEqual(restore["restore_s"], 67.5)
+                                                   "sign_in": 0.25, "retrieval_health": 0.0, "chat": 0.75})
+            self.assertEqual(restore["restore_s"], 66.75)
             self.assertEqual(restore["cited_chat"], {"status": 200, "detail": None, "fact_present": True,
                                                      "sources": {"count": 1, "names": [sc.HANDBOOK_NAME], "scores": [0.9]}})
             # Both runs miss the 40 s ceiling, so each drill fails with its record.
@@ -1712,8 +1715,8 @@ class FailureDetailTests(unittest.TestCase):
             rollback = json.loads(str(raised.exception))
         self.assertEqual(rollback["ceiling_s"], 40.0)
         self.assertEqual(rollback["phases_s"], {"qdrant_start": 2.0, "restore_tuple": 15.0, "support_units": 1.0,
-                                                "open_webui_start": 50.0, "sign_in": 0.25, "chat": 0.75})
-        self.assertEqual(rollback["state_restore_s"], 69.0)
+                                                "open_webui_start": 50.0, "sign_in": 0.25, "retrieval_health": 0.0, "chat": 0.75})
+        self.assertEqual(rollback["state_restore_s"], 68.25)
         self.assertIn("before_clock_s", rollback)
 
 
@@ -1756,10 +1759,10 @@ class FailedStepValuesTests(unittest.TestCase):
                 step = self.run_step(trial, kit_module.RESTORE_DRILL, trial.restore_drill)
             self.assertEqual(step.result, sc.FAIL)
             # The ceiling overrun's measurements, not only the detail (a summary in public copies).
-            self.assertEqual(step.values["restore_s"], 67.5)
+            self.assertEqual(step.values["restore_s"], 66.75)
             self.assertEqual(step.values["ceiling_s"], kit_module.LIMITS["restore_s"])
             self.assertEqual(step.values["phases_s"], {"stop": 1.0, "restore_tuple": 15.0, "open_webui_start": 50.5,
-                                                       "sign_in": 0.25, "chat": 0.75})
+                                                       "sign_in": 0.25, "retrieval_health": 0.0, "chat": 0.75})
             self.assertTrue(step.values["cited_fact"])
             self.assertEqual(step.values["a_d3"], {"passes": True})
             self.assertEqual(step.values["pre_restore_divergence"], {"sentinel": True})
@@ -1773,11 +1776,11 @@ class FailedStepValuesTests(unittest.TestCase):
             with self.drill_mocks(kit, self.LAPS):
                 step = self.run_step(trial, kit_module.ROLLBACK_DRILL, trial.rollback_drill)
             self.assertEqual(step.result, sc.FAIL)
-            self.assertEqual(step.values["state_restore_s"], 69.0)
+            self.assertEqual(step.values["state_restore_s"], 68.25)
             self.assertEqual(step.values["ceiling_s"], kit_module.LIMITS["rollback_state_s"])
             self.assertEqual(step.values["phases_s"], {"qdrant_start": 2.0, "restore_tuple": 15.0,
                                                        "support_units": 1.0, "open_webui_start": 50.0,
-                                                       "sign_in": 0.25, "chat": 0.75})
+                                                       "sign_in": 0.25, "retrieval_health": 0.0, "chat": 0.75})
             self.assertIn("before_clock_s", step.values)
             self.assertEqual(step.values["legacy_service"], {"before": {}, "after": {}})
             self.assertFalse(step.values["acceptance_listener_on_8080"])
@@ -1798,7 +1801,7 @@ class FailedStepValuesTests(unittest.TestCase):
             self.assertEqual(step.result, sc.FAIL)
             self.assertEqual(step.detail, f"ScenarioFailure: {json.dumps(route, sort_keys=True)}")
             self.assertEqual(step.values["route"], route)
-            self.assertEqual(step.values["restore_s"], 67.5)
+            self.assertEqual(step.values["restore_s"], 66.75)
             self.assertNotIn("one_admin", step.values)
             self.assert_public_values(kit, trial, step)
 
@@ -1921,11 +1924,12 @@ class FailedStepValuesTests(unittest.TestCase):
                 # The detail reads as it did before the values were kept.
                 self.assertEqual(step.detail, f"{type(error).__name__}: {error}")
                 timing = "restore_s" if drill == kit_module.RESTORE_DRILL else "state_restore_s"
-                self.assertEqual(step.values[timing], 67.5 if drill == kit_module.RESTORE_DRILL else 69.0)
+                self.assertEqual(step.values[timing], 66.75 if drill == kit_module.RESTORE_DRILL else 68.25)
                 self.assertEqual(set(step.values["phases_s"]), (
-                    {"stop", "restore_tuple", "open_webui_start", "sign_in", "chat"}
+                    {"stop", "restore_tuple", "open_webui_start", "sign_in", "retrieval_health", "chat"}
                     if drill == kit_module.RESTORE_DRILL
-                    else {"qdrant_start", "restore_tuple", "support_units", "open_webui_start", "sign_in", "chat"}))
+                    else {"qdrant_start", "restore_tuple", "support_units", "open_webui_start", "sign_in",
+                          "retrieval_health", "chat"}))
                 self.assertIn("cited_chat", step.values)
                 if target == "one_admin":
                     self.assertIn("route", step.values)
@@ -1942,7 +1946,7 @@ class FailedStepValuesTests(unittest.TestCase):
                 step = self.run_step(trial, kit_module.ROLLBACK_DRILL, trial.rollback_drill)
             self.assertEqual((step.result, step.detail), (sc.FAIL, f"CalledProcessError: {failing}"))
             self.assertEqual(step.values["legacy_service"], {"before": {"state": "inactive"}})
-            self.assertEqual(step.values["state_restore_s"], 69.0)
+            self.assertEqual(step.values["state_restore_s"], 68.25)
             self.assert_public_values(kit, trial, step)
 
     def test_a_drill_that_fails_mid_restore_keeps_the_phases_it_measured(self):
@@ -2074,6 +2078,81 @@ class FailedStepValuesTests(unittest.TestCase):
                 trial.step("c", escalate)
             self.assertEqual((trial.steps[-1].result, trial.steps[-1].values), (sc.ESCALATE, values))
             self.assertEqual(trial.steps[-1].detail, "ESCALATE: zembed canary")
+
+
+class DrillReadinessClockTests(unittest.TestCase):
+    """Both drills gate the time to a ready service; the cited answer is required but outside the clock."""
+
+    drill_mocks = FailureDetailTests.drill_mocks
+    drill_trial = FailedStepValuesTests.drill_trial
+    run_step = FailedStepValuesTests.run_step
+    LAPS = {"systemctl": 0.5, "restore_tuple": 2.0, "start_open_webui": 11.0, "admin_token": 0.25,
+            "cited_check": 60.0, "start_qdrant": 0.5, "start_support_units": 0.25}
+    # The gated seconds with LAPS and an immediate health 200.
+    READY_S = {kit_module.RESTORE_DRILL: ("restore_s", 14.75), kit_module.ROLLBACK_DRILL: ("state_restore_s", 14.0)}
+
+    def drills(self, trial):
+        return ((kit_module.RESTORE_DRILL, trial.restore_drill), (kit_module.ROLLBACK_DRILL, trial.rollback_drill))
+
+    def test_the_cited_answers_time_is_outside_both_drills_ceilings(self):
+        # A slow chat model adds to the chat phase only, so a restore inside
+        # the ceiling passes however long the cited answer takes.
+        with tempfile.TemporaryDirectory() as directory:
+            kit, trial = self.drill_trial(directory)
+            for drill, action in self.drills(trial):
+                with self.subTest(drill=drill), self.drill_mocks(kit, self.LAPS):
+                    step = self.run_step(trial, drill, action)
+                    timing, seconds = self.READY_S[drill]
+                    self.assertEqual(step.result, sc.PASS)
+                    self.assertEqual(step.values[timing], seconds)
+                    self.assertLess(step.values[timing], step.values["ceiling_s"])
+                    self.assertEqual(step.values["phases_s"]["chat"], 60.0)
+                    self.assertTrue(step.values["cited_fact"])
+
+    def test_the_wait_for_retrieval_health_is_inside_the_gated_clock(self):
+        # Two 503s cost two 0.5 s polls, counted in the gated seconds and in
+        # their own phase, and the cited check runs only after health is 200.
+        with tempfile.TemporaryDirectory() as directory:
+            kit, trial = self.drill_trial(directory)
+            for drill, action in self.drills(trial):
+                with self.subTest(drill=drill), self.drill_mocks(kit, self.LAPS), \
+                        mock.patch.object(kit_module.Trial, "rag_health", side_effect=[503, 503, 200]) as health:
+                    step = self.run_step(trial, drill, action)
+                    timing, seconds = self.READY_S[drill]
+                    self.assertEqual(step.result, sc.PASS)
+                    self.assertEqual(health.call_count, 3)
+                    self.assertEqual(step.values["phases_s"]["retrieval_health"], 1.0)
+                    self.assertEqual(step.values[timing], seconds + 1.0)
+                    self.assertEqual(list(step.values["phases_s"])[-2:], ["retrieval_health", "chat"])
+
+    def test_a_drill_ready_in_time_without_the_cited_fact_fails(self):
+        uncited = {"cited": False, "status": 200, "detail": None, "fact_present": False,
+                   "sources": {"count": 0, "names": [], "scores": []}}
+        with tempfile.TemporaryDirectory() as directory:
+            kit, trial = self.drill_trial(directory)
+            for drill, action in self.drills(trial):
+                with self.subTest(drill=drill), self.drill_mocks(kit, self.LAPS), \
+                        mock.patch.object(kit_module, "cited_check", return_value=uncited):
+                    step = self.run_step(trial, drill, action)
+                    timing, seconds = self.READY_S[drill]
+                    self.assertEqual(step.result, sc.FAIL)
+                    self.assertEqual(step.values[timing], seconds)
+                    self.assertFalse(step.values["cited_fact"])
+
+    def test_a_restored_service_that_never_reports_healthy_fails_before_the_chat(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit, trial = self.drill_trial(directory)
+            for drill, action in self.drills(trial):
+                with self.subTest(drill=drill), self.drill_mocks(kit, self.LAPS), \
+                        mock.patch.object(kit_module.Trial, "rag_health", return_value=503), \
+                        mock.patch.object(kit_module, "cited_check") as cited:
+                    step = self.run_step(trial, drill, action)
+                    cited.assert_not_called()
+                    self.assertEqual((step.result, step.detail),
+                                     (sc.FAIL, "ScenarioFailure: timed out waiting for authenticated retrieval health"))
+                    # What was measured before the wait is kept; the gated seconds were never reached.
+                    self.assertEqual(list(step.values["phases_s"])[-1], "sign_in")
+                    self.assertNotIn(self.READY_S[drill][0], step.values)
 
 
 class PeerTests(unittest.TestCase):
@@ -3673,7 +3752,7 @@ class EvidenceTests(unittest.TestCase):
                                       "open-webui.acceptance.auth.one-admin"))
         # The paging corpus and the planted hybrid-search fault run after both
         # drills, so their anchor and timings never carry those points.
-        rollback = steps.index("open-webui.acceptance.drill.rollback")
+        rollback = steps.index("open-webui.acceptance.drill.rollback-to-ready")
         self.assertEqual(steps[rollback + 1:rollback + 3],
                          ("open-webui.acceptance.qdrant.paging", "open-webui.acceptance.failclosed.hybrid-error"))
         # Both closed-gate checks run while reranker-down's latch holds, before
@@ -3690,10 +3769,12 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(sum(1 for item in steps if ".drill." in item), 2)
         self.assertEqual((kit_module.RESTORE_DRILL, kit_module.ROLLBACK_DRILL),
                          tuple(item for item in steps if ".drill." in item))
-        # A changed step gets a new id and an evidence schema bump, never a
-        # rewritten id; new steps bump the schema too.
+        # An id is never reused for a different requirement: a step that
+        # comes to gate something else gets a new id (v6 gave both drills new ids).
+        # A corrected check keeps its id.  Either change, and any new step,
+        # bumps the evidence schema.
         self.assertEqual(steps[7], "open-webui.acceptance.connections.no-stored-secret")
-        self.assertEqual(kit_module.SCHEMA, "open-webui-household-acceptance/v5")
+        self.assertEqual(kit_module.SCHEMA, "open-webui-household-acceptance/v6")
 
     def test_the_runbook_scenario_map_is_the_trial_map(self):
         runbook = (REPO_ROOT / "docs" / "maintainers" / "open-webui-household-acceptance.md").read_text(encoding="utf-8")
@@ -3756,7 +3837,7 @@ class EvidenceTests(unittest.TestCase):
             kit, trial = self.trial(directory, rehearsal=False)
             evidence = kit_module.build_evidence(kit, trial, 0, False)
             v1.assert_public_safe(evidence)
-            self.assertEqual(evidence["schema"], "open-webui-household-acceptance/v5")
+            self.assertEqual(evidence["schema"], "open-webui-household-acceptance/v6")
             self.assertEqual(
                 (evidence["trial_set_count"], evidence["restore_drills"], evidence["rollback_drills"]), (1, 1, 1)
             )
@@ -4331,8 +4412,8 @@ class EvidenceTests(unittest.TestCase):
                             "open-webui.acceptance.handbook-indexed")
             self.assertEqual([step.id for step in trial.steps], expected)
             results = {step.id: step.result for step in trial.steps}
-            self.assertEqual(results["open-webui.acceptance.drill.restore"], sc.FAIL)
-            self.assertEqual(results["open-webui.acceptance.drill.rollback"], sc.PASS)
+            self.assertEqual(results["open-webui.acceptance.drill.restore-to-ready"], sc.FAIL)
+            self.assertEqual(results["open-webui.acceptance.drill.rollback-to-ready"], sc.PASS)
             self.assertEqual(results["open-webui.acceptance.qdrant.paging"], sc.PASS)
 
     def test_a_step_can_record_its_measured_detail(self):

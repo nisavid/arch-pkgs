@@ -8,7 +8,7 @@ user-level services under one disposable, marked root, wires them to the
 shared Lemonade provider through the candidate's household profile example,
 rendered for that provider, and runs exactly one integrated trial set: one
 pass over the scenario map, one restore drill, and one rollback drill.
-Evidence schema: ``open-webui-household-acceptance/v5``.
+Evidence schema: ``open-webui-household-acceptance/v6``.
 
 Subcommands: preflight [--probe-only], stage, up, down, trial, resmoke,
 teardown [--keep-anchor].  The stub rehearsal (``--provider stub
@@ -62,7 +62,7 @@ sys.path.insert(0, str(TOOLS))
 import measure_open_webui_household as v1  # noqa: E402
 import open_webui_household_scenarios as sc  # noqa: E402
 
-SCHEMA = "open-webui-household-acceptance/v5"
+SCHEMA = "open-webui-household-acceptance/v6"
 MARKER = ".owui-acceptance"
 KIT_STATE = "kit.json"
 DEFAULT_ROOT = Path("/srv/build/arch-pkgs-owui-acceptance")
@@ -186,8 +186,12 @@ PAYLOAD_INDEXES = (
     {"field_name": "metadata.file_id", "field_schema": {"type": "keyword", "on_disk": False}},
 )
 
-RESTORE_DRILL = "open-webui.acceptance.drill.restore"
-ROLLBACK_DRILL = "open-webui.acceptance.drill.rollback"
+# Schema v6 gave both drills new ids when their clocks changed to stop at
+# readiness.  v5 records carry "open-webui.acceptance.drill.restore" and
+# "open-webui.acceptance.drill.rollback", whose clocks ran through the cited
+# answer.
+RESTORE_DRILL = "open-webui.acceptance.drill.restore-to-ready"
+ROLLBACK_DRILL = "open-webui.acceptance.drill.rollback-to-ready"
 # The trial's scenario map, in run order.  One pass; no step repeats.
 TRIAL_STEPS: tuple[str, ...] = (
     "open-webui.acceptance.identity.archives",
@@ -3586,6 +3590,21 @@ class Trial:
             raise sc.ScenarioFailure(json.dumps(values, sort_keys=True), values)
         return values
 
+    def ready_after_restore(self, clock: PhaseClock, started: float) -> float:
+        """Wait for the restored service to be ready; returns the drill's gated seconds.
+
+        The gated clock stops here: signed in, with the authenticated
+        retrieval health at 200, the health the restart step also waits for.
+        The cited answer that follows is still required.  Its request
+        (retrieval, rerank, and generation) is dominated by the chat model,
+        not the restore, so the drill records it as its own ``chat`` phase
+        outside the ceiling.
+        """
+
+        wait_until(lambda: self.rag_health() == 200, 120, "authenticated retrieval health")
+        clock.lap("retrieval_health")
+        return round(time.monotonic() - started, 3)
+
     def restore_drill(self) -> dict[str, Any]:
         kit = self.kit
         # Filled as the drill measures, from its first step, so a failure at
@@ -3639,11 +3658,12 @@ class Trial:
             clock.lap("open_webui_start")
             self.token = self.sign_in()
             clock.lap("sign_in")
+            elapsed = self.ready_after_restore(clock, started)
+            values["restore_s"] = elapsed
             check = cited_check(kit.uds(), self.token, self.chat_id(), self.seed_file)
             cited = check["cited"]
             clock.lap("chat")
-            elapsed = round(time.monotonic() - started, 3)
-            values.update(restore_s=elapsed, cited_fact=cited,
+            values.update(cited_fact=cited,
                           cited_chat={key: check[key] for key in ("status", "detail", "fact_present", "sources")})
             checks = a_d3_checks(kit, self.anchor, restored, qdrant, self.pre_backup_session, self.issued_tokens)
             values["a_d3"] = checks
@@ -3699,11 +3719,12 @@ class Trial:
             clock.lap("open_webui_start")
             self.token = self.sign_in()
             clock.lap("sign_in")
+            state_elapsed = self.ready_after_restore(clock, started)
+            values["state_restore_s"] = state_elapsed
             check = cited_check(kit.uds(), self.token, self.chat_id(), self.seed_file)
             cited = check["cited"]
             clock.lap("chat")
-            state_elapsed = round(time.monotonic() - started, 3)
-            values.update(state_restore_s=state_elapsed, cited_fact=cited,
+            values.update(cited_fact=cited,
                           cited_chat={key: check[key] for key in ("status", "detail", "fact_present", "sources")})
             checks = a_d3_checks(kit, self.anchor, restored, qdrant, pre_backup_session, self.issued_tokens)
             values["a_d3"] = checks

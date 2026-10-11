@@ -861,7 +861,12 @@ def unit_vector(*components, dimensions=2560):
 
 
 class ZembedCanaryTests(unittest.TestCase):
-    """The canary's record: per-vector dimensions and norms, kept on escalation."""
+    """The canary's record and its stored-vector check.
+
+    The record keeps per-vector dimensions and norms on escalation. The
+    stored-vector check embeds the chunk as Open WebUI does and allows only
+    the live service's measured variation.
+    """
 
     QUERY = unit_vector(1.0)
     RELEVANT = unit_vector(0.9, math.sqrt(1 - 0.81))
@@ -874,7 +879,10 @@ class ZembedCanaryTests(unittest.TestCase):
                                  chat_model="chat", stored_chunk=stored_chunk)
 
     def run_canary(self, *, unrelated=None, stored_chunk=None, direct=None):
+        self.embedded = []
+
         def embed(_ctx, text):
+            self.embedded.append(text)
             for canary, vector in ((scenarios.CANARY_QUERY, self.QUERY), (scenarios.CANARY_RELEVANT, self.RELEVANT),
                                    (scenarios.CANARY_UNRELATED, unrelated or self.UNRELATED)):
                 if text.endswith(canary):
@@ -895,6 +903,32 @@ class ZembedCanaryTests(unittest.TestCase):
         self.assertEqual(outcome.values["margin"], 0.9)
         self.assertEqual(outcome.values["stored_vector_cosine"], 1.0)
 
+    def test_the_direct_embedding_flattens_newlines_as_open_webui_does(self):
+        # Open WebUI embeds a chunk with each newline replaced by a space and
+        # stores the text unchanged, so the direct embedding must do the same.
+        # The prefix keeps its own newlines.
+        settings = scenarios.settings_from_environ(candidate_env())
+        outcome = self.run_canary(stored_chunk=lambda: ("## 1. Beds\nKeep paths clear.\n", self.QUERY),
+                                  direct=self.QUERY)
+        self.assertEqual(outcome.result, scenarios.PASS)
+        self.assertIn("\n", settings.content_prefix)
+        self.assertEqual(self.embedded[-1], settings.content_prefix + "## 1. Beds Keep paths clear. ")
+
+    def test_the_stored_vector_minimum_passes_measured_matches_and_escalates_measured_defects(self):
+        # Measured on 2026-10-11: correct stored vectors matched at 0.9987 at
+        # the lowest, and unflattened chunk text at 0.96 at the highest.
+        def near(cosine):
+            return unit_vector(cosine, math.sqrt(1 - cosine * cosine))
+
+        self.assertEqual(scenarios.STORED_VECTOR_MINIMUM_COSINE, 0.99)
+        outcome = self.run_canary(stored_chunk=lambda: ("chunk", near(0.9987)), direct=self.QUERY)
+        self.assertEqual(outcome.result, scenarios.PASS)
+        self.assertEqual(outcome.values["stored_vector_cosine"], 0.9987)
+        outcome = self.run_canary(stored_chunk=lambda: ("chunk", near(0.96)), direct=self.QUERY)
+        self.assertEqual(outcome.result, scenarios.ESCALATE)
+        self.assertIn("stored vector", outcome.detail)
+        self.assertEqual(outcome.values["stored_vector_cosine"], 0.96)
+
     def test_an_escalation_keeps_the_values_it_computed(self):
         # A norm outside the tolerance escalates before the stored-vector check.
         outcome = self.run_canary(unrelated=unit_vector(0.0, 0.0, 2.0),
@@ -914,8 +948,8 @@ class ZembedCanaryTests(unittest.TestCase):
         self.assertEqual(outcome.values["stored_vector_cosine"], 0.0)
         self.assertEqual(outcome.values["vectors"]["direct_chunk"], {"dimensions": 2560, "norm": 1.0})
         self.assertEqual(outcome.values["margin"], 0.9)
-        # A stored vector holding NaN has a NaN cosine, which the old
-        # "similarity < 0.999" comparison let pass; it escalates.
+        # A stored vector holding NaN has a NaN cosine, which an earlier
+        # "similarity < minimum" comparison let pass; it escalates.
         outcome = self.run_canary(stored_chunk=lambda: ("chunk", unit_vector(math.nan)), direct=self.QUERY)
         self.assertEqual(outcome.result, scenarios.ESCALATE)
         self.assertIn("stored vector", outcome.detail)
