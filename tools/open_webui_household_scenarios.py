@@ -209,7 +209,12 @@ SPEECH_PROVIDER_PACKAGE = "python-ctranslate2-gfx1151"
 CANARY_QUERY = "Which key opens the seed cabinet?"
 CANARY_RELEVANT = "The brass key opens the seed cabinet."
 CANARY_UNRELATED = "Bananas ripen faster in a closed paper bag."
-STORED_VECTOR_MINIMUM_COSINE = 0.999
+# The stored-vector check compares a vector Open WebUI stored with a fresh
+# embedding of the same text through the live service. Two embeddings of one
+# text there are not bit-identical (0.9991 to 0.9996 in the first trial), so
+# the minimum sits below that variation. It stays far above what a real
+# difference scores: a missing content prefix scored at most 0.94.
+STORED_VECTOR_MINIMUM_COSINE = 0.99
 
 # The fixture handbook and its fact come from the v1 fixture generator.
 HANDBOOK_NAME = "winter-garden-handbook.md"
@@ -1588,7 +1593,9 @@ def zembed_canary(ctx: Context) -> dict[str, Any]:
         if ctx.stored_chunk is not None:
             chunk, stored = ctx.stored_chunk()
             vectors["stored_chunk"] = vector_record(stored)
-            direct = lemond_embed(ctx, ctx.settings.content_prefix + chunk)
+            # Open WebUI replaces each newline with a space before it embeds a
+            # chunk (save_docs_to_vector_db), and stores the chunk text unchanged.
+            direct = lemond_embed(ctx, ctx.settings.content_prefix + chunk.replace("\n", " "))
             vectors["direct_chunk"] = vector_record(direct)
             similarity = _cosine_or_none(stored, direct)
             values["stored_vector_cosine"] = _finite(similarity, 6)
