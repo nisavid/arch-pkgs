@@ -210,10 +210,11 @@ CANARY_QUERY = "Which key opens the seed cabinet?"
 CANARY_RELEVANT = "The brass key opens the seed cabinet."
 CANARY_UNRELATED = "Bananas ripen faster in a closed paper bag."
 # The stored-vector check compares a vector Open WebUI stored with a fresh
-# embedding of the same text through the live service. Two embeddings of one
-# text there are not bit-identical (0.9991 to 0.9996 in the first trial), so
-# the minimum sits below that variation. It stays far above what a real
-# difference scores: a missing content prefix scored at most 0.94.
+# embedding of the same text through the live service. Measured on Open WebUI
+# 0.11.4 with the live provider on 2026-10-11: correct stored vectors matched
+# at 0.9987 to 0.9991, and two embeddings of one text at 0.9991 to 0.9996, so
+# a 0.999 minimum fails correct vectors. Real differences scored far lower:
+# unflattened chunk text at most 0.96, a missing content prefix at most 0.94.
 STORED_VECTOR_MINIMUM_COSINE = 0.99
 
 # The fixture handbook and its fact come from the v1 fixture generator.
@@ -1593,8 +1594,9 @@ def zembed_canary(ctx: Context) -> dict[str, Any]:
         if ctx.stored_chunk is not None:
             chunk, stored = ctx.stored_chunk()
             vectors["stored_chunk"] = vector_record(stored)
-            # Open WebUI replaces each newline with a space before it embeds a
-            # chunk (save_docs_to_vector_db), and stores the chunk text unchanged.
+            # Open WebUI 0.11.4 replaces each newline in a chunk with a space
+            # before it embeds the chunk (save_docs_to_vector_db), and stores
+            # the chunk text unchanged. The prefix keeps its newlines.
             direct = lemond_embed(ctx, ctx.settings.content_prefix + chunk.replace("\n", " "))
             vectors["direct_chunk"] = vector_record(direct)
             similarity = _cosine_or_none(stored, direct)

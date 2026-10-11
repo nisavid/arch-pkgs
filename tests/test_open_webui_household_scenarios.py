@@ -861,7 +861,12 @@ def unit_vector(*components, dimensions=2560):
 
 
 class ZembedCanaryTests(unittest.TestCase):
-    """The canary's record: per-vector dimensions and norms, kept on escalation."""
+    """The canary's record and its stored-vector check.
+
+    The record keeps per-vector dimensions and norms on escalation. The
+    stored-vector check embeds the chunk as Open WebUI does and allows only
+    the live service's measured variation.
+    """
 
     QUERY = unit_vector(1.0)
     RELEVANT = unit_vector(0.9, math.sqrt(1 - 0.81))
@@ -874,7 +879,10 @@ class ZembedCanaryTests(unittest.TestCase):
                                  chat_model="chat", stored_chunk=stored_chunk)
 
     def run_canary(self, *, unrelated=None, stored_chunk=None, direct=None):
+        self.embedded = []
+
         def embed(_ctx, text):
+            self.embedded.append(text)
             for canary, vector in ((scenarios.CANARY_QUERY, self.QUERY), (scenarios.CANARY_RELEVANT, self.RELEVANT),
                                    (scenarios.CANARY_UNRELATED, unrelated or self.UNRELATED)):
                 if text.endswith(canary):
@@ -898,26 +906,17 @@ class ZembedCanaryTests(unittest.TestCase):
     def test_the_direct_embedding_flattens_newlines_as_open_webui_does(self):
         # Open WebUI embeds a chunk with each newline replaced by a space and
         # stores the text unchanged, so the direct embedding must do the same.
+        # The prefix keeps its own newlines.
         settings = scenarios.settings_from_environ(candidate_env())
-        seen = []
-
-        def embed(_ctx, text):
-            seen.append(text)
-            for canary, vector in ((scenarios.CANARY_QUERY, self.QUERY), (scenarios.CANARY_RELEVANT, self.RELEVANT),
-                                   (scenarios.CANARY_UNRELATED, self.UNRELATED)):
-                if text.endswith(canary):
-                    return vector
-            return self.QUERY
-
-        context = self.context(lambda: ("## 1. Beds\nKeep paths clear.\n", self.QUERY))
-        with mock.patch.object(scenarios, "lemond_embed", side_effect=embed):
-            outcome = scenarios.run_scenario(context, "open-webui.resmoke.zembed-canary")
+        outcome = self.run_canary(stored_chunk=lambda: ("## 1. Beds\nKeep paths clear.\n", self.QUERY),
+                                  direct=self.QUERY)
         self.assertEqual(outcome.result, scenarios.PASS)
-        self.assertEqual(seen[-1], settings.content_prefix + "## 1. Beds Keep paths clear. ")
+        self.assertIn("\n", settings.content_prefix)
+        self.assertEqual(self.embedded[-1], settings.content_prefix + "## 1. Beds Keep paths clear. ")
 
-    def test_the_stored_vector_minimum_allows_service_variation_only(self):
-        # Two embeddings of one text through the live service scored 0.9991
-        # to 0.9996; a missing prefix scored at most 0.94.
+    def test_the_stored_vector_minimum_passes_measured_matches_and_escalates_measured_defects(self):
+        # Measured on 2026-10-11: correct stored vectors matched at 0.9987 at
+        # the lowest, and unflattened chunk text at 0.96 at the highest.
         def near(cosine):
             return unit_vector(cosine, math.sqrt(1 - cosine * cosine))
 
