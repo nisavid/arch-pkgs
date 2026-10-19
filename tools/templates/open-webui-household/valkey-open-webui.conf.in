@@ -2,7 +2,11 @@
 # Rendered by tools/open_webui_household_scenarios.py.
 # RDB only: the backup tuple is dump.rdb, so append-only files stay off.
 bind 127.0.0.1
-port @PORT@
+port 0
+tls-port @PORT@
+tls-cert-file @TLS_CERT@
+tls-key-file @TLS_KEY@
+tls-auth-clients no
 protected-mode yes
 aclfile @ACL_FILE@
 dir @DIR@

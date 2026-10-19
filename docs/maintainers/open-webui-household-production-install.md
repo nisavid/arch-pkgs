@@ -7,11 +7,17 @@ It replaces the host's out-of-band `open-webui` 0.11.0-1 with the published
 `open-webui-tailnet.service` sidecar runs Tailscale Serve and proxies straight
 to the service's Unix socket. The former state is retained, never migrated.
 
+The acceptance identities and receipts below describe the historical deployment.
+The authenticated local-transport changes require a newly built and accepted
+Open WebUI package carrying its TLS client hooks; the old 0.11.4-2 archive
+and receipt alone do not validate this hardened route. Before running these
+commands, use the updated package and Qdrant cutover tool from the reviewed
+checkout and record fresh acceptance evidence.
+
 Every privileged step belongs to the owner. Each phase lists its exact
 commands, its rollback, the HAND-BACK phrase the owner replies with, and the
-unprivileged checks the agent runs afterwards. There is no new privileged
-script: the commands are here, and the only scripts involved are the packaged
-helpers, the Qdrant cutover route from
+unprivileged checks the agent runs afterwards. The commands are here; the
+scripts involved are the packaged helpers, `tools/provision_local_service_tls.py`, the Qdrant cutover route from
 [Deploy the accepted Qdrant service](https://github.com/nisavid/arch-pkgs/issues/58),
 and, in P4.4, the repository's shared `configure` helper, the same code the
 acceptance trial ran.
@@ -216,7 +222,9 @@ sudo tools/qdrant_production_cutover.zsh cutover --apply --creds-key "$creds_mod
 sudo tools/qdrant_production_cutover.zsh verify
 ```
 
-Preflight must print `credential mode: <creds_mode>`. The cutover creates the
+Preflight must print `credential mode: <creds_mode>`. The cutover provisions
+a private server identity under `/etc/qdrant/tls`, enables Qdrant TLS, and
+authenticates every admin request using `/etc/qdrant/tls/cert.pem`. It creates the
 five `open-webui-rag-v1` collections and delivers the runtime credential to
 `/etc/credstore.encrypted/open-webui.qdrant-runtime-api-key`. The Qdrant
 administrative key stays with the owner.
@@ -308,8 +316,12 @@ done
 
 ### P3.2 Dedicated Valkey
 
-The configuration uses RDB only, loopback only, and an ACL file whose default
-user is off. The ACL rule set is the one the kit template
+The configuration uses RDB only, loopback only, TLS with a dedicated server
+identity, and an ACL file whose default user is off. The public certificate
+is root-owned and readable by Open WebUI; the private key is root-owned and
+readable only by root and the Valkey group. The provisioning helper reuses
+an existing verified pair and never silently rotates it. The ACL rule set
+is the one the kit template
 `tools/templates/open-webui-household/valkey-open-webui.acl.in` carries,
 including `-flushall -flushdb`; a test compares the `printf` line below with
 that template, so the two cannot drift.
@@ -318,10 +330,15 @@ that template, so the two cannot drift.
 (
 : "${creds_mode:?run P0.1 first}"
 sudo install -d -o valkey -g valkey -m 0700 /var/lib/valkey/open-webui
+sudo python3 tools/provision_local_service_tls.py --directory /etc/valkey/tls --group valkey
 
 sudo install -m 0640 -o root -g valkey /dev/stdin /etc/valkey/open-webui.conf <<'EOF'
 bind 127.0.0.1
-port 6379
+port 0
+tls-port 6379
+tls-cert-file /etc/valkey/tls/cert.pem
+tls-key-file /etc/valkey/tls/key.pem
+tls-auth-clients no
 protected-mode yes
 aclfile /etc/valkey/open-webui.acl
 maxmemory-policy noeviction
@@ -335,7 +352,7 @@ pw=$(openssl rand -hex 32)
 hash=$(printf '%s' "$pw" | sha256sum | cut -d' ' -f1)
 printf 'user default off\nuser open-webui on #%s ~* &* +@all -@admin -flushall -flushdb\n' "$hash" \
   | sudo install -m 0640 -o root -g valkey /dev/stdin /etc/valkey/open-webui.acl
-printf 'redis://open-webui:%s@127.0.0.1:6379/0' "$pw" \
+printf 'rediss://open-webui:%s@127.0.0.1:6379/0' "$pw" \
   | sudo systemd-creds encrypt "${creds_key[@]}" --name=valkey-url - /etc/credstore.encrypted/open-webui.valkey-url
 unset pw hash
 
@@ -358,12 +375,21 @@ starting it, so a rerun always loads the ACL file it just wrote.
 - Rollback:
   `sudo systemctl disable --now valkey.service && sudo rm /etc/systemd/system/valkey.service.d/10-open-webui.conf /etc/valkey/open-webui.conf /etc/valkey/open-webui.acl /etc/credstore.encrypted/open-webui.valkey-url && sudo systemctl daemon-reload`
 - Agent: `systemctl is-active valkey.service` is active;
-  `ss -ltnH 'sport = :6379'` shows only `127.0.0.1`; `valkey-cli -p 6379 ping`
+  `ss -ltnH 'sport = :6379'` shows only `127.0.0.1`; `valkey-cli --tls --cacert /etc/valkey/tls/cert.pem -p 6379 ping`
   is refused for the disabled default user.
 
 ### P3.3 Qdrant runtime credential
 
-P1 delivered it. Then confirm that every credential written so far decrypts
+P1 delivered it. The updated packaged defaults must set
+`QDRANT_URI=https://127.0.0.1:6333`,
+`QDRANT_CA_CERT=/etc/qdrant/tls/cert.pem`, and
+`VALKEY_CA_CERT=/etc/valkey/tls/cert.pem`. Both clients verify the service
+certificate and its loopback IP before sending credentials; never disable
+certificate or hostname verification, or substitute a plain `redis://` URL.
+Keep these identities outside the application backup/restore tuple so
+restoring data does not change the servers the clients trust.
+
+Then confirm that every credential written so far decrypts
 as root; each line must end in `ok`, and nothing secret is printed:
 
 ```bash
@@ -920,11 +946,12 @@ sudo sh -c '
   h=$(mktemp -d)
   trap "rm -r \"\$h\"" EXIT
   sed -n "s/^QDRANT__SERVICE__API_KEY=/api-key: /p" /etc/qdrant/qdrant.env >"$h/admin.h"
+  openssl x509 -in /etc/qdrant/tls/cert.pem -pubkey -noout >"$h/server.pub"
   for s in memories knowledge files web-search hash-based; do
     c=open-webui-rag-v1_$s
-    n=$(curl -sSf -m 300 -H "@$h/admin.h" -X POST "http://127.0.0.1:6333/collections/$c/snapshots?wait=true" | jq -er .result.name)
-    curl -sSf -m 600 --remove-on-error -H "@$h/admin.h" -o "$1/qdrant/$c.snapshot" "http://127.0.0.1:6333/collections/$c/snapshots/$n"
-    curl -sSf -m 300 -H "@$h/admin.h" -X DELETE "http://127.0.0.1:6333/collections/$c/snapshots/$n?wait=true" >/dev/null
+    n=$(curl -q --noproxy "*" --proto "=https" --cacert /etc/qdrant/tls/cert.pem --pinnedpubkey "$h/server.pub" -sSf -m 300 -H "@$h/admin.h" -X POST "https://127.0.0.1:6333/collections/$c/snapshots?wait=true" | jq -er .result.name)
+    curl -q --noproxy "*" --proto "=https" --cacert /etc/qdrant/tls/cert.pem --pinnedpubkey "$h/server.pub" -sSf -m 600 --remove-on-error -H "@$h/admin.h" -o "$1/qdrant/$c.snapshot" "https://127.0.0.1:6333/collections/$c/snapshots/$n"
+    curl -q --noproxy "*" --proto "=https" --cacert /etc/qdrant/tls/cert.pem --pinnedpubkey "$h/server.pub" -sSf -m 300 -H "@$h/admin.h" -X DELETE "https://127.0.0.1:6333/collections/$c/snapshots/$n?wait=true" >/dev/null
     echo "$c saved"
   done
 ' sh "$a"
@@ -1065,10 +1092,11 @@ The acceptance trial values are the baseline.
     h=$(mktemp -d)
     trap "rm -r \"\$h\"" EXIT
     sed -n "s/^QDRANT__SERVICE__API_KEY=/api-key: /p" /etc/qdrant/qdrant.env >"$h/admin.h"
+    openssl x509 -in /etc/qdrant/tls/cert.pem -pubkey -noout >"$h/server.pub"
     for s in memories knowledge files web-search hash-based; do
       c=open-webui-rag-v1_$s
-      curl -sSf -m 600 -H "@$h/admin.h" -F "snapshot=@$1/qdrant/$c.snapshot" \
-        "http://127.0.0.1:6333/collections/$c/snapshots/upload?wait=true&priority=snapshot" >/dev/null
+      curl -q --noproxy "*" --proto "=https" --cacert /etc/qdrant/tls/cert.pem --pinnedpubkey "$h/server.pub" -sSf -m 600 -H "@$h/admin.h" -F "snapshot=@$1/qdrant/$c.snapshot" \
+        "https://127.0.0.1:6333/collections/$c/snapshots/upload?wait=true&priority=snapshot" >/dev/null
       echo "$c recovered"
     done
   ' sh "$a"

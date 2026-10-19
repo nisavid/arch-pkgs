@@ -1,0 +1,89 @@
+# Authenticate Qdrant REST peers before sending service credentials.
+# Open WebUI 0.11.4, commit 8bd8b4fac5e059578ac0c74b3c18d11139f88b7d.
+# Apply after 0008-page-qdrant-scroll.patch.
+--- a/backend/open_webui/retrieval/vector/dbs/qdrant.py
++++ b/backend/open_webui/retrieval/vector/dbs/qdrant.py
+@@ -4,7 +4,7 @@
+ 
+ import logging
+ from typing import Any, Optional
+-from urllib.parse import urlparse
++from open_webui_service_tls import qdrant_client_options
+ 
+ from open_webui.config import (
+     QDRANT_API_KEY,
+@@ -52,26 +52,12 @@
+             self.client = None
+             return
+ 
+-        # Unified handling for either scheme
+-        parsed = urlparse(self.QDRANT_URI)
+-        host = parsed.hostname or self.QDRANT_URI
+-        http_port = parsed.port or 6333  # default REST port
+-
+-        if self.PREFER_GRPC:
+-            self.client = Qclient(
+-                host=host,
+-                port=http_port,
+-                grpc_port=self.GRPC_PORT,
+-                prefer_grpc=self.PREFER_GRPC,
+-                api_key=self.QDRANT_API_KEY,
+-                timeout=self.QDRANT_TIMEOUT,
+-            )
+-        else:
+-            self.client = Qclient(
+-                url=self.QDRANT_URI,
+-                api_key=self.QDRANT_API_KEY,
+-                timeout=QDRANT_TIMEOUT,
+-            )
++        self.client = Qclient(
++            **qdrant_client_options(self.QDRANT_URI, prefer_grpc=self.PREFER_GRPC),
++            api_key=self.QDRANT_API_KEY,
++            timeout=self.QDRANT_TIMEOUT,
++        )
++
+ 
+     def _result_to_get_result(self, points) -> GetResult:
+         ids = []
+--- a/backend/open_webui/retrieval/vector/dbs/qdrant_multitenancy.py
++++ b/backend/open_webui/retrieval/vector/dbs/qdrant_multitenancy.py
+@@ -4,7 +4,7 @@
+ 
+ import logging
+ from typing import Any, Dict, List, Optional, Tuple
+-from urllib.parse import urlparse
++from open_webui_service_tls import qdrant_client_options
+ 
+ import grpc
+ from open_webui.config import (
+@@ -59,26 +59,10 @@
+         if not self.QDRANT_URI:
+             raise ValueError('QDRANT_URI is not set. Please configure it in the environment variables.')
+ 
+-        # Unified handling for either scheme
+-        parsed = urlparse(self.QDRANT_URI)
+-        host = parsed.hostname or self.QDRANT_URI
+-        http_port = parsed.port or 6333  # default REST port
+-
+-        self.client = (
+-            Qclient(
+-                host=host,
+-                port=http_port,
+-                grpc_port=self.GRPC_PORT,
+-                prefer_grpc=self.PREFER_GRPC,
+-                api_key=self.QDRANT_API_KEY,
+-                timeout=self.QDRANT_TIMEOUT,
+-            )
+-            if self.PREFER_GRPC
+-            else Qclient(
+-                url=self.QDRANT_URI,
+-                api_key=self.QDRANT_API_KEY,
+-                timeout=self.QDRANT_TIMEOUT,
+-            )
++        self.client = Qclient(
++            **qdrant_client_options(self.QDRANT_URI, prefer_grpc=self.PREFER_GRPC),
++            api_key=self.QDRANT_API_KEY,
++            timeout=self.QDRANT_TIMEOUT,
+         )
+ 
+         # Main collection types for multi-tenancy

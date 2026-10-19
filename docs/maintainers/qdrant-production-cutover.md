@@ -10,6 +10,60 @@ operator. The handoff script
 [`tools/qdrant_production_cutover.zsh`](../../tools/qdrant_production_cutover.zsh)
 does nothing to the host without `--apply`, and `--apply` requires root.
 
+## Authenticated Local Connections
+
+The credential-bearing endpoint is now `https://127.0.0.1:6333`. A loopback
+port alone does not identify its owner: another local user can bind it while
+Qdrant is stopped. Every administrative, runtime-token, and snapshot request
+therefore verifies the server certificate and its `127.0.0.1` IP SAN and pins
+its public key on the actual connection. Unrelated system or environment trust
+roots cannot authenticate a replacement. Curl configuration files, proxy environment settings, and
+redirect following cannot change this transport policy.
+
+During `cutover --apply`, the script provisions a separate persistent TLS
+identity at `/etc/qdrant/tls/{cert,key}.pem`, using
+`tools/provision_local_service_tls.py`, and enables native Qdrant TLS through
+`/etc/systemd/system/qdrant.service.d/90-local-tls.conf`. The public certificate
+is root-owned 0644; the key is root:qdrant 0640. It never replaces an existing
+identity implicitly. Retain both files across restarts and re-entry. The
+certificate lasts one year; renew it deliberately before expiry, distribute
+the replacement public certificate to consumers, and restart Qdrant and its
+clients. Keep the key inaccessible to clients and other local users.
+
+The old baseline, intermediate migration, and rollback probes remain anonymous
+HTTP. They never receive a credential. Rollback removes only the TLS drop-in
+whose exact content is saved in its rollback set and retains the TLS identity
+for re-entry. A modified drop-in blocks rollback instead of being deleted.
+
+`--url` accepts only `https://127.0.0.1:<port>`; its HTTP equivalent is used
+solely for those legacy probes. `--tls-ca` selects the trusted certificate for
+verification and defaults to `<config-dir>/tls/cert.pem`. Open WebUI must use
+the corresponding HTTPS URI and `QDRANT_CA_CERT`; use its newly built TLS-aware
+package and repeat household acceptance before activation. The historical
+package acceptance records do not establish acceptance of this TLS workflow.
+
+For an already installed 1.19.1 service, outside this baseline-only cutover,
+stop consumers, provision the identity, and install the native TLS override:
+
+```sh
+sudo python3 tools/provision_local_service_tls.py --directory /etc/qdrant/tls --group qdrant
+sudo install -d -m 0755 /etc/systemd/system/qdrant.service.d
+sudo install -m 0644 /dev/stdin /etc/systemd/system/qdrant.service.d/90-local-tls.conf <<'EOF'
+[Service]
+Environment=QDRANT__SERVICE__ENABLE_TLS=true
+Environment=QDRANT__TLS__CERT=/etc/qdrant/tls/cert.pem
+Environment=QDRANT__TLS__KEY=/etc/qdrant/tls/key.pem
+EOF
+sudo systemctl daemon-reload
+sudo systemctl restart qdrant.service
+sudo tools/qdrant_production_cutover.zsh verify
+```
+
+If a listener conflict may already have exposed credentials, rotate the Qdrant
+admin/HMAC key and every JWT derived from it, and the Valkey credential, through
+the deployment's credential-rotation procedure before restarting consumers.
+TLS prevents future disclosure; it cannot revoke a previously captured key.
+
 ## Candidate Identities
 
 | Package | Archive | Size (bytes) | SHA-256 |

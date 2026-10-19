@@ -178,6 +178,64 @@ declared by `open-webui.service`. The service receives no Qdrant administrative
 credential. Manual delivery is not part of ordinary startup; operator handling
 is limited to initial provisioning, deliberate rotation, or restore.
 
+## Service Peer Authentication
+
+The 0.11.4-3 candidate requires authenticated TLS to both local dependencies.
+Loopback address restrictions alone do not authenticate the listener: another
+local user can bind a vacant service port during a restart. The wrapper validates
+the transport configuration before importing the application, and each new
+connection completes certificate and IP-address verification before transmitting
+the Qdrant API key or Valkey ACL password, including after reconnects.
+
+| Setting | Required configuration |
+| --- | --- |
+| `QDRANT_URI` | `https://127.0.0.1:6333` |
+| `QDRANT_CA_CERT` | `/etc/qdrant/tls/cert.pem` |
+| `VALKEY_CA_CERT` | `/etc/valkey/tls/cert.pem` |
+| `valkey-url` credential | `rediss://open-webui:<password>@127.0.0.1:6379/0` |
+
+Provision separate server certificates and private keys using the
+[Qdrant cutover](../../docs/maintainers/qdrant-production-cutover.md) and
+[household install procedure](../../docs/maintainers/open-webui-household-production-install.md).
+Both certificates must have an IP subjectAltName for `127.0.0.1`. The public
+certificate files and their parent directories must be root-owned and not
+writable by either service; the private keys are readable only by the server
+that owns them. A missing or malformed trust file, plaintext endpoint, hostname
+other than `127.0.0.1`, or unsafe Redis URL query prevents startup. This candidate
+does not support Qdrant gRPC, Redis cluster or Sentinel modes, or arbitrary
+`WEBSOCKET_REDIS_OPTIONS`; leave those disabled or unset.
+
+`0009-authenticate-service-peers.patch` covers both Qdrant client constructors
+with explicit HTTPS, a CA-specific verifying SSL context, disabled environment
+proxies, and disabled redirects. The independent `open_webui_service_tls` module
+normalizes the credential-derived Redis URL with `ssl_cert_reqs=required`,
+`ssl_check_hostname=true`, and `ssl_ca_certs`, then provides the same URL to the
+sync and async Redis clients, Socket.IO, and the starsessions store. `0010-isolate-explicit-redis-trust.patch` makes the pinned redis-py 8.0.1
+sync and async clients load only the explicitly configured CA rather than adding
+it to ambient or system trust. Their upstream behavior remains unchanged when
+no explicit CA is supplied. The literal loopback IP and required IP SAN remain
+part of this package's transport policy; this is certificate-chain verification,
+not certificate fingerprint pinning.
+
+For an existing installation, stop Open WebUI, provision the TLS identities and
+server configuration, and replace the encrypted `valkey-url` credential with its
+`rediss` form. If either service previously accepted plaintext connections,
+rotate its API key or ACL password as well. Merge the new TLS defaults from
+`/etc/open-webui/open-webui.env.pacnew` if pacman leaves that file, and remove any
+plaintext overrides from the household profile. Only after those changes:
+
+```sh
+sudo systemctl restart qdrant.service valkey.service
+sudo systemctl restart open-webui.service
+```
+
+`tests/test_open_webui_service_tls.py` exercises the pinned real clients against
+disposable TLS listeners: legitimate authentication succeeds, whereas plaintext,
+untrusted, wrong-IP, and replacement listeners receive no synthetic credential.
+These tests do not replace a clean Arch build, payload inspection, or the
+integrated household acceptance trial. The older 0.11.4-2 artifact and its
+candidate-set binding do not validate this TLS candidate.
+
 ## zembed Prefixes
 
 zembed expects each input wrapped as a short chat transcript whose system turn
@@ -549,6 +607,8 @@ points per request.
     configuration stay runtime state.
   - Page Qdrant scroll reads under the packaged strict-mode query limit
     ([Qdrant Scroll Paging](#qdrant-scroll-paging)).
+  - Authenticate the local Qdrant and Valkey peers with verified TLS before
+    sending service credentials ([Service Peer Authentication](#service-peer-authentication)).
   - Keep the model provider and household choices out of the packaged
     defaults: the unit reads an optional host-owned profile after them, and
     the package ships only its documented example

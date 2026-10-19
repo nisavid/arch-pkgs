@@ -117,6 +117,8 @@ PACKAGED_DEFAULT_KEYS = frozenset(
         "ENABLE_OPENAI_API",
         "VECTOR_DB",
         "QDRANT_URI",
+        "QDRANT_CA_CERT",
+        "VALKEY_CA_CERT",
         "QDRANT_ON_DISK",
         "QDRANT_PREFER_GRPC",
         "QDRANT_COLLECTION_PREFIX",
@@ -168,7 +170,7 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
         self.assertIn("open-webui-private-requirements.lock", recipe)
         self.assertIn('python "${srcdir}/verify-open-webui-private-lock.py"', recipe)
         self.assertNotIn("'SKIP'", recipe)
-        self.assertEqual(recipe.count("patch --fuzz=0"), 8)
+        self.assertEqual(recipe.count("patch --fuzz=0"), 10)
         for provenance_asset in (
             "open-webui-private-constraints.txt",
             "open-webui-system-providers.txt",
@@ -182,6 +184,9 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
             "0006-enforce-session-epoch.patch",
             "0007-keep-rag-credentials-external.patch",
             "0008-page-qdrant-scroll.patch",
+            "0009-authenticate-service-peers.patch",
+            "0010-isolate-explicit-redis-trust.patch",
+            "open-webui-service-tls.py",
             "open-webui-rag-gate.py",
             "open-webui-session-epoch-ledger.py",
         ):
@@ -266,7 +271,7 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
             text=True,
         ).stdout
 
-        self.assertIn("pkgrel=2", recipe)
+        self.assertIn("pkgrel=3", recipe)
         self.assertIn(
             "_npm_closure_release=open-webui-0.11.4-offline-closures-v1", recipe
         )
