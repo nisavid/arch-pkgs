@@ -15,10 +15,11 @@ import tempfile
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO
 
-SCHEMA = "arch-pkgs.open-webui.package-inspection.v1"
+SCHEMA = "arch-pkgs.open-webui.package-inspection.v2"
 GENERIC_BUILD_PATHS = {"/build", "/tmp", "/var/tmp"}
 PYODIDE_PREFIX = "open_webui/frontend/pyodide/"
 CRITICAL_FILES = (
+    "opt/open-webui/lib/python3.14/site-packages/open_webui_service_tls.py",
     "etc/open-webui/open-webui.env",
     "usr/bin/open-webui",
     "usr/lib/systemd/system/open-webui.service",

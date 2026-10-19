@@ -37,7 +37,10 @@ collection_suffixes=(memories knowledge files web-search hash-based)
 credential_name=qdrant-runtime-api-key
 
 # Defaults match the packaged layout.
-url=http://127.0.0.1:6333
+url=https://127.0.0.1:6333
+tls_ca=
+use_tls=0
+tls_drop_in=/etc/systemd/system/qdrant.service.d/90-local-tls.conf
 storage_dir=/var/lib/qdrant
 config_dir=/etc/qdrant
 repo=nisavid
@@ -68,7 +71,8 @@ Usage: ${script_name} <preflight|cutover|verify|rollback> [options]
 
 Options (defaults match the packaged layout):
   --apply                    perform host changes (requires root)
-  --url URL                  Qdrant HTTP endpoint [${url}]
+  --url URL                  Qdrant HTTPS endpoint [${url}]
+  --tls-ca FILE              trusted server certificate [<config-dir>/tls/cert.pem]
   --storage-dir DIR          Qdrant state directory [${storage_dir}]
   --config-dir DIR           Qdrant configuration directory [${config_dir}]
   --repo NAME                pacman repository [${repo}]
@@ -92,7 +96,7 @@ default_opt=(
   --url "$url" --storage-dir "$storage_dir" --config-dir "$config_dir"
   --repo "$repo" --pkg-cache "$pkg_cache" --rollback-root "$rollback_root"
   --credstore "$credstore" --disk-quota-percent "$disk_quota_percent"
-  --creds-key ''
+  --creds-key '' --tls-ca ''
 )
 
 die() { print -ru2 -- "${script_name}: $*"; exit 2; }
@@ -125,20 +129,38 @@ run() {
 
 sha256_of() { sha256sum -- "$1" | awk '{print $1}'; }
 
+qdrant_curl() {
+  # All requests share one transport boundary, including snapshot transfers.
+  # Legacy anonymous migration probes never receive a credential. Headers
+  # always select TLS, even before the workflow switches its public probes.
+  local headers=$1 endpoint=$2
+  shift 2
+  if [[ -n "$headers" ]] || (( use_tls )); then
+    local peer_pin
+    peer_pin=$(openssl x509 -in "$tls_ca" -pubkey -noout \
+      | openssl pkey -pubin -outform DER \
+      | openssl dgst -sha256 -binary | openssl base64 -A) || return 1
+    local -a auth_args=()
+    [[ -z "$headers" ]] || auth_args=(-H "@${headers}")
+    command curl -q --noproxy '*' --proto '=https' --proto-redir '=https' --tlsv1.2 \
+      --cacert "$tls_ca" --pinnedpubkey "sha256//${peer_pin}" "${auth_args[@]}" "$@" "${url}${endpoint}"
+  else
+    command curl -q --noproxy '*' --proto '=http' "$@" "${url/https:/http:}${endpoint}"
+  fi
+}
+
 http_code() {
   # http_code METHOD PATH [HEADER_FILE] [BODY]
   local method=$1 endpoint=$2 headers=${3:-} body=${4:-}
   local -a args=(-sS -o /dev/null -w '%{http_code}' -m 10 -X "$method")
-  [[ -n "$headers" ]] && args+=(-H "@${headers}")
   [[ -n "$body" ]] && args+=(-H 'Content-Type: application/json' --data-binary "$body")
-  curl "${args[@]}" "${url}${endpoint}" 2>/dev/null || print -r -- 000
+  qdrant_curl "$headers" "$endpoint" "${args[@]}" 2>/dev/null || print -r -- 000
 }
 
 http_json() {
   local endpoint=$1 headers=${2:-}
   local -a args=(-sS -m 10)
-  [[ -n "$headers" ]] && args+=(-H "@${headers}")
-  curl "${args[@]}" "${url}${endpoint}"
+  qdrant_curl "$headers" "$endpoint" "${args[@]}"
 }
 
 sync_db_field() {
@@ -285,12 +307,13 @@ carried_options() {
     --url "$url" --storage-dir "$storage_dir" --config-dir "$config_dir"
     --repo "$repo" --pkg-cache "$pkg_cache" --rollback-root "$rollback_root"
     --credstore "$credstore" --disk-quota-percent "$disk_quota_percent"
-    --creds-key "$creds_key_mode"
+    --creds-key "$creds_key_mode" --tls-ca "$tls_ca"
   )
   for opt in --url --storage-dir --config-dir --repo --pkg-cache --rollback-root --credstore --disk-quota-percent --creds-key; do
     [[ "${given[$opt]}" == "${default_opt[$opt]}" ]] || opts+=("$opt" "${given[$opt]}")
   done
   [[ "$sync_db" == "/var/lib/pacman/sync/${repo}.db" ]] || opts+=(--sync-db "$sync_db")
+  [[ "$tls_ca" == "${config_dir}/tls/cert.pem" ]] || opts+=(--tls-ca "$tls_ca")
   (( ! $#opts )) || print -rn -- " ${(j: :)${(@q-)opts}}"
 }
 
@@ -325,6 +348,8 @@ do_preflight() {
   local installed version count established unit problem
   local secret="${config_dir}/qdrant.env" cred="${credstore}/open-webui.${credential_name}"
   note "== preflight"
+  [[ ! -e "$tls_drop_in" && ! -L "$tls_drop_in" ]] \
+    || refuse "${tls_drop_in} already exists; this route must own its TLS drop-in through rollback"
   installed=$(pacman -Q qdrant 2>/dev/null | awk '{print $2}') || true
   [[ "$installed" == "$baseline_version" ]] \
     || refuse "installed qdrant is '${installed:-absent}', this route starts from ${baseline_version}"
@@ -407,6 +432,10 @@ admin_header() {
   # Write the admin api-key header to a private file; the secret never
   # reaches argv or the environment of a child process.
   local line
+  # This probe prevents even reading the secret when the current listener
+  # cannot authenticate. Each subsequent request verifies TLS again.
+  (( use_tls )) || die "administrative credentials require the TLS stage"
+  qdrant_curl '' / -fsS -m 10 -o /dev/null || die "Qdrant TLS identity verification failed"
   line=$(<"${config_dir}/qdrant.env")
   [[ "$line" == QDRANT__SERVICE__API_KEY=* ]] || die "unexpected ${config_dir}/qdrant.env content"
   print -r -- "api-key: ${line#QDRANT__SERVICE__API_KEY=}" >| "${private_dir}/admin.h"
@@ -519,12 +548,11 @@ snapshot_restore_drill() {
   # One collection snapshot and restore on the still-empty memories collection,
   # before any consumer writes. Both snapshot files are removed afterwards.
   local admin=$1 name="${collection_prefix}_memories" snap upload
-  snap=$(curl -sS -m 60 -H "@${admin}" -X POST "${url}/collections/${name}/snapshots?wait=true" | jq -er '.result.name') || return 1
+  snap=$(qdrant_curl "$admin" "/collections/${name}/snapshots?wait=true" -sS -m 60 -X POST | jq -er '.result.name') || return 1
   upload="restore-${snap}"
-  curl -sS -m 60 -f -H "@${admin}" -o "${private_dir}/${upload}" "${url}/collections/${name}/snapshots/${snap}" || return 1
-  [[ "$(curl -sS -m 60 -o /dev/null -w '%{http_code}' -H "@${admin}" \
-    -F "snapshot=@${private_dir}/${upload}" \
-    "${url}/collections/${name}/snapshots/upload?wait=true&priority=snapshot")" == 200 ]] || return 1
+  qdrant_curl "$admin" "/collections/${name}/snapshots/${snap}" -sS -m 60 -f -o "${private_dir}/${upload}" || return 1
+  [[ "$(qdrant_curl "$admin" "/collections/${name}/snapshots/upload?wait=true&priority=snapshot" \
+    -sS -m 60 -o /dev/null -w '%{http_code}' -F "snapshot=@${private_dir}/${upload}")" == 200 ]] || return 1
   rm -f -- "${private_dir}/${upload}"
   note "snapshot drill: ${name} snapshot restored"
   # Cleanup only; a leftover empty snapshot file is not a cutover failure.
@@ -532,6 +560,29 @@ snapshot_restore_drill() {
     [[ "$(http_code DELETE "/collections/${name}/snapshots/${snap}?wait=true" "$admin")" == 200 ]] \
       || note "warning: could not delete snapshot ${snap} of ${name}; remove it by hand"
   done
+}
+
+install_tls_drop_in() {
+  local set_dir=$1
+  python3 "${script_path:h}/provision_local_service_tls.py" \
+    --directory "${config_dir}/tls" --group qdrant || return 1
+  # Store the exact managed bytes in the rollback set before installation.
+  # Refuse unsafe path interpolation into systemd's environment syntax.
+  python3 - "${config_dir}/tls" >| "${set_dir}/tls-drop-in.conf" <<'PY'
+import sys
+path = sys.argv[1]
+if any(c in path for c in '\n\r\x00'):
+    raise SystemExit('invalid TLS directory')
+path = path.replace('\\', '\\\\').replace('"', '\\"').replace('%', '%%')
+print('[Service]')
+print('Environment=QDRANT__SERVICE__ENABLE_TLS=true')
+print(f'Environment="QDRANT__TLS__CERT={path}/cert.pem"')
+print(f'Environment="QDRANT__TLS__KEY={path}/key.pem"')
+PY
+  [[ $? == 0 ]] || return 1
+  install -d -o root -g root -m 0755 -- "${tls_drop_in:h}" || return 1
+  [[ ! -e "$tls_drop_in" && ! -L "$tls_drop_in" ]] || return 1
+  install -o root -g root -m 0644 -- "${set_dir}/tls-drop-in.conf" "$tls_drop_in"
 }
 
 do_cutover() {
@@ -594,7 +645,12 @@ do_cutover() {
   if (( apply )); then
     [[ ! -e "${config_dir}/config.yaml.pacnew" ]] || fail_stage
     config_unmodified || fail_stage
+    stage='enable authenticated TLS'
+    install_tls_drop_in "$set_dir" || fail_stage
+  else
+    note "DRY-RUN: provision persistent ${config_dir}/tls identity and install ${tls_drop_in} (native Qdrant TLS)"
   fi
+  use_tls=1
   run systemctl daemon-reload || fail_stage
   run systemctl start qdrant.service || fail_stage
 
@@ -635,6 +691,7 @@ do_cutover() {
 do_verify() {
   local name admin runtime readonly_h code listeners point vector before after
   note "== verify"
+  use_tls=1
   (( EUID == 0 )) || die "verify reads the HMAC secret and the runtime credential; run it as root"
   for name in qdrant-migration qdrant qdrant-web-ui; do
     [[ "$(pacman -Q "$name" 2>/dev/null | awk '{print $2}')" == "${want_version[$name]}" ]] \
@@ -651,6 +708,9 @@ do_verify() {
   done
   [[ "$(http_code GET /collections)" == 401 ]] || refuse "unauthenticated GET /collections was not refused with 401"
   check_disk
+
+  # A failed public check must never flow into privileged smoke operations.
+  (( ! $#refusals )) || return 1
 
   make_private_dir
   admin=$(admin_header)
@@ -751,6 +811,11 @@ do_rollback() {
     || refuse "saved state in ${set_dir} does not match state.sha256 (or is unreadable; run as root)"
   [[ "$(sha256_of "${set_dir}/config/config.yaml" 2>/dev/null)" == "$baseline_config_sha" ]] \
     || refuse "saved ${set_dir}/config/config.yaml is not the retained ${baseline_version} config ${baseline_config_sha}"
+  if [[ -e "$tls_drop_in" || -L "$tls_drop_in" ]]; then
+    [[ ! -L "$tls_drop_in" && -f "${set_dir}/tls-drop-in.conf" ]] \
+      && cmp -s -- "${set_dir}/tls-drop-in.conf" "$tls_drop_in" \
+      || refuse "${tls_drop_in} is not the exact drop-in recorded by this cutover; reconcile it before rollback"
+  fi
   # The failed state is moved aside on the same filesystem, which frees
   # nothing, so the restored copy needs its full size free there.
   need=$(du -sb -- "${set_dir}/state" 2>/dev/null | awk '{print $1}') || need=
@@ -810,6 +875,11 @@ do_rollback() {
   # Only config.yaml is restored, with the packaged owner and mode;
   # qdrant.env and the encrypted credential stay for re-entry.
   run install -o root -g root -m 0644 -- "${set_dir}/config/config.yaml" "${config_dir}/config.yaml" || rollback_failed 'restore config'
+  # Restore the original unit shape, retaining the identity for safe re-entry.
+  if [[ -f "${set_dir}/tls-drop-in.conf" && -e "$tls_drop_in" ]]; then
+    run rm -- "$tls_drop_in" || rollback_failed 'remove managed TLS drop-in'
+  fi
+  use_tls=0
   run systemctl daemon-reload || rollback_failed 'daemon-reload'
   run systemctl start qdrant.service || rollback_failed 'start qdrant'
   if (( apply )); then
@@ -834,10 +904,11 @@ while (( $# )); do
   case "$1" in
     --apply) apply=1; shift ;;
     --reuse-credential) reuse_credential=1; shift ;;
-    --url|--storage-dir|--config-dir|--repo|--sync-db|--pkg-cache|--rollback-root|--rollback-set|--credstore|--disk-quota-percent|--creds-key)
+    --url|--tls-ca|--storage-dir|--config-dir|--repo|--sync-db|--pkg-cache|--rollback-root|--rollback-set|--credstore|--disk-quota-percent|--creds-key)
       (( $# >= 2 )) || die "$1 requires a value"
       case "$1" in
         --url) url=$2 ;;
+        --tls-ca) tls_ca=$2 ;;
         --storage-dir) storage_dir=$2 ;;
         --config-dir) config_dir=$2 ;;
         --repo) repo=$2 ;;
@@ -856,6 +927,9 @@ while (( $# )); do
   esac
 done
 
+[[ "$url" == https://127.0.0.1:<1-65535> ]] \
+  || die "--url must be https://127.0.0.1:<port>; plaintext, userinfo, paths, queries, and redirects are unsupported"
+[[ -n "$tls_ca" ]] || tls_ca="${config_dir}/tls/cert.pem"
 [[ "$disk_quota_percent" == <1-100> ]] || die "--disk-quota-percent must be 1-100"
 [[ -z "$creds_key_mode" || "$creds_key_mode" == (auto|host) ]] || die "--creds-key must be auto or host"
 [[ "$rollback_set" == [A-Za-z0-9._-]## && "$rollback_set" != .* ]] || die "--rollback-set must be a plain name"

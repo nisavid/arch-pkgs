@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily expiry warning for %i loopback TLS certificate
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=30m
+
+[Install]
+WantedBy=timers.target

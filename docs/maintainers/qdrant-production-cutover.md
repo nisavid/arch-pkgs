@@ -10,6 +10,145 @@ operator. The handoff script
 [`tools/qdrant_production_cutover.zsh`](../../tools/qdrant_production_cutover.zsh)
 does nothing to the host without `--apply`, and `--apply` requires root.
 
+## Authenticated Local Connections
+
+The credential-bearing endpoint is now `https://127.0.0.1:6333`. A loopback
+port alone does not identify its owner: another local user can bind it while
+Qdrant is stopped. Every administrative, runtime-token, and snapshot request
+therefore verifies the server certificate and its `127.0.0.1` IP SAN and pins
+its public key on the actual connection. Unrelated system or environment trust
+roots cannot authenticate a replacement. Curl configuration files, proxy environment settings, and
+redirect following cannot change this transport policy.
+
+During `cutover --apply`, the script provisions a separate persistent TLS
+identity at `/etc/qdrant/tls/{cert,key}.pem`, using
+`tools/provision_local_service_tls.py`, and enables native Qdrant TLS through
+`/etc/systemd/system/qdrant.service.d/90-local-tls.conf`. The public certificate
+is root-owned 0644; the key is root:qdrant 0640. It never replaces an existing
+identity implicitly. Retain both files across restarts and re-entry. The
+certificate lasts one year. Install the daily expiry warning and use the
+deliberate [renewal procedure](#certificate-expiry-and-renewal) below before
+expiry. Keep the key inaccessible to clients and other local users.
+
+The old baseline, intermediate migration, and rollback probes remain anonymous
+HTTP. They never receive a credential. Rollback removes only the TLS drop-in
+whose exact content is saved in its rollback set and retains the TLS identity
+for re-entry. A modified drop-in blocks rollback instead of being deleted.
+
+`--url` accepts only `https://127.0.0.1:<port>`; its HTTP equivalent is used
+solely for those legacy probes. `--tls-ca` selects the trusted certificate for
+verification and defaults to `<config-dir>/tls/cert.pem`. Open WebUI must use
+the corresponding HTTPS URI and `QDRANT_CA_CERT`; use its newly built TLS-aware
+package and repeat household acceptance before activation. The historical
+package acceptance records do not establish acceptance of this TLS workflow.
+
+For an already installed 1.19.1 service, outside this baseline-only cutover,
+stop consumers, provision the identity, and install the native TLS override:
+
+```sh
+sudo python3 tools/provision_local_service_tls.py --directory /etc/qdrant/tls --group qdrant
+sudo install -d -m 0755 /etc/systemd/system/qdrant.service.d
+sudo install -m 0644 /dev/stdin /etc/systemd/system/qdrant.service.d/90-local-tls.conf <<'EOF'
+[Service]
+Environment=QDRANT__SERVICE__ENABLE_TLS=true
+Environment=QDRANT__TLS__CERT=/etc/qdrant/tls/cert.pem
+Environment=QDRANT__TLS__KEY=/etc/qdrant/tls/key.pem
+EOF
+sudo systemctl daemon-reload
+sudo systemctl restart qdrant.service
+sudo tools/qdrant_production_cutover.zsh verify
+```
+
+If a listener conflict may already have exposed credentials, rotate the Qdrant
+admin/HMAC key and every JWT derived from it, and the Valkey credential, through
+the deployment's credential-rotation procedure before restarting consumers.
+TLS prevents future disclosure; it cannot revoke a previously captured key.
+
+### Certificate Expiry and Renewal
+
+Install the read-only checker and enable only the instances for provisioned
+services. The Qdrant route enables Qdrant; the household Valkey step enables
+Valkey separately. These commands do not renew certificates:
+
+```sh
+sudo install -Dm755 tools/check_local_service_tls.py /usr/local/libexec/check-local-service-tls
+sudo install -m 0644 tools/templates/local-service-tls/local-service-tls-expiry@.service /etc/systemd/system/
+sudo install -m 0644 tools/templates/local-service-tls/local-service-tls-expiry@.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now local-service-tls-expiry@qdrant.timer
+sudo systemctl start local-service-tls-expiry@qdrant.service
+```
+
+The persistent timer checks daily, including after downtime. At 30 days before
+expiry, the checker exits unsuccessfully with `TLS EXPIRY WARNING`, making the
+service visible in `systemctl --failed`; an expired or unreadable certificate
+also fails. Inspect `journalctl -u local-service-tls-expiry@qdrant.service` and
+include these failed units in the host's normal service monitoring. The checker
+does not change trust files, restart services, or promise an external alert.
+
+Renew one service at a time from the reviewed checkout. Set `tls_service` to
+`qdrant` or `valkey`. Stop any additional consumers before this block; on a
+Qdrant-only installation, omit the Open WebUI unit names throughout. The
+ordinary provisioning command still refuses to replace an existing identity;
+`--rotate-with` is the deliberate replacement operation:
+
+```sh
+tls_service=qdrant
+tls_stage="/etc/${tls_service}/tls-renew-$(date -u +%Y%m%dT%H%M%SZ)"
+(
+  set -eu
+  case "$tls_service" in qdrant|valkey) ;; *) exit 1 ;; esac
+  sudo python3 tools/provision_local_service_tls.py --directory "$tls_stage" --group "$tls_service"
+  sudo python3 tools/check_local_service_tls.py --certificate "$tls_stage/cert.pem"
+  sudo systemctl stop open-webui-tailnet.service open-webui.service "${tls_service}.service"
+  sudo python3 tools/provision_local_service_tls.py \
+    --directory "/etc/${tls_service}/tls" --group "$tls_service" --rotate-with "$tls_stage"
+  sudo systemctl start "${tls_service}.service"
+  sudo systemctl start "local-service-tls-expiry@${tls_service}.service"
+)
+```
+
+The helper validates root ownership, protected paths, permissions, matching
+keys, the loopback IP SAN, and server-certificate validity. A new identity must
+remain valid beyond 30 days. It atomically exchanges the entire directories
+with Linux `renameat2(RENAME_EXCHANGE)`, retaining the previous complete pair at
+`$tls_stage`. Unsupported atomic exchange fails without a non-atomic fallback.
+An expired live pair can be replaced, but cannot be restored as active trust.
+Leave consumers stopped after any failure and inspect the two directories
+before retrying; do not rerun an exchange blindly.
+
+The usual certificate paths now contain the new trust identity. If a consumer
+uses a separate copy, replace that public certificate while it is stopped.
+For Qdrant, run `sudo tools/qdrant_production_cutover.zsh verify`. For Valkey,
+run `valkey-cli --tls --cacert /etc/valkey/tls/cert.pem -p 6379 ping` and confirm
+the disabled default user is refused after a successful TLS handshake.
+Then start `open-webui.service` and `open-webui-tailnet.service`, and perform the household
+[owner-run verification](open-webui-household-production-install.md#p7-owner-run-verification),
+stopping consumers again if any check fails.
+Keep the old pair until the new identity has passed these checks and the
+deployment's stability condition.
+
+If verification fails, keep all consumers stopped and restore the retained
+pair with the same `tls_service` and `tls_stage` values:
+
+```sh
+(
+  set -eu
+  sudo systemctl stop open-webui-tailnet.service open-webui.service "${tls_service}.service"
+  sudo python3 tools/provision_local_service_tls.py \
+    --directory "/etc/${tls_service}/tls" --group "$tls_service" --rollback-with "$tls_stage"
+  sudo systemctl start "${tls_service}.service"
+)
+```
+
+Rollback atomically preserves the unsuccessful new pair at `$tls_stage` and
+allows a retained certificate with fewer than 30 days remaining, but refuses
+an expired or not-yet-valid certificate. Restore any separate consumer trust
+copies, repeat the service checks above, and restart consumers for the household
+verification. If the retained certificate expired, keep consumers
+stopped and stage a fresh identity instead. No certificate or key is deleted
+automatically.
+
 ## Candidate Identities
 
 | Package | Archive | Size (bytes) | SHA-256 |

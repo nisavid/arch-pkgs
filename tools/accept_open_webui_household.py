@@ -125,7 +125,7 @@ PROVIDERS_OF_RECORD_NOTE = (
 )
 HOST_TOOLS = (
     "bwrap", "socat", "bsdtar", "unshare", "systemd-creds", "systemd-run",
-    "systemctl", "journalctl", "valkey-server", "ss",
+    "systemctl", "journalctl", "valkey-server", "openssl", "ss",
     # The public-evidence gate (sc.gitleaks_withhold_reason): Arch package gitleaks (extra).
     sc.GITLEAKS,
 )
@@ -1211,7 +1211,8 @@ class Kit:
         return sc.Endpoint(origin=self.lemond_url)
 
     def qdrant(self) -> Qdrant:
-        return Qdrant(PORTS["qdrant"], self.read_credential(QDRANT_ADMIN_CREDENTIAL))
+        return Qdrant(PORTS["qdrant"], self.read_credential(QDRANT_ADMIN_CREDENTIAL),
+                      cacert=self.path("tls", "qdrant", "cert.pem"))
 
     # Candidate trees -------------------------------------------------------
     def packaged_env(self) -> dict[str, str]:
@@ -1257,8 +1258,8 @@ class Kit:
 
 
 class Qdrant:
-    def __init__(self, port: int, admin_key: str):
-        self.endpoint = sc.Endpoint(origin=f"http://127.0.0.1:{port}", timeout=120.0)
+    def __init__(self, port: int, admin_key: str, *, cacert: Path):
+        self.endpoint = sc.Endpoint(origin=f"https://127.0.0.1:{port}", cacert=cacert, timeout=120.0)
         self.admin_key = admin_key
 
     def status(self, method: str, path: str, payload: Any = None, *, token: str | None = None) -> int:
@@ -1408,7 +1409,7 @@ class Qdrant:
 # Valkey (RESP over a socket; the sentinel key for A-D3)
 
 
-def valkey_command(port: int, user: str, password: str, *arguments: str) -> Any:
+def valkey_command(port: int, user: str, password: str, *arguments: str, cacert: Path) -> Any:
     def encode(parts: Sequence[str]) -> bytes:
         return f"*{len(parts)}\r\n".encode() + b"".join(
             f"${len(part.encode())}\r\n".encode() + part.encode() + b"\r\n" for part in parts
@@ -1428,13 +1429,16 @@ def valkey_command(port: int, user: str, password: str, *arguments: str) -> Any:
             return None if length < 0 else stream.read(length + 2)[:-2].decode()
         raise sc.ScenarioFailure("unexpected Valkey reply")
 
-    with socket.create_connection(("127.0.0.1", port), timeout=10) as connection:
-        stream = connection.makefile("rwb")
-        stream.write(encode(["AUTH", user, password]))
-        stream.write(encode(list(arguments)))
-        stream.flush()
-        reply(stream)
-        return reply(stream)
+    context = sc.tls_context(cacert)
+    with socket.create_connection(("127.0.0.1", port), timeout=10) as raw:
+        # Complete server authentication before any credential or command is sent.
+        with context.wrap_socket(raw, server_hostname="127.0.0.1") as connection:
+            with connection.makefile("rwb") as stream:
+                stream.write(encode(["AUTH", user, password]))
+                stream.write(encode(list(arguments)))
+                stream.flush()
+                reply(stream)
+                return reply(stream)
 
 
 def valkey_password(kit: Kit) -> str:
@@ -1538,6 +1542,9 @@ def qdrant_unit(kit: Kit, packaged: str) -> tuple[str, list[dict[str, Any]]]:
         ("Environment", f"QDRANT__STORAGE__TEMP_PATH={state / 'tmp'}"),
         ("Environment", f"QDRANT__SERVICE__HTTP_PORT={PORTS['qdrant']}"),
         ("Environment", f"QDRANT__SERVICE__GRPC_PORT={PORTS['qdrant-grpc']}"),
+        ("Environment", "QDRANT__SERVICE__ENABLE_TLS=true"),
+        ("Environment", f"QDRANT__TLS__CERT={kit.path('tls', 'qdrant', 'cert.pem')}"),
+        ("Environment", f"QDRANT__TLS__KEY={kit.path('tls', 'qdrant', 'key.pem')}"),
         ("Environment", f"QDRANT__SERVICE__STATIC_CONTENT_DIR={kit.path('tree', 'qdrant-web-ui', 'usr', 'share', 'qdrant', 'web-ui')}"),
     ]
     return derive_unit("qdrant.service", packaged, rewrite, extra, kit.slice)
@@ -2088,7 +2095,8 @@ MARKER_CREDENTIAL = "owui-acc-restore-marker"
 
 
 def valkey_sentinel(kit: Kit) -> Any:
-    return valkey_command(PORTS["valkey"], VALKEY_USER, valkey_password(kit), "GET", "owui-acc:sentinel")
+    return valkey_command(PORTS["valkey"], VALKEY_USER, valkey_password(kit), "GET", "owui-acc:sentinel",
+                          cacert=kit.path("tls", "valkey", "cert.pem"))
 
 
 def marker_divergence(kit: Kit) -> dict[str, bool]:
@@ -3615,7 +3623,8 @@ class Trial:
             self.pre_backup_session = self.sign_in()
             sentinel = secrets.token_hex(16)
             kit.save_state(sentinel=sentinel)
-            valkey_command(PORTS["valkey"], VALKEY_USER, valkey_password(kit), "SET", "owui-acc:sentinel", sentinel)
+            valkey_command(PORTS["valkey"], VALKEY_USER, valkey_password(kit), "SET", "owui-acc:sentinel", sentinel,
+                           cacert=kit.path("tls", "valkey", "cert.pem"))
             qdrant = kit.qdrant()
             self.anchor = backup_anchor(kit, qdrant)
             try:
@@ -3638,7 +3647,7 @@ class Trial:
             if deleted != 200:
                 raise sc.ScenarioFailure(f"the marker change returned HTTP {deleted}")
             valkey_command(PORTS["valkey"], VALKEY_USER, valkey_password(kit), "SET", "owui-acc:sentinel",
-                           secrets.token_hex(16))
+                           secrets.token_hex(16), cacert=kit.path("tls", "valkey", "cert.pem"))
             kit.store_credential(MARKER_CREDENTIAL, secrets.token_hex(16))
             pre_restore = marker_divergence(kit)
             values["pre_restore_divergence"] = pre_restore
@@ -4426,6 +4435,54 @@ def probe_systemd_creds(slice_unit: str) -> bool:
     return opened == loaded == b"probe"
 
 
+def require_service_tls(kit: Kit) -> None:
+    """Require private, intact service identities; a revive must never rotate trust."""
+
+    for path in (kit.path("tls"), kit.path("tls", "qdrant"), kit.path("tls", "valkey")):
+        if (path.is_symlink() or not path.is_dir() or path.stat().st_uid != os.getuid()
+                or path.stat().st_mode & 0o077):
+            raise sc.Blocked("the kit's private TLS identities are absent or insecure; stage a fresh root")
+    for service in ("qdrant", "valkey"):
+        cert, key = (kit.path("tls", service, name) for name in ("cert.pem", "key.pem"))
+        for path in (cert, key):
+            if (path.is_symlink() or not path.is_file() or path.stat().st_uid != os.getuid()
+                    or path.stat().st_mode & 0o077):
+                raise sc.Blocked("the kit's private TLS identities are absent or insecure; stage a fresh root")
+        try:
+            ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER).load_cert_chain(cert, key)
+            sc.tls_context(cert)
+        except (OSError, ssl.SSLError) as error:
+            raise sc.Blocked(f"the kit's {service} TLS identity is invalid; stage a fresh root") from error
+
+
+def provision_service_tls(kit: Kit) -> None:
+    """Mint independent loopback server identities once, outside restorable state."""
+
+    root = kit.path("tls")
+    if root.exists() or root.is_symlink():
+        require_service_tls(kit)
+        return
+    root.mkdir(mode=0o700)
+    for service in ("qdrant", "valkey"):
+        directory = root / service
+        directory.mkdir(mode=0o700)
+        with tempfile.TemporaryDirectory(prefix=".issue-", dir=directory) as temporary:
+            cert, key = (Path(temporary) / name for name in ("cert.pem", "key.pem"))
+            run([
+                "openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256",
+                "-nodes", "-days", "3650", "-subj", f"/CN=owui-acceptance-{service}",
+                "-addext", "subjectAltName=IP:127.0.0.1,DNS:localhost",
+                "-addext", "basicConstraints=critical,CA:TRUE",
+                "-addext", "keyUsage=critical,digitalSignature,keyCertSign",
+                "-addext", "extendedKeyUsage=serverAuth",
+                "-keyout", str(key), "-out", str(cert),
+            ])
+            for path in (cert, key):
+                path.chmod(0o600)
+                path.replace(directory / path.name)
+    require_service_tls(kit)
+
+
 def render_etc(kit: Kit) -> None:
     """Render ``<root>/etc``: the household profile, the overlay, Caddyfile, Valkey config and ACL, and the Qdrant shim.
 
@@ -4441,7 +4498,9 @@ def render_etc(kit: Kit) -> None:
     (etc / "acceptance.env").write_text(sc.render_overlay(kit.overlay()))
     (etc / "Caddyfile").write_text(sc.render_acceptance_caddyfile(kit.root, kit.socket_path, PORTS["caddy"]))
     (etc / "valkey-open-webui.conf").write_text(
-        sc.render_valkey_config(PORTS["valkey"], etc / "valkey-open-webui.acl", kit.path("state", "valkey"))
+        sc.render_valkey_config(PORTS["valkey"], etc / "valkey-open-webui.acl", kit.path("state", "valkey"),
+                                tls_cert=kit.path("tls", "valkey", "cert.pem"),
+                                tls_key=kit.path("tls", "valkey", "key.pem"))
     )
     acl = etc / "valkey-open-webui.acl"
     acl.write_text(sc.render_valkey_acl(sc.valkey_password_hash(valkey_password(kit))))
@@ -4464,7 +4523,7 @@ def mint_credentials(kit: Kit) -> None:
         "webui-secret-key": secrets.token_urlsafe(48),
         "oauth-client-info-encryption-key": secrets.token_urlsafe(48),
         "oauth-session-token-encryption-key": secrets.token_urlsafe(48),
-        "valkey-url": f"redis://{VALKEY_USER}:{valkey}@127.0.0.1:{PORTS['valkey']}/0",
+        "valkey-url": f"rediss://{VALKEY_USER}:{valkey}@127.0.0.1:{PORTS['valkey']}/0",
         "qdrant-runtime-api-key": mint_jwt(qdrant_admin, "prw"),
         QDRANT_ADMIN_CREDENTIAL: qdrant_admin,
         "admin-email": ADMIN_EMAIL,
@@ -4518,6 +4577,7 @@ def cmd_stage(kit: Kit, args: argparse.Namespace) -> int:
         print("credentials: systemd-creds --user is unavailable; using 0400 files (recorded under A-ID2)")
     create_state_directories(kit)
     mint_credentials(kit)
+    provision_service_tls(kit)
     render_etc(kit)
     ledger(kit, "initialize")
     place_whisper(kit)
@@ -4595,6 +4655,7 @@ def cmd_up(kit: Kit, args: argparse.Namespace) -> int:
 def revive_from_anchor(kit: Kit) -> None:
     """Rebuild everything ``teardown --keep-anchor`` removed, before ``up`` restores state."""
 
+    require_service_tls(kit)
     anchor = json.loads((kit.anchor / "anchor.json").read_text())
     restage_trees(kit, anchor["archives"])
     remove_tree(kit.credstore)
@@ -4702,11 +4763,11 @@ def cmd_teardown(kit: Kit, args: argparse.Namespace) -> int:
         if plaintext and (kit.anchor / "credstore").is_dir():
             private_credstore(kit.anchor / "credstore")
             print("teardown: kept the test-only 0400 credential files in backups/anchor/credstore")
-        kept = {MARKER, KIT_STATE, "inputs", "backups", "ledger"}
+        kept = {MARKER, KIT_STATE, "inputs", "backups", "ledger", "tls"}
         for item in kit.root.iterdir():
             if item.name not in kept:
                 remove_tree(item) if item.is_dir() else item.unlink()
-        print("teardown: kept the marker, kit.json, inputs/, backups/, and the session-epoch ledger")
+        print("teardown: kept the marker, kit.json, inputs/, backups/, TLS identities, and the session-epoch ledger")
     else:
         remove_tree(kit.root)
         print("teardown: removed the acceptance root")

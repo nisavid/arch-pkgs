@@ -277,7 +277,7 @@ RAG_GATE = REPO_ROOT / "packages" / "open-webui" / "open-webui-rag-gate.py"
 
 # Keys the acceptance overlay may set, beyond the packaged state-path keys.
 OVERLAY_FIXED_KEYS: frozenset[str] = frozenset(
-    {"QDRANT_URI", "RAG_EXTERNAL_RERANKER_URL"}
+    {"QDRANT_URI", "QDRANT_CA_CERT", "VALKEY_CA_CERT", "RAG_EXTERNAL_RERANKER_URL"}
 )
 PACKAGED_STATE_ROOT = "/var/lib/open-webui"
 
@@ -768,10 +768,13 @@ def valkey_password_hash(password: str) -> str:
     return hashlib.sha256(password.encode()).hexdigest()
 
 
-def render_valkey_config(port: int, acl_file: Path, directory: Path) -> str:
+def render_valkey_config(
+    port: int, acl_file: Path, directory: Path, *, tls_cert: Path, tls_key: Path
+) -> str:
     return render_template(
         "valkey-open-webui.conf.in",
-        {"PORT": str(int(port)), "ACL_FILE": str(acl_file), "DIR": str(directory)},
+        {"PORT": str(int(port)), "ACL_FILE": str(acl_file), "DIR": str(directory),
+         "TLS_CERT": str(tls_cert), "TLS_KEY": str(tls_key)},
     )
 
 
@@ -883,7 +886,9 @@ def acceptance_overlay(
         key: env[key].replace(PACKAGED_STATE_ROOT, state)
         for key in sorted(packaged_state_path_keys(env))
     }
-    overlay["QDRANT_URI"] = f"http://127.0.0.1:{int(qdrant_port)}"
+    overlay["QDRANT_URI"] = f"https://127.0.0.1:{int(qdrant_port)}"
+    overlay["QDRANT_CA_CERT"] = str(root / "tls" / "qdrant" / "cert.pem")
+    overlay["VALKEY_CA_CERT"] = str(root / "tls" / "valkey" / "cert.pem")
     overlay["RAG_EXTERNAL_RERANKER_URL"] = f"http://127.0.0.1:{int(relay_port)}/api/v1/rerank"
     extra = set(overlay) - overlay_allowlist(env)
     if extra:

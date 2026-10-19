@@ -1,0 +1,29 @@
+# With an explicit CA, do not trust ambient/system authorities as well.
+# redis-py 8.0.1, pinned by open-webui-private-requirements.lock.
+# Apply to the installed private dependency, after uv pip install.
+--- a/redis/connection.py
++++ b/redis/connection.py
+@@ -2105,7 +2105,9 @@
+         Returns:
+             An SSL wrapped socket.
+         """
+-        context = ssl.create_default_context()
++        context = ssl.create_default_context(
++            cafile=self.ca_certs, capath=self.ca_path, cadata=self.ca_data
++        )
+         context.check_hostname = self.check_hostname
+         context.verify_mode = self.cert_reqs
+         if self.ssl_include_verify_flags:
+--- a/redis/asyncio/connection.py
++++ b/redis/asyncio/connection.py
+@@ -1145,7 +1145,9 @@
+ 
+     def get(self) -> SSLContext:
+         if not self.context:
+-            context = ssl.create_default_context()
++            context = ssl.create_default_context(
++                cafile=self.ca_certs, capath=self.ca_path, cadata=self.ca_data
++            )
+             context.check_hostname = self.check_hostname
+             context.verify_mode = self.cert_reqs
+             if self.include_verify_flags:

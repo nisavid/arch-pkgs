@@ -8,6 +8,9 @@ import os
 import re
 import shutil
 import sqlite3
+import socket
+import ssl
+import threading
 import sys
 import subprocess
 import tempfile
@@ -46,10 +49,12 @@ v1 = kit_module.v1
 # The gitleaks gate runs a stub by default, so the tests need no gitleaks and
 # stay fast; OWUI_GITLEAKS_STUB_EXIT sets its exit code.
 _gitleaks_stub = tempfile.TemporaryDirectory(prefix="owui-gitleaks-stub-")
+TLS_CERT = Path(_gitleaks_stub.name) / "tls" / "qdrant" / "cert.pem"
 _gitleaks_patch = mock.patch.object(sc, "GITLEAKS", str(Path(_gitleaks_stub.name) / "gitleaks"))
 
 
 def setUpModule():
+    kit_module.provision_service_tls(make_kit(_gitleaks_stub.name))
     path = Path(_gitleaks_stub.name) / "gitleaks"
     path.write_text("#!/bin/sh\ncat >/dev/null\nexit \"${OWUI_GITLEAKS_STUB_EXIT:-0}\"\n")
     path.chmod(0o755)
@@ -294,7 +299,9 @@ class OverlayTests(unittest.TestCase):
                 env = kit.effective_env()
                 overlay = kit.overlay()
                 self.assertLessEqual(set(overlay), sc.overlay_allowlist(env))
-                self.assertEqual(overlay["QDRANT_URI"], "http://127.0.0.1:16333")
+                self.assertEqual(overlay["QDRANT_URI"], "https://127.0.0.1:16333")
+                self.assertEqual(overlay["QDRANT_CA_CERT"], f"{directory}/tls/qdrant/cert.pem")
+                self.assertEqual(overlay["VALKEY_CA_CERT"], f"{directory}/tls/valkey/cert.pem")
                 self.assertEqual(overlay["RAG_EXTERNAL_RERANKER_URL"], "http://127.0.0.1:13306/api/v1/rerank")
                 # The provider connection is the rendered profile's, never the overlay's.
                 for key in ("ENABLE_OLLAMA_API", "ENABLE_OPENAI_API", "OPENAI_API_BASE_URLS", "OPENAI_API_KEYS",
@@ -305,7 +312,7 @@ class OverlayTests(unittest.TestCase):
                 self.assertNotIn("WHISPER_MODEL", overlay)
                 state = str(Path(directory) / "state" / "open-webui")
                 for key, value in overlay.items():
-                    if "/" in value and not value.startswith("http"):
+                    if "/" in value and not value.startswith("http") and not key.endswith("_CA_CERT"):
                         self.assertIn(state, value, key)
                         self.assertNotIn("/var/lib/open-webui", value, key)
 
@@ -542,7 +549,7 @@ class UnitDerivationTests(unittest.TestCase):
             self.assertEqual(set(by_property["WorkingDirectory"]), {kit_module.REWRITTEN})
             self.assertNotIn("Restart", by_property)
 
-    def test_qdrant_unit_keeps_the_packaged_config_and_moves_only_paths_and_ports(self):
+    def test_qdrant_unit_keeps_the_packaged_config_and_enables_server_tls(self):
         with tempfile.TemporaryDirectory() as directory:
             kit = make_kit(directory)
             text, rows = kit_module.qdrant_unit(kit, QDRANT_UNIT.read_text())
@@ -552,6 +559,9 @@ class UnitDerivationTests(unittest.TestCase):
             self.assertTrue(exec_start.endswith(f"--config-path {kit.root}/tree/qdrant/etc/qdrant/config.yaml"))
             self.assertIn(("Environment", "QDRANT__SERVICE__HTTP_PORT=16333"), values)
             self.assertIn(("Environment", "QDRANT__SERVICE__GRPC_PORT=16334"), values)
+            self.assertIn(("Environment", "QDRANT__SERVICE__ENABLE_TLS=true"), values)
+            self.assertIn(("Environment", f"QDRANT__TLS__CERT={kit.root}/tls/qdrant/cert.pem"), values)
+            self.assertIn(("Environment", f"QDRANT__TLS__KEY={kit.root}/tls/qdrant/key.pem"), values)
             self.assertIn(("Environment", f"QDRANT__STORAGE__TEMP_PATH={kit.root}/state/qdrant/tmp"), values)
             self.assertIn(("LoadCredentialEncrypted", f"qdrant-admin-key:{kit.root}/credstore/qdrant-admin-key.cred"), values)
             self.assertNotIn("EnvironmentFile", [key for _, key, _ in lines])
@@ -1040,7 +1050,7 @@ class PreflightTests(unittest.TestCase):
             self.assertEqual(qdrant.create_collections.call_count, 2)
 
     def test_qdrant_creates_only_the_collections_and_indexes_it_does_not_report(self):
-        qdrant = kit_module.Qdrant(16333, "admin")
+        qdrant = kit_module.Qdrant(16333, "admin", cacert=TLS_CERT)
         full, bare = kit_module.COLLECTIONS[0], kit_module.COLLECTIONS[1]
         schema = {index["field_name"]: {} for index in kit_module.PAYLOAD_INDEXES}
 
@@ -1200,6 +1210,8 @@ class PreflightTests(unittest.TestCase):
                 (root / name).mkdir(parents=True, exist_ok=True)
             (root / "backups" / "anchor" / "anchor.json").write_text(json.dumps({"archives": []}))
             (root / "etc" / "Caddyfile").write_text("old")
+            kit_module.provision_service_tls(kit)
+            tls_digest = kit_module.tree_digest(root / "tls")
 
             def fake_tree(_kit, _archives):
                 write_candidate_tree(root)
@@ -1212,13 +1224,14 @@ class PreflightTests(unittest.TestCase):
                 kit_module.cmd_teardown(kit, args)
             self.assertEqual(
                 sorted(item.name for item in root.iterdir()),
-                sorted([kit_module.MARKER, "backups", "inputs", "kit.json", "ledger"]),
+                sorted([kit_module.MARKER, "backups", "inputs", "kit.json", "ledger", "tls"]),
             )
             with mock.patch.object(kit_module, "restage_trees", side_effect=fake_tree), \
                     mock.patch.object(kit_module, "place_whisper"), \
                     mock.patch.object(kit_module, "valkey_password", return_value="valkey-password"):
                 kit_module.revive_from_anchor(kit)
                 units = kit_module.render_units(kit)
+            self.assertEqual(kit_module.tree_digest(root / "tls"), tls_digest)
             referenced = set()
             for text in units.values():
                 referenced.update(re.findall(re.escape(str(root / "etc")) + r"/[\w.-]+", text))
@@ -1246,6 +1259,7 @@ class PreflightTests(unittest.TestCase):
         (root / "credstore").mkdir(mode=0o700)
         kit.store_credential("webui-secret-key", "test-only")
         kit_module.shutil.copytree(root / "credstore", root / "backups" / "anchor" / "credstore")
+        kit_module.provision_service_tls(kit)
         return kit
 
     def teardown(self, kit, *flags):
@@ -2989,7 +3003,7 @@ class QdrantPagingTests(unittest.TestCase):
         self.assertEqual([number for number, section in enumerate(sections, 1) if "0417" in section.split()], [417])
 
     def test_a_tenant_count_is_one_exact_read_only_count_request(self):
-        qdrant = kit_module.Qdrant(16333, "admin-key")
+        qdrant = kit_module.Qdrant(16333, "admin-key", cacert=TLS_CERT)
         requests = []
 
         def request(method, path, *, payload=None, token=None, **_kw):
@@ -3064,7 +3078,7 @@ class QdrantPagingTests(unittest.TestCase):
             raise AssertionError(f"unexpected request {method} {path}")
 
     def check(self, webui, settle_s=0.0, scrolls=None):
-        qdrant = kit_module.Qdrant(16333, "admin-key")
+        qdrant = kit_module.Qdrant(16333, "admin-key", cacert=TLS_CERT)
 
         def count(method, path, *, payload, **_kw):
             tenant = payload["filter"]["must"][0]["match"]["value"]
@@ -3274,7 +3288,7 @@ class HybridErrorTests(unittest.TestCase):
 
         # Qdrant -----------------------------------------------------------------
         def qdrant(self):
-            qdrant = kit_module.Qdrant(16333, "admin-key")
+            qdrant = kit_module.Qdrant(16333, "admin-key", cacert=TLS_CERT)
 
             def request(method, path, *, payload: Any = None, token=None, **_kw):
                 self.qdrant_calls.append((method, path, payload, token))
@@ -4459,6 +4473,109 @@ class EvidenceTests(unittest.TestCase):
             self.assertEqual([step.result for step in trial.steps], [sc.FAIL, sc.FAIL, sc.ESCALATE])
             self.assertEqual(trial.steps[-1].values, {"margin": 0.1})
             self.assertEqual(sc.aggregate_exit_code([step.result for step in trial.steps]), sc.EXIT_ESCALATE)
+
+
+class LocalServiceTLSTests(unittest.TestCase):
+    def test_minted_valkey_credential_requires_tls(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit = make_kit(directory)
+            with mock.patch.object(kit, "store_credential") as store:
+                kit_module.mint_credentials(kit)
+            credentials = dict(call.args for call in store.call_args_list)
+            self.assertTrue(credentials["valkey-url"].startswith("rediss://open-webui:"))
+
+    @contextlib.contextmanager
+    def server(self, service, *, identity="qdrant", plaintext=False):
+        received = []
+        errors = []
+        listener = socket.socket()
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        listener.settimeout(3)
+        port = listener.getsockname()[1]
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        identity_dir = TLS_CERT.parent.parent / identity
+        context.load_cert_chain(identity_dir / "cert.pem", identity_dir / "key.pem")
+
+        def serve():
+            try:
+                raw, _ = listener.accept()
+                with raw:
+                    raw.settimeout(3)
+                    if plaintext:
+                        received.append(raw.recv(8192))
+                        return
+                    try:
+                        connection = context.wrap_socket(raw, server_side=True)
+                    except ssl.SSLError:
+                        return
+                    with connection:
+                        received.append(connection.recv(8192))
+                        if service == "qdrant":
+                            body = b'{"result":"ok"}'
+                            connection.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n"
+                                               + f"Content-Length: {len(body)}\r\n\r\n".encode() + body)
+                        else:
+                            connection.sendall(b"+OK\r\n+PONG\r\n")
+            except Exception as error:
+                errors.append(error)
+
+        worker = threading.Thread(target=serve)
+        worker.start()
+        try:
+            yield port, received
+        finally:
+            worker.join(5)
+            listener.close()
+            self.assertFalse(worker.is_alive(), "test server did not finish")
+            self.assertEqual(errors, [])
+
+    def request(self, service, port):
+        if service == "qdrant":
+            return kit_module.Qdrant(port, "synthetic-admin-key", cacert=TLS_CERT).call("GET", "/collections")
+        return kit_module.valkey_command(port, "open-webui", "synthetic-valkey-password", "PING", cacert=TLS_CERT)
+
+    def test_trusted_service_receives_credential_after_verified_handshake(self):
+        for service, expected, secret in (("qdrant", "ok", b"synthetic-admin-key"),
+                                          ("valkey", "PONG", b"synthetic-valkey-password")):
+            with self.subTest(service=service), self.server(service) as (port, received):
+                self.assertEqual(self.request(service, port), expected)
+            self.assertIn(secret, b"".join(received))
+
+    def test_other_service_identity_cannot_capture_credentials(self):
+        for service in ("qdrant", "valkey"):
+            with self.subTest(service=service), self.server(service, identity="valkey") as (port, received):
+                with self.assertRaises(ssl.SSLCertVerificationError):
+                    self.request(service, port)
+            self.assertEqual(received, [])
+
+    def test_plaintext_port_impostor_only_receives_tls_handshake(self):
+        for service in ("qdrant", "valkey"):
+            with self.subTest(service=service), self.server(service, plaintext=True) as (port, received):
+                with self.assertRaises(ssl.SSLError):
+                    self.request(service, port)
+            self.assertTrue(received)
+            self.assertNotIn(b"synthetic-admin-key", b"".join(received))
+            self.assertNotIn(b"synthetic-valkey-password", b"".join(received))
+            self.assertTrue(received[0].startswith(b"\x16\x03"))
+
+    def test_service_identities_are_private_independent_and_never_rotated(self):
+        with tempfile.TemporaryDirectory() as directory:
+            kit = make_kit(directory)
+            kit_module.provision_service_tls(kit)
+            first = kit_module.tree_digest(kit.path("tls"))
+            self.assertNotEqual(kit.path("tls", "qdrant", "cert.pem").read_bytes(),
+                                kit.path("tls", "valkey", "cert.pem").read_bytes())
+            kit_module.provision_service_tls(kit)
+            self.assertEqual(kit_module.tree_digest(kit.path("tls")), first)
+            key = kit.path("tls", "qdrant", "key.pem")
+            key.chmod(0o644)
+            with self.assertRaises(sc.Blocked):
+                kit_module.provision_service_tls(kit)
+            key.chmod(0o600)
+            key.unlink()
+            with self.assertRaises(sc.Blocked):
+                kit_module.provision_service_tls(kit)
 
 
 if __name__ == "__main__":

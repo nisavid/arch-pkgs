@@ -11,6 +11,12 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 INSPECTOR = REPO_ROOT / "packages" / "open-webui" / "inspect-open-webui-package.py"
+HISTORICAL_INSPECTOR = (
+    REPO_ROOT
+    / "docs/maintainers/evidence/source-snapshots"
+    / "5f21b1cb3870867401721acddeef7e919adfe656"
+    / "packages/open-webui/inspect-open-webui-package.py.txt"
+)
 SITE = "opt/open-webui/lib/python3.14/site-packages"
 CRITICAL_FILES = {
     "etc/open-webui/open-webui.env": (0o600, b"env\n"),
@@ -23,6 +29,7 @@ CRITICAL_FILES = {
         0o755,
         b"#!/usr/bin/python\n",
     ),
+    f"{SITE}/open_webui_service_tls.py": (0o644, b"def configure_environment(): pass\n"),
     f"{SITE}/open_webui/retrieval/rag_gate.py": (0o644, b"class Gate: pass\n"),
     f"{SITE}/open_webui/utils/session_epoch.py": (0o644, b"EPOCH = 1\n"),
     "usr/share/licenses/open-webui/LICENSE": (0o644, b"license\n"),
@@ -58,7 +65,7 @@ def valid_members() -> list[tuple[tarfile.TarInfo, bytes]]:
         b"pkgbase = open-webui\n"
         b"pkgver = 0.11.0-3\n"
         b"arch = x86_64\n"
-        b"size = 158\n"
+        b"size = 192\n"
         b"builddate = 1787172442\n"
     )
     members = [
@@ -114,7 +121,7 @@ class OpenWebUIPackageInspectionTests(unittest.TestCase):
         )
         receipt = json.loads(first.stdout)
         self.assertEqual(
-            receipt["schema"], "arch-pkgs.open-webui.package-inspection.v1"
+            receipt["schema"], "arch-pkgs.open-webui.package-inspection.v2"
         )
         self.assertEqual(receipt["archive"]["sha256"], expected_archive_sha256)
         self.assertEqual(receipt["archive"]["duplicate_path_count"], 0)
@@ -128,7 +135,7 @@ class OpenWebUIPackageInspectionTests(unittest.TestCase):
             {
                 "architecture": "x86_64",
                 "build_timestamp": 1787172442,
-                "installed_size_bytes": 158,
+                "installed_size_bytes": 192,
                 "package_base": "open-webui",
                 "package_name": "open-webui",
                 "package_version": "0.11.0-3",
@@ -162,8 +169,8 @@ class OpenWebUIPackageInspectionTests(unittest.TestCase):
         self.assertTrue(receipt["payload"]["installer_metadata_absent"])
         self.assertEqual(receipt["payload"]["frontend_entry_count"], 1)
         self.assertEqual(receipt["payload"]["directory_count"], 0)
-        self.assertEqual(receipt["payload"]["regular_file_count"], 13)
-        self.assertEqual(receipt["payload"]["regular_file_bytes"], 158)
+        self.assertEqual(receipt["payload"]["regular_file_count"], 14)
+        self.assertEqual(receipt["payload"]["regular_file_bytes"], 192)
         self.assertTrue(receipt["payload"]["installed_size_matches_pkginfo"])
         self.assertEqual(receipt["payload"]["private_distribution_count"], 0)
         self.assertEqual(
@@ -185,6 +192,52 @@ class OpenWebUIPackageInspectionTests(unittest.TestCase):
                 "size_bytes": 4,
             },
         )
+
+    def test_v2_requires_tls_helper_while_archived_v1_reproduces_old_contract(self):
+        self.assertEqual(
+            hashlib.sha256(HISTORICAL_INSPECTOR.read_bytes()).hexdigest(),
+            "a49f63893fd0dd7d07b3215b7175cf86ee3cf815fde016f7fa6e67554e235cc5",
+        )
+        self.assertEqual(
+            hashlib.sha256(
+                HISTORICAL_INSPECTOR.with_name(
+                    "open-webui-system-providers.txt"
+                ).read_bytes()
+            ).hexdigest(),
+            "fdf91cf245d0f5050229b5ea8ef4067c997f79f012e06a16b18e740981b395a3",
+        )
+        tls_helper = f"{SITE}/open_webui_service_tls.py"
+        old_size = 192 - len(CRITICAL_FILES[tls_helper][1])
+        members = [
+            file_info(
+                info.name,
+                body.replace(b"size = 192\n", f"size = {old_size}\n".encode()),
+            )
+            if info.name == ".PKGINFO"
+            else (info, body)
+            for info, body in valid_members()
+            if info.name != tls_helper
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Path(directory) / "historical-open-webui.pkg.tar"
+            write_archive(archive, members)
+            historical = subprocess.run(
+                [sys.executable, str(HISTORICAL_INSPECTOR), str(archive)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            current = run_inspector(archive)
+
+        self.assertEqual(historical.returncode, 0, historical.stderr)
+        receipt = json.loads(historical.stdout)
+        self.assertEqual(
+            receipt["schema"], "arch-pkgs.open-webui.package-inspection.v1"
+        )
+        self.assertNotIn(tls_helper, receipt["critical_files"])
+        self.assertNotEqual(current.returncode, 0)
+        self.assertIn(tls_helper, current.stderr)
+        self.assertEqual(current.stdout, "")
 
     def test_manifest_identity_is_independent_of_archive_member_order(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -354,7 +407,7 @@ class OpenWebUIPackageInspectionTests(unittest.TestCase):
     def test_metadata_identity_and_installed_size_mismatches_fail_closed(self):
         cases = {
             "identity": (0, b"pkgver = 0.11.0-4", "package identities differ"),
-            "installed size": (1, b"size = 159", "regular-file bytes differ"),
+            "installed size": (1, b"size = 193", "regular-file bytes differ"),
         }
         for label, (member_index, replacement, error_fragment) in cases.items():
             with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
@@ -364,7 +417,7 @@ class OpenWebUIPackageInspectionTests(unittest.TestCase):
                 if label == "identity":
                     changed = body.replace(b"pkgver = 0.11.0-3", replacement)
                 else:
-                    changed = body.replace(b"size = 158", replacement)
+                    changed = body.replace(b"size = 192", replacement)
                 members[member_index] = file_info(info.name, changed, info.mode)
                 write_archive(archive, members)
 
@@ -404,7 +457,7 @@ class OpenWebUIPackageInspectionTests(unittest.TestCase):
                     b"pkgbase = open-webui\n"
                     b"pkgver = 0.11.0-3\n"
                     b"arch = x86_64\n"
-                    + f"size = {158 + len(dist_metadata) + len(nearby_wheel)}\n".encode()
+                    + f"size = {192 + len(dist_metadata) + len(nearby_wheel)}\n".encode()
                     + b"builddate = 1787172442\n"
                 ),
             )

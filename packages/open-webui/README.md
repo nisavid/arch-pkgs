@@ -178,6 +178,64 @@ declared by `open-webui.service`. The service receives no Qdrant administrative
 credential. Manual delivery is not part of ordinary startup; operator handling
 is limited to initial provisioning, deliberate rotation, or restore.
 
+## Service Peer Authentication
+
+The 0.11.4-3 candidate requires authenticated TLS to both local dependencies.
+Loopback address restrictions alone do not authenticate the listener: another
+local user can bind a vacant service port during a restart. The wrapper validates
+the transport configuration before importing the application, and each new
+connection completes certificate and IP-address verification before transmitting
+the Qdrant API key or Valkey ACL password, including after reconnects.
+
+| Setting | Required configuration |
+| --- | --- |
+| `QDRANT_URI` | `https://127.0.0.1:6333` |
+| `QDRANT_CA_CERT` | `/etc/qdrant/tls/cert.pem` |
+| `VALKEY_CA_CERT` | `/etc/valkey/tls/cert.pem` |
+| `valkey-url` credential | `rediss://open-webui:<password>@127.0.0.1:6379/0` |
+
+Provision separate server certificates and private keys using the
+[Qdrant cutover](../../docs/maintainers/qdrant-production-cutover.md) and
+[household install procedure](../../docs/maintainers/open-webui-household-production-install.md).
+Both certificates must have an IP subjectAltName for `127.0.0.1`. The public
+certificate files and their parent directories must be root-owned and not
+writable by either service; the private keys are readable only by the server
+that owns them. A missing or malformed trust file, plaintext endpoint, hostname
+other than `127.0.0.1`, or unsafe Redis URL query prevents startup. This candidate
+does not support Qdrant gRPC, Redis cluster or Sentinel modes, or arbitrary
+`WEBSOCKET_REDIS_OPTIONS`; leave those disabled or unset.
+
+`0009-authenticate-service-peers.patch` covers both Qdrant client constructors
+with explicit HTTPS, a CA-specific verifying SSL context, disabled environment
+proxies, and disabled redirects. The independent `open_webui_service_tls` module
+normalizes the credential-derived Redis URL with `ssl_cert_reqs=required`,
+`ssl_check_hostname=true`, and `ssl_ca_certs`, then provides the same URL to the
+sync and async Redis clients, Socket.IO, and the starsessions store. `0010-isolate-explicit-redis-trust.patch` makes the pinned redis-py 8.0.1
+sync and async clients load only the explicitly configured CA rather than adding
+it to ambient or system trust. Their upstream behavior remains unchanged when
+no explicit CA is supplied. The literal loopback IP and required IP SAN remain
+part of this package's transport policy; this is certificate-chain verification,
+not certificate fingerprint pinning.
+
+For an existing installation, stop Open WebUI, provision the TLS identities and
+server configuration, and replace the encrypted `valkey-url` credential with its
+`rediss` form. If either service previously accepted plaintext connections,
+rotate its API key or ACL password as well. Merge the new TLS defaults from
+`/etc/open-webui/open-webui.env.pacnew` if pacman leaves that file, and remove any
+plaintext overrides from the household profile. Only after those changes:
+
+```sh
+sudo systemctl restart qdrant.service valkey.service
+sudo systemctl restart open-webui.service
+```
+
+`tests/test_open_webui_service_tls.py` exercises the pinned real clients against
+disposable TLS listeners: legitimate authentication succeeds, whereas plaintext,
+untrusted, wrong-IP, and replacement listeners receive no synthetic credential.
+These tests do not replace a clean Arch build, payload inspection, or the
+integrated household acceptance trial. The older 0.11.4-2 artifact and its
+candidate-set binding do not validate this TLS candidate.
+
 ## zembed Prefixes
 
 zembed expects each input wrapped as a short chat transcript whose system turn
@@ -549,6 +607,8 @@ points per request.
     configuration stay runtime state.
   - Page Qdrant scroll reads under the packaged strict-mode query limit
     ([Qdrant Scroll Paging](#qdrant-scroll-paging)).
+  - Authenticate the local Qdrant and Valkey peers with verified TLS before
+    sending service credentials ([Service Peer Authentication](#service-peer-authentication)).
   - Keep the model provider and household choices out of the packaged
     defaults: the unit reads an optional host-owned profile after them, and
     the package ships only its documented example
@@ -564,6 +624,25 @@ points per request.
     G0-G4 Open WebUI contract passes against the exact package/provider tuple.
 
 ## Package Verification
+
+### Source review and candidate acceptance
+
+The [source-verification workflow](../../.github/workflows/open-webui-package.yml)
+runs Arch's `makepkg --verifysource` as an unprivileged user and compares
+`makepkg --printsrcinfo` with the committed metadata. It retains the source
+commit, package tree, toolchain inventory, recipe digests, and verification
+logs. Together with the repository consistency gate and code review, these
+checks validate a source correction; they do not build or accept a package.
+
+The TLS candidate remains deferred and publication-ineligible. Before calling
+the package update complete, the candidate-build work under
+[#88](https://github.com/nisavid/arch-pkgs/issues/88) must build the reviewed
+package tree, inspect the actual payload, pass the provider-boundary verifier
+against genuine system-provider metadata, and bind the resulting archive.
+The exact candidate then needs the integrated TLS-enabled restore/rollback
+trial under [#89](https://github.com/nisavid/arch-pkgs/issues/89) and promotion
+under [#90](https://github.com/nisavid/arch-pkgs/issues/90). Merging a deferred
+source correction does not advance those package or deployment gates.
 
 ### Private Python closure
 
@@ -656,15 +735,25 @@ For 0.11.0, these inputs removed the dependency-network blocker. The
 subsequent no-egress 0.11.0 pkgrel-3 build and payload-inspection gate passed
 and is recorded in
 [`docs/maintainers/open-webui-offline-package-build-2026-08-19.md`](../../docs/maintainers/open-webui-offline-package-build-2026-08-19.md).
-Reproduce the compact, whole-archive inspection receipt from a retained package
-with:
+Reproduce that v1 whole-archive inspection receipt from the exact retained
+`0.11.0-3` package with the archived verifier. From this package directory, verify
+the verifier and its original provider manifest before read-only inspection:
 
 ```bash
-python inspect-open-webui-package.py \
-  open-webui-0.11.0-3-x86_64.pkg.tar.zst \
-  -o open-webui-0.11.0-3-package-inspection.json
-cmp open-webui-0.11.0-3-package-inspection.json \
-  ../../docs/maintainers/evidence/open-webui-offline-package-inspection-2026-08-19.json
+(
+  set -eu
+  historical_inspector=../../docs/maintainers/evidence/source-snapshots/5f21b1cb3870867401721acddeef7e919adfe656/packages/open-webui/inspect-open-webui-package.py.txt
+  printf '%s  %s\n' \
+    a49f63893fd0dd7d07b3215b7175cf86ee3cf815fde016f7fa6e67554e235cc5 \
+    "$historical_inspector" \
+    fdf91cf245d0f5050229b5ea8ef4067c997f79f012e06a16b18e740981b395a3 \
+    "${historical_inspector%/*}/open-webui-system-providers.txt" | sha256sum --check -
+  python "$historical_inspector" \
+    open-webui-0.11.0-3-x86_64.pkg.tar.zst \
+    -o open-webui-0.11.0-3-package-inspection.json
+  cmp open-webui-0.11.0-3-package-inspection.json \
+    ../../docs/maintainers/evidence/open-webui-offline-package-inspection-2026-08-19.json
+)
 ```
 
 The receipt binds every archive member by path, type, mode, ownership, size,
@@ -675,9 +764,14 @@ and package-build residue.
 Python is used for this helper because the contract depends on structured tar
 metadata and canonical JSON; it never extracts or executes package payloads.
 
-The published v1 receipt binds the inspector's exact SHA-256. Keep those
-verifier bytes immutable; a changed receipt contract must use a new schema and
-versioned helper rather than rewriting this historical checkpoint.
+The published v1 receipt binds the archived inspector's exact SHA-256. Keep
+those verifier bytes immutable at their versioned snapshot path. The maintained
+`inspect-open-webui-package.py` now emits
+`arch-pkgs.open-webui.package-inspection.v2`: it additionally requires
+`open_webui_service_tls.py` in the private Python site-packages directory. Use
+that maintained v2 inspector for the `0.11.4-3` candidate. A changed receipt
+contract requires a new schema; retain any previously bound helper at an
+immutable versioned path instead of rewriting its historical checkpoint.
 
 That checkpoint does not make the package accepted: the
 integrated provider, restore, and rollback evidence of the one integrated trial

@@ -1,0 +1,14 @@
+[Unit]
+Description=Check %i loopback TLS certificate expiry
+
+[Service]
+Type=oneshot
+DynamicUser=yes
+ExecStart=/usr/bin/python3 /usr/local/libexec/check-local-service-tls --certificate /etc/%i/tls/cert.pem --warn-days 30
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+RestrictAddressFamilies=AF_UNIX
+SyslogIdentifier=local-service-tls-expiry-%i

@@ -414,22 +414,35 @@ class TemplateTests(unittest.TestCase):
         self.assertIn("reverse_proxy unix//run/open-webui/open-webui.sock", text)
 
     def test_template_tokens_must_match_exactly(self):
-        with self.assertRaises(ValueError):
+        values = {
+            "PORT": "16379",
+            "ACL_FILE": "/a",
+            "DIR": "/d",
+            "TLS_CERT": "/tls/cert.pem",
+            "TLS_KEY": "/tls/key.pem",
+        }
+        with self.assertRaisesRegex(ValueError, r"missing \['DIR', 'TLS_CERT', 'TLS_KEY'\], unexpected \[\]$"):
             scenarios.render_template("valkey-open-webui.conf.in", {"PORT": "16379", "ACL_FILE": "/a"})
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, r"missing \[\], unexpected \['EXTRA'\]$"):
             scenarios.render_template(
-                "valkey-open-webui.conf.in", {"PORT": "1", "ACL_FILE": "/a", "DIR": "/d", "EXTRA": "x"}
+                "valkey-open-webui.conf.in", values | {"EXTRA": "x"}
             )
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, r"ACL_FILE must be a single line$"):
             scenarios.render_template(
-                "valkey-open-webui.conf.in", {"PORT": "1", "ACL_FILE": "/a\nappendonly yes", "DIR": "/d"}
+                "valkey-open-webui.conf.in", values | {"ACL_FILE": "/a\nappendonly yes"}
             )
 
     def test_valkey_is_rdb_only_and_the_acl_holds_only_a_hash(self):
-        conf = scenarios.render_valkey_config(16379, Path("/r/etc/valkey.acl"), Path("/r/state/valkey"))
+        conf = scenarios.render_valkey_config(
+            16379, Path("/r/etc/valkey.acl"), Path("/r/state/valkey"),
+            tls_cert=Path("/r/tls/valkey/cert.pem"), tls_key=Path("/r/tls/valkey/key.pem"),
+        )
         self.assertIn("appendonly no", conf)
         self.assertNotIn("appendonly yes", conf)
-        self.assertIn("bind 127.0.0.1\nport 16379\nprotected-mode yes", conf)
+        self.assertIn("bind 127.0.0.1\nport 0\ntls-port 16379", conf)
+        self.assertIn("tls-auth-clients no", conf)
+        self.assertIn("tls-cert-file /r/tls/valkey/cert.pem", conf)
+        self.assertIn("tls-key-file /r/tls/valkey/key.pem", conf)
         self.assertIn("aclfile /r/etc/valkey.acl", conf)
         self.assertIn("dbfilename dump.rdb", conf)
         self.assertIn("maxmemory-policy noeviction", conf)
@@ -481,7 +494,7 @@ class OverlayTests(unittest.TestCase):
         )
         self.assertFalse(any("/var/lib/open-webui" in value for value in overlay.values()))
         self.assertEqual(overlay["DATABASE_URL"], f"sqlite:///{root}/state/open-webui/data/webui.db")
-        self.assertEqual(overlay["QDRANT_URI"], "http://127.0.0.1:16333")
+        self.assertEqual(overlay["QDRANT_URI"], "https://127.0.0.1:16333")
         self.assertEqual(overlay["RAG_EXTERNAL_RERANKER_URL"], "http://127.0.0.1:13306/api/v1/rerank")
         self.assertNotIn("RAG_OPENAI_API_BASE_URL", overlay)
         rendered = scenarios.render_overlay(overlay)

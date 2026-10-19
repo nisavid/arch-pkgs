@@ -1,0 +1,81 @@
+name: Open WebUI Package Sources
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/open-webui-package.yml"
+      - "packages/open-webui/**"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/open-webui-package.yml"
+      - "packages/open-webui/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sources:
+    name: Open WebUI source verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: archlinux:base-devel
+    steps:
+      - name: Install source-verification tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4; do
+            if pacman -Syyu --noconfirm git; then
+              break
+            fi
+            if [[ "${attempt}" == 4 ]]; then
+              exit 1
+            fi
+            sleep "$((attempt * 15))"
+          done
+
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      - name: Prepare unprivileged verification
+        shell: bash
+        run: |
+          set -euo pipefail
+          useradd --create-home --shell /bin/bash sourcecheck
+          chown -R sourcecheck:sourcecheck "${GITHUB_WORKSPACE}"
+          install -d -o sourcecheck -g sourcecheck \
+            "${RUNNER_TEMP}/open-webui-source-evidence"
+
+      - name: Verify immutable sources and generated metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          runuser -u sourcecheck -- env HOME=/home/sourcecheck \
+            bash -euo pipefail -c '
+              cd "$1"
+              git rev-parse HEAD >"$2/source-commit.txt"
+              git rev-parse HEAD:packages/open-webui >"$2/package-tree.txt"
+              pacman -Q >"$2/toolchain.txt"
+              sha256sum PKGBUILD .SRCINFO >"$2/recipe-sha256.txt"
+              makepkg --printsrcinfo >"$2/generated.SRCINFO"
+              diff -u .SRCINFO "$2/generated.SRCINFO" 2>&1 \
+                | tee "$2/srcinfo-comparison.log"
+              makepkg --verifysource --noconfirm 2>&1 \
+                | tee "$2/source-verification.log"
+            ' bash "${GITHUB_WORKSPACE}/packages/open-webui" \
+            "${RUNNER_TEMP}/open-webui-source-evidence"
+
+      - name: Retain source-verification evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: open-webui-source-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/open-webui-source-evidence/
+          if-no-files-found: warn
+          retention-days: 14
