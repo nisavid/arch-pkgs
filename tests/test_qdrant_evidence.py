@@ -12,6 +12,18 @@ from unittest import mock
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 EVIDENCE_ROOT = REPO_ROOT / "docs" / "maintainers" / "evidence" / "qdrant-1.19.1-1"
+# These two files have evolved since the immutable acceptance checkpoint. Keep
+# its exact source bindings, including this test's former bytes, reconstructible
+# without treating historical evidence as acceptance of their replacements.
+SOURCE_SNAPSHOT_ROOT = (
+    EVIDENCE_ROOT.parent
+    / "source-snapshots"
+    / "5f21b1cb3870867401721acddeef7e919adfe656"
+)
+HISTORICAL_FROZEN_FILES = {
+    "tools/qdrant_production_cutover.zsh",
+    "tests/test_qdrant_evidence.py",
+}
 RECORD_FILES = {
     "g0_g1": "g0-g1.json",
     "g2_browser": "g2-browser.json",
@@ -365,7 +377,14 @@ class QdrantEvidenceContractTests(unittest.TestCase):
             "frozen_files"
         ].items():
             with self.subTest(source=relative_path):
-                path = REPO_ROOT / relative_path
+                if relative_path in HISTORICAL_FROZEN_FILES:
+                    path = SOURCE_SNAPSHOT_ROOT / f"{relative_path}.txt"
+                    self.assertEqual(path.stat().st_mode & 0o111, 0)
+                    self.assertNotEqual(
+                        sha256(REPO_ROOT / relative_path), contract["sha256"]
+                    )
+                else:
+                    path = REPO_ROOT / relative_path
                 self.assertFalse(path.is_symlink())
                 self.assertTrue(path.is_file())
                 self.assertEqual(path.stat().st_size, contract["size"])
