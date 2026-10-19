@@ -502,7 +502,7 @@ separately approves removal, keep:
 
 ## G2 Harness
 
-The committed harness in
+The original revision of the committed harness in
 [`tools/qdrant_g2_harness/`](../../tools/qdrant_g2_harness/) produced the
 accepted 1.19.1 G2 records. The G2 section of the frozen
 [`qdrant-migration-acceptance.md`](qdrant-migration-acceptance.md) runbook
@@ -524,14 +524,53 @@ exercises the secret refusals and the exact packaged unit, then runs
 `unit_api_checks.py` from the container's network namespace. That script
 covers REST, JWT, CORS, dashboard and strict-mode checks, plus gRPC through the
 `grpc_stubs/` generated from the pinned 1.19.1 protos. `run-browser.zsh`
-extracts both payloads and runs `browser-namespace.sh` inside a loopback-only
+validates both archives and runs `browser-namespace.sh` inside a loopback-only
 Bubblewrap namespace. There, `browser_seed.py` seeds the fixture and mints the
 scoped JWT, and `browser_acceptance.py` drives the dashboard with the host's
 Chrome and Playwright.
 
-`g2-unit.json` and `g2-browser.json` bind these scripts' SHA-256 digests, and
-`tests/test_qdrant_g2_harness.py` pins the committed bytes to those values.
-Any change to the harness needs a fresh G2 run and new records. The public
+The browser launcher now rejects archive paths outside the two package layouts,
+duplicate paths, links, sparse files, and special files before starting the
+namespace. It copies only regular runtime payload files into private staging,
+without restoring archive ownership, permissions, or extended attributes.
+The host `/usr` remains read-only and is never overlaid with candidate files.
+The checked server binary, SBOM, and static UI are mounted at `/g2-payload`;
+only the server's `QDRANT__SERVICE__STATIC_CONTENT_DIR` is overridden to use
+that location. The packaged configuration bytes and browser-facing URLs remain
+unchanged. Non-runtime package files and metadata are validated but not mounted.
+The archive store and invoking host remain trusted; this is not isolation from
+arbitrary behavior of the independently approved Qdrant executable.
+
+Host-generated payload, static-tree, runtime-tool, and harness digest records
+live directly under `out/`, outside the namespace's writable `out/raw/` mount.
+After the namespace exits, the host compares its payload, static-tree, and
+runtime-tool digests with the namespace's records. Static-tree records retain
+the installed-path labels used by G0/G1. These checks establish input/runtime
+identity; the browser's semantic acceptance still needs the normal G2 review.
+
+`g2-unit.json` and `g2-browser.json` bind the original scripts' SHA-256 digests.
+The three changed browser scripts are retained as non-executable text fixtures
+under `tests/fixtures/qdrant-g2-accepted/`; `tests/test_qdrant_g2_harness.py`
+continues to check those historical bytes and the unchanged scripts against
+the original records. Those records do **not** attest to the revised browser
+harness. Any change to the harness needs a fresh G2 run and new records. The
+[2026-10-19 revalidation record](evidence/qdrant-g2-runtime-isolation/g2-revalidation.json)
+binds the revised browser scripts and fresh browser and exact-unit results.
+It records Chrome 155.0.8059.84, Playwright 1.64.0, payload and trusted-runtime
+digest comparisons, worker/WASM execution, authentication, policy, restart,
+and cleanup checks. The browser route uses the relocated static root; the
+unchanged exact-unit route validates the packaged `/usr/share/qdrant/web-ui`
+root with the same static-tree digest. Original G0–G3 acceptance records are
+unchanged.
+
+Review the raw semantic results, not only the launcher's exit status. The
+first browser attempt returned zero but its fixture insert hit the configured
+disk quota (HTTP 507), so its graph result failed and it was rejected. A fresh
+run on storage below the quota passed; both attempts are digest-bound in the
+new record. The unit container retained base-image resolver sockets after
+Qdrant stopped, but Qdrant's listeners were gone and the container and its
+network namespace were removed. Historical fixtures and passing consistency
+tests alone do not fulfill the fresh-run requirement. The public
 records were written from each run's raw output by an evidence writer that is
 not part of this harness and that the records do not bind.
 

@@ -1,7 +1,7 @@
 #!/usr/bin/bash
 # Inner G2 browser run: executes inside the loopback-only Bubblewrap namespace
-# that run-browser.zsh creates. /usr is the host /usr overlaid with the exact
-# qdrant and qdrant-web-ui payloads; /etc/qdrant/config.yaml is the packaged
+# that run-browser.zsh creates. /usr is the trusted read-only host runtime;
+# validated candidate files live at /g2-payload. /etc/qdrant/config.yaml is the packaged
 # configuration; /var/lib/qdrant is a fresh empty state root.
 set -euo pipefail
 export LC_ALL=C
@@ -30,7 +30,7 @@ readlink /proc/self/ns/net >"$out/net-namespace"
   printf 'superuser_home_absent=%s\n' "$([[ ! -e /root ]] && echo true || echo false)"
   printf 'host_qdrant_config_entries=%s\n' "$(ls -A /etc/qdrant | tr '\n' ' ')"
   printf 'host_qdrant_state_initial_entries=%s\n' "$(find /var/lib/qdrant -mindepth 1 -not -type d | wc -l)"
-  printf 'interfaces=%s\n' "$(ip -o link show | awk -F': ' '{print $2}' | tr '\n' ' ')"
+  printf 'interfaces=%s\n' "$(ip -o link show | cut -d: -f2 | tr -d ' ' | tr '\n' ' ')"
   python3 - <<'PY'
 import errno, socket
 for family, address in ((socket.AF_INET, ("192.0.2.1", 80)), (socket.AF_INET6, ("2001:db8::1", 80))):
@@ -52,10 +52,15 @@ grep -qx 'host_qdrant_config_entries=config.yaml ' "$out/isolation.txt" || fail 
 grep -qx 'interfaces=lo ' "$out/isolation.txt" || fail 'a non-loopback interface is present'
 if grep -q '=connected$' "$out/isolation.txt"; then fail 'non-loopback egress connected'; fi
 
-sha256sum /usr/bin/qdrant /etc/qdrant/config.yaml /usr/share/qdrant/qdrant.spdx.json \
-  /usr/share/qdrant/web-ui/cloud/data.json >"$out/payload-inputs.sha256"
-(cd / && find usr/share/qdrant/web-ui -type f -print0 | LC_ALL=C sort -z | xargs -0 sha256sum) \
-  >"$out/web-ui-tree.txt"
+sha256sum /usr/bin/bash /usr/bin/python3 /usr/bin/sha256sum >"$out/trusted-runtime.sha256"
+# Use installed-path labels so payload identities remain comparable to G0/G1.
+/usr/bin/python3 -I -c '
+import sys
+from pathlib import Path
+sys.path.insert(0, "/g2")
+from browser_payload import write_manifests
+write_manifests(Path("/g2-payload"), Path("/g2-out/raw"))
+'
 
 cd /var/lib/qdrant
 (
@@ -63,7 +68,9 @@ cd /var/lib/qdrant
   # shellcheck disable=SC1091
   . /g2-private/secret.env
   set +a
-  exec /usr/bin/qdrant --config-path /etc/qdrant/config.yaml
+  # Relocate static files only; the packaged configuration bytes are unchanged.
+  export QDRANT__SERVICE__STATIC_CONTENT_DIR=/g2-payload/web-ui
+  exec /g2-payload/qdrant --config-path /etc/qdrant/config.yaml
 ) >"$out/qdrant.log" 2>&1 &
 qdrant_pid=$!
 

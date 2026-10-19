@@ -1,0 +1,399 @@
+{
+  "schema": "qdrant-g2-harness-revalidation/v1",
+  "disposition": "accepted",
+  "failedChecks": [],
+  "dateUtc": "2026-10-19",
+  "browserSourceCommit": "38f05b54d077af648e2932f8a293d669ea0a3aee",
+  "unitSourceCommit": "bf7ceb8580d2825277f32bc02c75c2f0be54008f",
+  "scope": "Fresh browser and exact packaged-unit checks for the revised browser runtime boundary; original G0-G3 records remain unchanged.",
+  "harnessSha256": {
+    "run-browser.zsh": "c886c24b7dc76021ff2c2d16dbcc290b1f8f2f3bd1de92e78a94380d6c9db06e",
+    "browser-namespace.sh": "dcc4d8f96b0344e314be41cead1256ab82bc7fc28cf697de7160c84331d9abfb",
+    "browser_acceptance.py": "80e5696ea5d71d5725f634d1a7c0e0ddf5efb4ffe883ab8896185c7449358962",
+    "browser_seed.py": "4c97515846505ae603fe54c33a75a4e2162e26fc6404dcbcc9b3446535923c41",
+    "browser_payload.py": "1aa26a6c4f545bdc06ff81c4378e5cf11812c88b2b4b32d5ba14b0e91053396a",
+    "run-unit.zsh": "e2ff782cf4f2c1e39eb7c2b827bd3f9e13db03cbee66124ff72b30a8aedd6d06",
+    "unit_api_checks.py": "04b7007588799e590658e0cc7204be1d0fb7f64e6b325d192380d363310f88af"
+  },
+  "artifacts": {
+    "qdrant-1.19.1-1-x86_64.pkg.tar.zst": {
+      "size": 28289048,
+      "sha256": "56208d6725771df687563b9d12e3c963b39c63120b1412f2335411f32c21ed85"
+    },
+    "qdrant-web-ui-0.2.18-1-any.pkg.tar.zst": {
+      "size": 5728430,
+      "sha256": "962d2b7659fb66bd2eb3b2f425ef90a91cbe7701a66c31b4fd622caeb0e0f283"
+    }
+  },
+  "browser": {
+    "startedAtUtc": "2026-10-19T10:56:16Z",
+    "finishedAtUtc": "2026-10-19T10:56:29Z",
+    "result": {
+      "allAuthorizedRequestsUseScopedJwt": true,
+      "authorizedRequestCount": 11,
+      "browserVersion": "155.0.8059.84",
+      "chromeBinarySha256": "cb19b59995072b86cc7f887b3b1c7ab1f63518a7f2ed9f0d33249e1a040e2c76",
+      "chromeLauncherSha256": "aea09d69ce7f24d5901f6bfb15dd44d0c856e793e0a498f8d8393ec7d2c308ec",
+      "cloudMetadata": {
+        "requestObserved": true,
+        "requestPath": "/dashboard/cloud/data.json",
+        "status": 200,
+        "value": null
+      },
+      "consoleErrors": [],
+      "cspExact": true,
+      "document": {
+        "contentSecurityPolicy": "default-src 'self'; base-uri 'none'; connect-src 'self'; font-src 'self' data:; form-action 'self'; frame-ancestors 'none'; img-src 'self' data: blob:; object-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:",
+        "contentTypeOptions": "nosniff",
+        "frameOptions": "DENY",
+        "referrerPolicy": "no-referrer",
+        "status": 200
+      },
+      "graph": {
+        "done": true,
+        "ids": 6,
+        "positions": 6
+      },
+      "graphWorker": true,
+      "monacoEditorWorker": true,
+      "monacoJsonWorker": true,
+      "pageErrors": [],
+      "playwrightPythonVersion": "1.64.0",
+      "requestCount": 26,
+      "siteDataCleared": true,
+      "unexpectedNetworkRequests": [],
+      "workers": {
+        "/dashboard/assets/editor.worker-CDU2Z2yo.js": true,
+        "/dashboard/assets/json.worker-v3Gy2e2h.js": true,
+        "/dashboard/assets/worker-CPuAR5vK.js": true
+      }
+    },
+    "seed": {
+      "collection_created": 200,
+      "credential": {
+        "access": [
+          {
+            "collection": "browser-fixture",
+            "role": "prw"
+          }
+        ],
+        "adminSecret": false,
+        "kind": "JWT",
+        "lifetimeSeconds": 300,
+        "subject": "qdrant-disposable-browser-acceptance"
+      },
+      "point_count": 6,
+      "points_upserted": 200,
+      "server_version": "1.19.1"
+    },
+    "isolation": {
+      "home_root_absent": "true",
+      "superuser_home_absent": "true",
+      "host_qdrant_config_entries": "config.yaml ",
+      "host_qdrant_state_initial_entries": "0",
+      "interfaces": "lo ",
+      "egress_AF_INET": "ENETUNREACH",
+      "egress_AF_INET6": "ENETUNREACH"
+    },
+    "cleanupInside": {
+      "qdrant_stopped": "true",
+      "credential_files_removed": "true"
+    },
+    "cleanupOutside": {
+      "namespace_exit_status": "0",
+      "namespace_processes_remaining": "0",
+      "secret_host_copy_present": "no"
+    },
+    "payloadInputsSha256": {
+      "/usr/bin/qdrant": "70099d4d48aa749f8ced02a89f34ac1e308268a580e8125e5be0caac5611ad35",
+      "/etc/qdrant/config.yaml": "800fd7130542e5d61bc869962e6d7d59de2bccad261811d54e9b6745ffc991f4",
+      "/usr/share/qdrant/qdrant.spdx.json": "a206672364d44bbf05cfc2d293c5f98db05c1f9de3f3dce8526f0810750bcfc4",
+      "/usr/share/qdrant/web-ui/cloud/data.json": "38e0b9de817f645c4bec37c0d4a3e58baecccb040f5718dc069a72c7385a0bed"
+    },
+    "trustedRuntimeSha256": {
+      "/usr/bin/bash": "c157074818b094c84aaf31b8c80a1e149f234bb1c8c84a25e9a53e96afa30a29",
+      "/usr/bin/python3": "9c368faaaac4ef32cddee1888d68b599588c6cee92f241f07bda9127359f7fda",
+      "/usr/bin/sha256sum": "5c78ae72784a5b5ec2a7cde9c95defc7b1ae4c07bd81a0abd9daeec57563f0e6"
+    },
+    "hostAndNamespaceManifestsMatch": true,
+    "webUiTreeSha256": "42e603291267e1892486cb6fe2121cb8b88e5557b429c5a89ac04104191dbb1f",
+    "runtimeView": "Host /usr read-only; candidate runtime payload under /g2-payload; only raw output and fresh state writable.",
+    "staticRoot": "/g2-payload/web-ui",
+    "evidenceSha256": {
+      "harness.sha256": "de06e2ef7dba4f231266d2227352c47ce49a7fef5b028cfa79cf611e33cd9cbd",
+      "payload-inputs.sha256": "bb96d2917baafb4de972d0d0b9cea76cade3d3e698257e31984d1fa4acfa2d44",
+      "raw/browser-acceptance.json": "08403c1a2c989425efa015881bd8dd4fdb40f60154027e7219d70999f44ca738",
+      "raw/cleanup-inside.txt": "1c61233716f5ba32e9e330ef162e1dec278db5feb9f61e0106acd000dc68ede8",
+      "raw/cleanup-outside.txt": "24f500405c4b6b3c86776253f0ca09108136498eb95ebf3454f7131f0da0ee83",
+      "raw/isolation.txt": "e9a683d4eed2b7a018bbf7a94a9337cbe059663c25adfe12c3c87d6161dd1ba4",
+      "raw/listeners-after-stop.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "raw/listeners-running.txt": "fd0cba01977ee01099449f35e2bd2184594ef3485aa77da41463c5b06d80f161",
+      "raw/namespace.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "raw/net-namespace": "207ca5d3e0392352423e154c455160f1a192233990f198a953098f8f67c1c9f1",
+      "raw/payload-inputs.sha256": "bb96d2917baafb4de972d0d0b9cea76cade3d3e698257e31984d1fa4acfa2d44",
+      "raw/pid-namespace": "7688b64f145202cc8bea7acbd03cc34c0a6cc2f09c76bcc0bc8853562e7b04b1",
+      "raw/qdrant.log": "adbc55658231aef2487a33efbc3b7611c6f051bdb25931457f202619071929f2",
+      "raw/seed.json": "ae8fb48b83d88cf7aa9bd66f9cd1cf83a631ce743ce523a8ca188c5408be45a5",
+      "raw/trusted-runtime.sha256": "c2f111f5b62a1baf5866a798d8f3bf012ed7d2627147b8741920dd236ff02763",
+      "raw/web-ui-tree.txt": "42e603291267e1892486cb6fe2121cb8b88e5557b429c5a89ac04104191dbb1f",
+      "trusted-runtime.sha256": "c2f111f5b62a1baf5866a798d8f3bf012ed7d2627147b8741920dd236ff02763",
+      "web-ui-tree.txt": "42e603291267e1892486cb6fe2121cb8b88e5557b429c5a89ac04104191dbb1f"
+    }
+  },
+  "unit": {
+    "startedAtUtc": "2026-10-19T10:54:24Z",
+    "finishedAtUtc": "2026-10-19T10:56:52Z",
+    "apiPreRestart": {
+      "admin": {
+        "collections_status": 200,
+        "quotas_result": {
+          "config": {
+            "enabled": true,
+            "max_disk_usage_percent": 85,
+            "max_resident_memory_percent": 80,
+            "release_margin_percent": 10
+          },
+          "usage": {
+            "disk_usage_percent": 0,
+            "resident_memory_percent": 4
+          }
+        },
+        "quotas_status": 200
+      },
+      "collection_quota": {
+        "create_statuses": [
+          200
+        ],
+        "created_ok": 64,
+        "listed": 64,
+        "sixty_fifth_error": "Bad request: Can't create collection with name limit-65. Max collections limit reached: 64",
+        "sixty_fifth_status": 400
+      },
+      "cors": {
+        "allow_origin_absent": true,
+        "authenticated_preflight_status": 404,
+        "unauthenticated_preflight_status": 401
+      },
+      "dashboard": {
+        "cloud_data_status": 200,
+        "cloud_data_value": null,
+        "content_security_policy": "default-src 'self'; base-uri 'none'; connect-src 'self'; font-src 'self' data:; form-action 'self'; frame-ancestors 'none'; img-src 'self' data: blob:; object-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:",
+        "content_type_options": "nosniff",
+        "frame_options": "DENY",
+        "referrer_policy": "no-referrer",
+        "status": 200
+      },
+      "fixture_seed_status": 200,
+      "grpc": {
+        "prw_read": {
+          "code": "OK",
+          "ids": [
+            1,
+            900
+          ]
+        },
+        "prw_write": {
+          "code": "OK"
+        },
+        "r_read": {
+          "code": "OK",
+          "ids": [
+            1,
+            900
+          ]
+        },
+        "r_write": {
+          "code": "PERMISSION_DENIED"
+        },
+        "unauthenticated_read": {
+          "code": "UNAUTHENTICATED"
+        }
+      },
+      "jwt_rest": {
+        "prw_management": {
+          "alias": 403,
+          "collectionCreate": 403,
+          "collectionDelete": 403,
+          "configuration": 403,
+          "quotas": 403,
+          "snapshot": 403
+        },
+        "prw_read": 200,
+        "prw_read_ids": [
+          1,
+          101
+        ],
+        "prw_write": 200,
+        "r_management": {
+          "alias": 403,
+          "collectionCreate": 403,
+          "collectionDelete": 403,
+          "configuration": 403,
+          "quotas": 403,
+          "snapshot": 403
+        },
+        "r_read": 200,
+        "r_write": 403,
+        "rw_snapshot_create": 200,
+        "rw_snapshot_removed_by_admin": true
+      },
+      "public_root": {
+        "body": {
+          "title": "qdrant - vector search engine",
+          "version": "1.19.1"
+        },
+        "exact": true,
+        "status": 200
+      },
+      "strict_mode": {
+        "query_limit_1000": 200,
+        "query_limit_1001": 400,
+        "timeout_120": 200,
+        "timeout_121": 400
+      },
+      "unauthenticated": {
+        "collections": 401,
+        "quotas": 401
+      },
+      "url_snapshot_recovery": {
+        "error": "Forbidden: Snapshot recovery from remote URLs is disabled in the configuration",
+        "status": 403
+      }
+    },
+    "apiPostRestart": {
+      "collections_listed": 64,
+      "grpc_point_preserved": true,
+      "public_root_version": "1.19.1",
+      "rest_points_preserved": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        101
+      ]
+    },
+    "secretRefusals": {
+      "missing": {
+        "result": "resources",
+        "qdrantProcesses": 0
+      },
+      "empty": {
+        "result": "exit-code",
+        "qdrantProcesses": 0
+      },
+      "malformed": {
+        "result": "exit-code",
+        "qdrantProcesses": 0
+      },
+      "wrong-mode": {
+        "result": "exit-code",
+        "qdrantProcesses": 0
+      }
+    },
+    "effectiveUnitProperties": {
+      "User": "qdrant",
+      "Group": "qdrant",
+      "UMask": "0027",
+      "PrivateTmp": "yes",
+      "PrivateDevices": "yes",
+      "ProtectSystem": "strict",
+      "ProtectHome": "yes",
+      "NoNewPrivileges": "yes",
+      "RestrictNamespaces": "yes",
+      "ProtectProc": "invisible",
+      "ProcSubset": "pid",
+      "MemoryHigh": "3435970560",
+      "MemoryMax": "3865468928",
+      "TasksMax": "2048",
+      "IPAddressDeny": "::/0 0.0.0.0/0",
+      "IPAddressAllow": "::1/128 127.0.0.0/8"
+    },
+    "qdrantListeners": {
+      "listeners-before-restart.txt": [
+        "127.0.0.1:6333",
+        "127.0.0.1:6334"
+      ],
+      "listeners-after-restart.txt": [
+        "127.0.0.1:6333",
+        "127.0.0.1:6334"
+      ]
+    },
+    "cleanupInside": {
+      "qdrant_processes": "0",
+      "listeners": "10",
+      "secret_file_present": "no",
+      "secret_in_state": "0"
+    },
+    "cleanupOutside": {
+      "container_exists": "no",
+      "secret_host_copy_present": "no"
+    },
+    "otherContainerListeners": "Ten base-image systemd resolver sockets remained after Qdrant stopped, inside the loopback-only network namespace; container removal destroyed that namespace.",
+    "packagedStaticRoot": "/usr/share/qdrant/web-ui",
+    "installedSha256": {
+      "/usr/bin/qdrant": "70099d4d48aa749f8ced02a89f34ac1e308268a580e8125e5be0caac5611ad35",
+      "/usr/share/qdrant/qdrant.spdx.json": "a206672364d44bbf05cfc2d293c5f98db05c1f9de3f3dce8526f0810750bcfc4",
+      "/etc/qdrant/config.yaml": "800fd7130542e5d61bc869962e6d7d59de2bccad261811d54e9b6745ffc991f4",
+      "/usr/lib/systemd/system/qdrant.service": "610312cbba4efffa1d5422ab75154605000d4a4d177f77437ca00e2926ef4114",
+      "/usr/lib/qdrant/qdrant-secret-preflight": "6a364ce0a745c6f02d38f3c39fc71e91fd31a2f33e63442cfa64b251fab545cd",
+      "/usr/share/qdrant/web-ui/cloud/data.json": "38e0b9de817f645c4bec37c0d4a3e58baecccb040f5718dc069a72c7385a0bed"
+    },
+    "webUiTreeSha256": "42e603291267e1892486cb6fe2121cb8b88e5557b429c5a89ac04104191dbb1f",
+    "evidenceSha256": {
+      "api-post-restart.json": "6d39123f6b3ebdc08380391822923b2d269cfe81ab275ff0c247cef79fa59277",
+      "api-pre-restart.json": "99e191308e18af8a56ca15cca63a95cdf80c9fd9a3cd6f5c2caa0066c0bd25d9",
+      "cgroup-final.txt": "18abcbfd7b849ab12e64f1328022d61c1810755c90cbc198d7197f7d5df9859e",
+      "cgroup-limits.txt": "a9d5c9878410491df9ef3268ec1df51858bb174e19c74d910c8f8bc01f9349a8",
+      "cleanup-inside.txt": "12641d4098a31d47935a65d81d7b9d69d5a7a14fbb9c17ca8a40b5279038dbfb",
+      "cleanup-outside.txt": "c990f257e43f0038452a4e11db3c2adc7d2a2abd82e3e1c90f0b9f1553315b6f",
+      "container-id": "694d485952fa5c07986d7e079fabd08313a157ab97ae23a361be38b69bbb117c",
+      "container-initial.txt": "08a8a9fcd578564179dbce3725f1ee36d073d6b38e91843213e648f4f453ede0",
+      "container-inspect.json": "0a3d5021029c4cb81625f8041334a3f6cd1f0c3fd54334d7e4f87fe090017771",
+      "installed-sha256.txt": "1ee0cb9bb6fd4c051b2f6dc10370db56cb5ce2eb213fa37fd1f16e7a9d24c75d",
+      "installed-stat.txt": "8f9031ec7bf6c988ecff934bcd9b2f237cdce40908754fcd9cdc60d33dce8373",
+      "interfaces.txt": "06e3f3d2f0f3a5073d3110fb1313a3128ad0f53d3c46c4b02314128eef91f267",
+      "listeners-after-restart.txt": "ea898c995fae679477cb85be0bbf89fe557aa989da3c215e3eabf88260e313ea",
+      "listeners-after-stop.txt": "d69957e7440ebc2fc50e22ff0395f1ecf927fb5ee909979cc38e4729897b6a09",
+      "listeners-before-restart.txt": "87016bcb7431c5ae923b678569d5c1b0fd38674c2e9958d68ade139134d13bb6",
+      "network-online.txt": "56595e3e4e4190fa944d6800f7d5edf5035fda485065e9a4c90866b086e97c13",
+      "pacman-info-qdrant.txt": "874d122bf188d4aed32343f47a18ae240cebaab6efd004ba45eb73eae844b1c7",
+      "pacman-info-web-ui.txt": "dcf880c4869578f7d685de21d35bb67d879d62d3a59b5e2a1a53c311c2939ee8",
+      "pacman-install.txt": "f0d7ba3ab6e3887e02f336add1039b8b0f38be478b9fbc64c0ce7f084bf898c6",
+      "pacman-integrity.txt": "f86c6b6f6bf2450487b285a27d5d7fe74d445bda842fac28e7e508bdc7243995",
+      "pacman-query.txt": "64ce4e9b57b2310b6da3f9266dd0e156f19b140f507f219beb537ad1e7732224",
+      "podman.txt": "2a8826b2fb4a460158321a20026dfae9060ef4d4f0a9160998db0e890b521e27",
+      "process-status-after-restart.txt": "474e34edd382a0edc32a58416ac15018d9fe37e239c213177100d29ac99bfc8f",
+      "process-status.txt": "c75072649907f203666d2447573fb7917cd099559f65ccd1a659e66f2b8a0b53",
+      "secret-empty.txt": "5562a3da25884aa262a77e20797e6bfda058e749c8427dca6f6b323ded5c2188",
+      "secret-malformed.txt": "e7f3e549c86d5c1a2606e9e4502745bc4da0482cbe72840c7df4e8e855d93f58",
+      "secret-missing.txt": "3a688b44b4b72ecff983b38235de0cdeb2e27bd97ffb6554aff092d1cc3ad5c4",
+      "secret-valid-metadata.txt": "28dafb0ae792843a2f3ba09650fe8a3b0343934086977782fad5b597e2f2213d",
+      "secret-wrong-mode.txt": "4a9006ace305cfe06402535b94a9bac13fdde82ffcf556c6114f6c5fcf32f821",
+      "service-identity.txt": "510d68f1645478bb2b1cce20e588ef312a6c286caad0205e901631af795bd139",
+      "service-mount-namespace.txt": "54ac54bf992bab36ad267a07c9147ae22fb7da9211ecb3bb3c0148eb906eda9e",
+      "state-after-restart.txt": "634d83ae87588e4f5d906ea833066ce3f45fd30b87c37d2c31f62a5849b22ff2",
+      "system-state.txt": "82f1cdbbbaa58b02b4ffca44a308881f40aeec2eb4a0e853596cd62fed714b34",
+      "systemd-properties.txt": "5e1ed62cf15647e2f837cd48fe42a6072d28db6f1f916656b87d8eb673858f86",
+      "systemd-security.txt": "ab03808aee68aecb247a017368dbab77b92a4dd5a8f285275dee0fa10ec5e9f0",
+      "unix-listeners.txt": "9412ec4172f71f9b9042ee5a8411dab2a1987ef1055825e770f90bd5d463344e",
+      "web-ui-tree.txt": "42e603291267e1892486cb6fe2121cb8b88e5557b429c5a89ac04104191dbb1f"
+    }
+  },
+  "discardedAttempt": {
+    "reason": "First browser run used a filesystem above the configured 85% disk-usage ceiling. Fixture upsert returned 507 and graph execution failed, so exit status zero was not accepted as semantic success.",
+    "seedSha256": "fcf730e326e5afaf179765ca389d513a9ff5d226ea8f76372c58690deb2e45aa",
+    "browserResultSha256": "312b5b3ecfe0400d223a967a16b1fa66becbb0463a1defd176575fa3d1fc5af9"
+  },
+  "limitations": [
+    "Raw harness outputs require semantic review; process exit zero alone is insufficient.",
+    "The browser route deliberately relocates static files; the unchanged exact-unit route validates the packaged static root.",
+    "Host runtime, archive store, and independently approved Qdrant executable remain trusted."
+  ],
+  "privacy": {
+    "machineLocalPathsOmitted": true,
+    "credentialMaterialOmitted": true,
+    "rawEvidenceRetainedSeparately": true
+  }
+}
