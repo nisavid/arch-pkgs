@@ -1,22 +1,31 @@
 # Historical source snapshots
 
 These non-executable text files retain the exact source bytes bound by existing
-evidence after their maintained counterparts changed. They are evidence only;
-do not execute, import, install, or copy them back into the active source tree.
-In particular, the former cutover helper uses unauthenticated loopback HTTP.
+evidence after their maintained counterparts changed. Do not install them or
+copy them back into the active source tree. Never execute the former cutover
+helper: it uses unauthenticated loopback HTTP. The sole execution exception is
+the archived Open WebUI v1 inspector, after verifying its bound SHA-256, for
+read-only reproduction of a historical receipt as documented in
+[Package Verification](../../../../packages/open-webui/README.md#package-verification).
+It reads the supplied archive without extracting or executing its payload and
+writes only the requested receipt. It must not validate a current candidate.
 
 The files were recovered without modification from repository commit
 `5f21b1cb3870867401721acddeef7e919adfe656`, the parent of the authenticated
 service transport change. That is their recovery source, not a new acceptance
-commit. Their SHA-256 values match the original, unchanged evidence records.
+commit. The source SHA-256 values and supporting provider list match the
+bindings in the original, unchanged evidence records.
 The snapshot paths retain the original repository-relative paths below that
-commit directory and append `.txt`; their mode is `0644`.
+commit directory. Executable source names append `.txt`; the inspector's
+supporting text manifest retains its name for relative lookup. Every file has
+mode `0644`.
 
 | Original path | Size, bytes | SHA-256 | Existing binding |
 | --- | ---: | --- | --- |
 | `tools/qdrant_production_cutover.zsh` | 41797 | `78ab3ca88ec7e9936b6bb01d04c580fa249199659444f7eb326d206090ff564d` | [`qdrant-1.19.1-1/acceptance.json`](../qdrant-1.19.1-1/acceptance.json), `repository_source.frozen_files` |
 | `tests/test_qdrant_evidence.py` | 33331 | `e206280899859b8459028ad4714cd5725eaff9d215f94c822c927f0615b87a86` | The same frozen-file set; the historical test itself was source-bound |
 | `packages/open-webui/inspect-open-webui-package.py` | 27592 | `a49f63893fd0dd7d07b3215b7175cf86ee3cf815fde016f7fa6e67554e235cc5` | [`open-webui-offline-package-build-2026-08-19.json`](../open-webui-offline-package-build-2026-08-19.json), `inspection_receipt.verifier_sha256` |
+| `packages/open-webui/open-webui-system-providers.txt` | 230 | `fdf91cf245d0f5050229b5ea8ef4067c997f79f012e06a16b18e740981b395a3` | The inspector's relative input; its exact 21-name list matches the original inspection receipt's `payload.server_provider_boundary.providers_absent` |
 
 Reconstruct any one snapshot from a clone containing the recovery commit with
 `git show 5f21b1cb3870867401721acddeef7e919adfe656:<original-path>` and compare

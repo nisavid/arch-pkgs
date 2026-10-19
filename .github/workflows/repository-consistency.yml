@@ -114,3 +114,13 @@ jobs:
           /home/tls-tests/venv/bin/python -m unittest \
             tests.test_open_webui_service_tls tests.test_qdrant_cutover_tls -v
           EOF
+
+      - name: Exercise protected TLS identity lifecycle
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(id -u)" -eq 0
+          command -v openssl
+          # This module uses disposable directories only. Root is required to
+          # exercise ownership checks; it does not operate on host services.
+          python3 -m unittest tests.test_local_service_tls_lifecycle -v

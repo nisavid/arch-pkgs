@@ -15,7 +15,7 @@ import tempfile
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO
 
-SCHEMA = "arch-pkgs.open-webui.package-inspection.v1"
+SCHEMA = "arch-pkgs.open-webui.package-inspection.v2"
 GENERIC_BUILD_PATHS = {"/build", "/tmp", "/var/tmp"}
 PYODIDE_PREFIX = "open_webui/frontend/pyodide/"
 CRITICAL_FILES = (

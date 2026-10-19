@@ -735,15 +735,25 @@ For 0.11.0, these inputs removed the dependency-network blocker. The
 subsequent no-egress 0.11.0 pkgrel-3 build and payload-inspection gate passed
 and is recorded in
 [`docs/maintainers/open-webui-offline-package-build-2026-08-19.md`](../../docs/maintainers/open-webui-offline-package-build-2026-08-19.md).
-Reproduce the compact, whole-archive inspection receipt from a retained package
-with:
+Reproduce that v1 whole-archive inspection receipt from the exact retained
+`0.11.0-3` package with the archived verifier. From this package directory, verify
+the verifier and its original provider manifest before read-only inspection:
 
 ```bash
-python inspect-open-webui-package.py \
-  open-webui-0.11.0-3-x86_64.pkg.tar.zst \
-  -o open-webui-0.11.0-3-package-inspection.json
-cmp open-webui-0.11.0-3-package-inspection.json \
-  ../../docs/maintainers/evidence/open-webui-offline-package-inspection-2026-08-19.json
+(
+  set -eu
+  historical_inspector=../../docs/maintainers/evidence/source-snapshots/5f21b1cb3870867401721acddeef7e919adfe656/packages/open-webui/inspect-open-webui-package.py.txt
+  printf '%s  %s\n' \
+    a49f63893fd0dd7d07b3215b7175cf86ee3cf815fde016f7fa6e67554e235cc5 \
+    "$historical_inspector" \
+    fdf91cf245d0f5050229b5ea8ef4067c997f79f012e06a16b18e740981b395a3 \
+    "${historical_inspector%/*}/open-webui-system-providers.txt" | sha256sum --check -
+  python "$historical_inspector" \
+    open-webui-0.11.0-3-x86_64.pkg.tar.zst \
+    -o open-webui-0.11.0-3-package-inspection.json
+  cmp open-webui-0.11.0-3-package-inspection.json \
+    ../../docs/maintainers/evidence/open-webui-offline-package-inspection-2026-08-19.json
+)
 ```
 
 The receipt binds every archive member by path, type, mode, ownership, size,
@@ -754,9 +764,14 @@ and package-build residue.
 Python is used for this helper because the contract depends on structured tar
 metadata and canonical JSON; it never extracts or executes package payloads.
 
-The published v1 receipt binds the inspector's exact SHA-256. Keep those
-verifier bytes immutable; a changed receipt contract must use a new schema and
-versioned helper rather than rewriting this historical checkpoint.
+The published v1 receipt binds the archived inspector's exact SHA-256. Keep
+those verifier bytes immutable at their versioned snapshot path. The maintained
+`inspect-open-webui-package.py` now emits
+`arch-pkgs.open-webui.package-inspection.v2`: it additionally requires
+`open_webui_service_tls.py` in the private Python site-packages directory. Use
+that maintained v2 inspector for the `0.11.4-3` candidate. A changed receipt
+contract requires a new schema; retain any previously bound helper at an
+immutable versioned path instead of rewriting its historical checkpoint.
 
 That checkpoint does not make the package accepted: the
 integrated provider, restore, and rollback evidence of the one integrated trial

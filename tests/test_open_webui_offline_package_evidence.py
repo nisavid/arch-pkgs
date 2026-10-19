@@ -279,6 +279,12 @@ class OpenWebUIOfflinePackageEvidenceTests(unittest.TestCase):
         )
         self.assertEqual(
             inspected["server_private_distributions_absent"],
+            HISTORICAL_INSPECTION_TOOL.with_name("open-webui-system-providers.txt")
+            .read_text(encoding="utf-8")
+            .splitlines(),
+        )
+        self.assertEqual(
+            inspected["server_private_distributions_absent"],
             (PACKAGE_DIR / "open-webui-system-providers.txt")
             .read_text(encoding="utf-8")
             .splitlines(),

@@ -11,6 +11,12 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 INSPECTOR = REPO_ROOT / "packages" / "open-webui" / "inspect-open-webui-package.py"
+HISTORICAL_INSPECTOR = (
+    REPO_ROOT
+    / "docs/maintainers/evidence/source-snapshots"
+    / "5f21b1cb3870867401721acddeef7e919adfe656"
+    / "packages/open-webui/inspect-open-webui-package.py.txt"
+)
 SITE = "opt/open-webui/lib/python3.14/site-packages"
 CRITICAL_FILES = {
     "etc/open-webui/open-webui.env": (0o600, b"env\n"),
@@ -115,7 +121,7 @@ class OpenWebUIPackageInspectionTests(unittest.TestCase):
         )
         receipt = json.loads(first.stdout)
         self.assertEqual(
-            receipt["schema"], "arch-pkgs.open-webui.package-inspection.v1"
+            receipt["schema"], "arch-pkgs.open-webui.package-inspection.v2"
         )
         self.assertEqual(receipt["archive"]["sha256"], expected_archive_sha256)
         self.assertEqual(receipt["archive"]["duplicate_path_count"], 0)
@@ -186,6 +192,52 @@ class OpenWebUIPackageInspectionTests(unittest.TestCase):
                 "size_bytes": 4,
             },
         )
+
+    def test_v2_requires_tls_helper_while_archived_v1_reproduces_old_contract(self):
+        self.assertEqual(
+            hashlib.sha256(HISTORICAL_INSPECTOR.read_bytes()).hexdigest(),
+            "a49f63893fd0dd7d07b3215b7175cf86ee3cf815fde016f7fa6e67554e235cc5",
+        )
+        self.assertEqual(
+            hashlib.sha256(
+                HISTORICAL_INSPECTOR.with_name(
+                    "open-webui-system-providers.txt"
+                ).read_bytes()
+            ).hexdigest(),
+            "fdf91cf245d0f5050229b5ea8ef4067c997f79f012e06a16b18e740981b395a3",
+        )
+        tls_helper = f"{SITE}/open_webui_service_tls.py"
+        old_size = 192 - len(CRITICAL_FILES[tls_helper][1])
+        members = [
+            file_info(
+                info.name,
+                body.replace(b"size = 192\n", f"size = {old_size}\n".encode()),
+            )
+            if info.name == ".PKGINFO"
+            else (info, body)
+            for info, body in valid_members()
+            if info.name != tls_helper
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Path(directory) / "historical-open-webui.pkg.tar"
+            write_archive(archive, members)
+            historical = subprocess.run(
+                [sys.executable, str(HISTORICAL_INSPECTOR), str(archive)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            current = run_inspector(archive)
+
+        self.assertEqual(historical.returncode, 0, historical.stderr)
+        receipt = json.loads(historical.stdout)
+        self.assertEqual(
+            receipt["schema"], "arch-pkgs.open-webui.package-inspection.v1"
+        )
+        self.assertNotIn(tls_helper, receipt["critical_files"])
+        self.assertNotEqual(current.returncode, 0)
+        self.assertIn(tls_helper, current.stderr)
+        self.assertEqual(current.stdout, "")
 
     def test_manifest_identity_is_independent_of_archive_member_order(self):
         with tempfile.TemporaryDirectory() as directory:

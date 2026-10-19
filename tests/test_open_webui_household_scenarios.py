@@ -414,15 +414,22 @@ class TemplateTests(unittest.TestCase):
         self.assertIn("reverse_proxy unix//run/open-webui/open-webui.sock", text)
 
     def test_template_tokens_must_match_exactly(self):
-        with self.assertRaises(ValueError):
+        values = {
+            "PORT": "16379",
+            "ACL_FILE": "/a",
+            "DIR": "/d",
+            "TLS_CERT": "/tls/cert.pem",
+            "TLS_KEY": "/tls/key.pem",
+        }
+        with self.assertRaisesRegex(ValueError, r"missing \['DIR', 'TLS_CERT', 'TLS_KEY'\], unexpected \[\]$"):
             scenarios.render_template("valkey-open-webui.conf.in", {"PORT": "16379", "ACL_FILE": "/a"})
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, r"missing \[\], unexpected \['EXTRA'\]$"):
             scenarios.render_template(
-                "valkey-open-webui.conf.in", {"PORT": "1", "ACL_FILE": "/a", "DIR": "/d", "EXTRA": "x"}
+                "valkey-open-webui.conf.in", values | {"EXTRA": "x"}
             )
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(ValueError, r"ACL_FILE must be a single line$"):
             scenarios.render_template(
-                "valkey-open-webui.conf.in", {"PORT": "1", "ACL_FILE": "/a\nappendonly yes", "DIR": "/d"}
+                "valkey-open-webui.conf.in", values | {"ACL_FILE": "/a\nappendonly yes"}
             )
 
     def test_valkey_is_rdb_only_and_the_acl_holds_only_a_hash(self):
