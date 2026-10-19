@@ -5,12 +5,15 @@ Usage: browser_payload.py <qdrant-archive> <web-ui-archive> <payload> <out>
 The caller supplies fresh, private staging and host-only evidence directories.
 """
 
+import bz2
+import gzip
 import hashlib
+import lzma
 import shutil
 import subprocess
 import sys
 import tarfile
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from pathlib import Path, PurePosixPath
 
 
@@ -57,8 +60,15 @@ def open_archive(path: Path):
                     if process.poll() is None:
                         process.terminate()
         else:
-            with tarfile.open(fileobj=source, mode="r|*") as archive:
-                yield archive
+            opener = (gzip.open if magic.startswith(b"\x1f\x8b") else
+                      bz2.open if magic.startswith(b"BZh") else
+                      lzma.open if magic == b"\xfd7zX" else None)
+            with (opener(source, "rb") if opener else nullcontext(source)) as decoded:
+                with tarfile.open(fileobj=decoded, mode="r|") as archive:
+                    yield archive
+                # Tar iteration stops at its end marker, before a compressed
+                # stream necessarily checks its trailer. Validate the remainder.
+                shutil.copyfileobj(decoded, _Discard())
 
 
 class _Discard:
@@ -166,7 +176,7 @@ def main() -> int:
         stage_archive(qpkg, "qdrant", payload)
         stage_archive(wpkg, "web-ui", payload)
         write_manifests(payload, out)
-    except (OSError, ValueError, tarfile.TarError) as error:
+    except (EOFError, OSError, ValueError, lzma.LZMAError, tarfile.TarError) as error:
         print(f"browser payload: {error}", file=sys.stderr)
         return 1
     return 0

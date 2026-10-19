@@ -2,6 +2,7 @@ import hashlib
 import importlib.util
 import io
 import json
+import lzma
 import os
 import shutil
 import subprocess
@@ -140,6 +141,34 @@ class BrowserPayloadTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "missing web-ui payload"):
             self.stage([file_entry(PAYLOAD.WEB_LICENSE)])
 
+    def test_gzip_footer_damage_is_rejected(self):
+        write_archive(self.archive, package_entries("web-ui"), "w:gz")
+        compressed = self.archive.read_bytes()
+        corrupt_crc = compressed[:-8] + bytes([compressed[-8] ^ 0xff]) + compressed[-7:]
+        for label, damaged in (("missing footer", compressed[:-8]),
+                               ("bad checksum", corrupt_crc)):
+            with self.subTest(damage=label):
+                shutil.rmtree(self.payload)
+                self.payload.mkdir()
+                self.archive.write_bytes(damaged)
+                with self.assertRaises((EOFError, OSError, ValueError, tarfile.TarError)):
+                    PAYLOAD.stage_archive(self.archive, "web-ui", self.payload)
+
+    def test_other_compressed_packages_require_complete_streams(self):
+        for mode in ("w:bz2", "w:xz"):
+            with self.subTest(mode=mode):
+                shutil.rmtree(self.payload)
+                self.payload.mkdir()
+                write_archive(self.archive, package_entries("web-ui"), mode)
+                compressed = self.archive.read_bytes()
+                PAYLOAD.stage_archive(self.archive, "web-ui", self.payload)
+                self.assertTrue((self.payload / "web-ui/index.html").is_file())
+                shutil.rmtree(self.payload)
+                self.payload.mkdir()
+                self.archive.write_bytes(compressed[:-8])
+                with self.assertRaises((EOFError, OSError, lzma.LZMAError, tarfile.TarError)):
+                    PAYLOAD.stage_archive(self.archive, "web-ui", self.payload)
+
     @unittest.skipUnless(shutil.which("zstd"), "zstd is required")
     def test_zstd_packages_and_corrupt_frames(self):
         write_archive(self.archive, package_entries("web-ui"))
@@ -229,6 +258,19 @@ if os.environ.get("CORRUPT_EVIDENCE"):
                 result = self.launch(corrupt=name)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("do not match host evidence", result.stderr)
+                self.assertFalse((self.root / "run/private/secret.env").exists())
+                shutil.rmtree(self.root / "run")
+
+    def test_damaged_compression_is_rejected_before_namespace_entry(self):
+        for mode in ("w:gz", "w:bz2", "w:xz"):
+            with self.subTest(mode=mode):
+                write_archive(self.wpkg, package_entries("web-ui"), mode)
+                self.wpkg.write_bytes(self.wpkg.read_bytes()[:-8])
+                result = self.launch()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("browser payload:", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertFalse(self.record.exists())
                 self.assertFalse((self.root / "run/private/secret.env").exists())
                 shutil.rmtree(self.root / "run")
 
