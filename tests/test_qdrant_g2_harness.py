@@ -6,6 +6,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 EVIDENCE_ROOT = REPO_ROOT / "docs" / "maintainers" / "evidence" / "qdrant-1.19.1-1"
 HARNESS_ROOT = REPO_ROOT / "tools" / "qdrant_g2_harness"
+HISTORICAL_ROOT = REPO_ROOT / "tests" / "fixtures" / "qdrant-g2-accepted"
+REVISED_BROWSER_SCRIPTS = {"run-browser.zsh", "browser-namespace.sh", "browser_acceptance.py"}
 
 
 def sha256(path: Path) -> str:
@@ -17,7 +19,7 @@ def load(name: str) -> dict:
 
 
 class QdrantG2HarnessTests(unittest.TestCase):
-    """The committed G2 harness is the exact one the accepted G2 records bind."""
+    """Accepted records still bind retained bytes, not a later harness revision."""
 
     def test_committed_scripts_match_the_recorded_digests(self):
         browser = load("g2-browser.json")["harness"]
@@ -37,11 +39,17 @@ class QdrantG2HarnessTests(unittest.TestCase):
                 for path in HARNESS_ROOT.iterdir()
                 if path.name != "__pycache__"
             },
-            {*recorded, "grpc_stubs"},
+            {*recorded, "grpc_stubs", "browser_payload.py"},
         )
         for name, digest in recorded.items():
             with self.subTest(script=name):
-                self.assertEqual(sha256(HARNESS_ROOT / name), digest)
+                path = (HISTORICAL_ROOT / (name + ".txt")
+                        if name in REVISED_BROWSER_SCRIPTS else HARNESS_ROOT / name)
+                self.assertEqual(sha256(path), digest)
+        self.assertEqual(
+            {path.name for path in HISTORICAL_ROOT.iterdir()},
+            {name + ".txt" for name in REVISED_BROWSER_SCRIPTS},
+        )
 
     def test_committed_grpc_stubs_match_the_recorded_listing_digest(self):
         # The unit record binds the stubs as the SHA-256 of their sorted

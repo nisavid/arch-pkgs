@@ -63,7 +63,7 @@ def sha256_file(path: Path) -> str:
 
 
 def asset(pattern: str) -> str:
-    matches = sorted(Path("/usr/share/qdrant/web-ui/assets").glob(pattern))
+    matches = sorted(Path("/g2-payload/web-ui/assets").glob(pattern))
     if len(matches) != 1:
         raise SystemExit(f"expected exactly one packaged asset for {pattern}")
     return f"/dashboard/assets/{matches[0].name}"
