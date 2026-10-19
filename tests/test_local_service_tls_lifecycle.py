@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import shutil
 import ssl
+import stat
 import subprocess
 import tempfile
 import unittest
@@ -86,10 +87,11 @@ class AtomicExchangeTests(unittest.TestCase):
 @unittest.skipUnless(os.geteuid() == 0 and shutil.which("openssl"), "root-owned identity verification requires root")
 class ProtectedRotationTests(unittest.TestCase):
     def setUp(self):
-        # /tmp is deliberately rejected by the production root-ownership rule.
-        self.temporary = tempfile.TemporaryDirectory(prefix="tls-lifecycle-", dir="/root")
+        # /tmp is writable by others, while /root blocks consumer traversal.
+        self.temporary = tempfile.TemporaryDirectory(prefix="tls-lifecycle-", dir="/run")
         self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
+        self.root.chmod(0o755)
         self.live, self.staged = self.root / "tls", self.root / "tls-next"
 
     def old_identity(self, *, expired=False):
@@ -109,6 +111,9 @@ class ProtectedRotationTests(unittest.TestCase):
         provisioning.rotate(self.live, self.staged, "root")
         self.assertEqual((self.live / "cert.pem").read_bytes(), new)
         self.assertEqual((self.staged / "cert.pem").read_bytes(), old)
+        self.assertEqual(stat.S_IMODE(self.live.stat().st_mode), 0o755)
+        self.assertEqual(stat.S_IMODE((self.live / "cert.pem").stat().st_mode), 0o644)
+        self.assertEqual(stat.S_IMODE((self.live / "key.pem").stat().st_mode), 0o640)
         # Normal renewal cannot install a pair with less than 30 days left.
         with self.assertRaises(subprocess.CalledProcessError):
             provisioning.rotate(self.live, self.staged, "root")
@@ -148,6 +153,35 @@ class ProtectedRotationTests(unittest.TestCase):
         (self.staged / "cert.pem").write_bytes(old)
         with self.assertRaises(ssl.SSLError):
             provisioning.rotate(self.live, self.staged, "root")
+        self.assertEqual((self.live / "cert.pem").read_bytes(), old)
+
+    def test_inaccessible_staging_or_parent_never_changes_live_identity(self):
+        provisioning.provision(self.live, "root")
+        provisioning.provision(self.staged, "root")
+        old = (self.live / "cert.pem").read_bytes()
+        replacement = (self.staged / "cert.pem").read_bytes()
+        for path in (self.staged, self.root):
+            with self.subTest(path=path.name):
+                path.chmod(0o700)
+                try:
+                    with self.assertRaisesRegex(ValueError, "traversable"):
+                        provisioning.rotate(self.live, self.staged, "root")
+                    self.assertEqual((self.live / "cert.pem").read_bytes(), old)
+                    self.assertEqual((self.staged / "cert.pem").read_bytes(), replacement)
+                finally:
+                    path.chmod(0o755)
+
+    def test_provisioning_refuses_existing_inaccessible_directory(self):
+        self.live.mkdir(mode=0o700)
+        with self.assertRaisesRegex(ValueError, "traversable"):
+            provisioning.provision(self.live, "root")
+        self.assertEqual(list(self.live.iterdir()), [])
+        self.live.chmod(0o755)
+        provisioning.provision(self.live, "root")
+        old = (self.live / "cert.pem").read_bytes()
+        self.live.chmod(0o700)
+        with self.assertRaisesRegex(ValueError, "traversable"):
+            provisioning.provision(self.live, "root")
         self.assertEqual((self.live / "cert.pem").read_bytes(), old)
 
 

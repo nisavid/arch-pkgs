@@ -378,17 +378,31 @@ starting it, so a rerun always loads the ACL file it just wrote.
   `ss -ltnH 'sport = :6379'` shows only `127.0.0.1`; `valkey-cli --tls --cacert /etc/valkey/tls/cert.pem -p 6379 ping`
   is refused for the disabled default user.
 
-Enable the Valkey expiry warning after the Qdrant route has installed the
-shared checker and systemd templates:
+From `<kit-checkout>`, install the shared expiry checker and systemd
+templates, then enable warnings for both provisioned identities. These
+commands are safe to rerun and also cover the P1 cutover commands, which do
+not install the checker or timers themselves:
 
 ```sh
-sudo systemctl enable --now local-service-tls-expiry@valkey.timer
-sudo systemctl start local-service-tls-expiry@valkey.service
+(
+set -eu
+sudo install -Dm755 tools/check_local_service_tls.py /usr/local/libexec/check-local-service-tls
+sudo install -m 0644 tools/templates/local-service-tls/local-service-tls-expiry@.service /etc/systemd/system/
+sudo install -m 0644 tools/templates/local-service-tls/local-service-tls-expiry@.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now \
+  local-service-tls-expiry@qdrant.timer \
+  local-service-tls-expiry@valkey.timer
+sudo systemctl start \
+  local-service-tls-expiry@qdrant.service \
+  local-service-tls-expiry@valkey.service
+)
 ```
 
 The daily check fails with an explicit journal warning when fewer than 30 days
 remain. Monitor `systemctl --failed` and
-`journalctl -u local-service-tls-expiry@valkey.service`. Renew each service
+`journalctl -u local-service-tls-expiry@qdrant.service -u local-service-tls-expiry@valkey.service`.
+Renew each service
 through the [certificate expiry and renewal procedure](qdrant-production-cutover.md#certificate-expiry-and-renewal),
 using `tls_service=valkey` for Valkey. That procedure stages a protected new
 pair, stops consumers and the server, atomically exchanges identities, retains

@@ -26,6 +26,8 @@ def protected_directory(path: Path, *, create: bool = True) -> None:
         info = parent.lstat()
         if not stat.S_ISDIR(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
             raise ValueError("TLS directory and its parents must be root-owned, non-writable directories")
+        if info.st_mode & 0o011 != 0o011:
+            raise ValueError("TLS directory and its parents must be traversable by group and other users")
 
 
 def validate_identity(directory: Path, gid: int, *, minimum_seconds: int | None = 0) -> None:
