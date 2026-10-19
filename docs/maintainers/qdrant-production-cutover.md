@@ -414,10 +414,24 @@ The three changed browser scripts are retained as non-executable text fixtures
 under `tests/fixtures/qdrant-g2-accepted/`; `tests/test_qdrant_g2_harness.py`
 continues to check those historical bytes and the unchanged scripts against
 the original records. Those records do **not** attest to the revised browser
-harness. Any change to the harness needs a fresh G2 run and new records. This
-requirement remains open for the revised browser harness; the historical
-fixtures and passing consistency tests do not fulfill it. Do not reuse the
-historical browser result as evidence for this revision. The public
+harness. Any change to the harness needs a fresh G2 run and new records. The
+[2026-10-19 revalidation record](evidence/qdrant-g2-runtime-isolation/g2-revalidation.json)
+binds the revised browser scripts and fresh browser and exact-unit results.
+It records Chrome 155.0.8059.84, Playwright 1.64.0, payload and trusted-runtime
+digest comparisons, worker/WASM execution, authentication, policy, restart,
+and cleanup checks. The browser route uses the relocated static root; the
+unchanged exact-unit route validates the packaged `/usr/share/qdrant/web-ui`
+root with the same static-tree digest. Original G0–G3 acceptance records are
+unchanged.
+
+Review the raw semantic results, not only the launcher's exit status. The
+first browser attempt returned zero but its fixture insert hit the configured
+disk quota (HTTP 507), so its graph result failed and it was rejected. A fresh
+run on storage below the quota passed; both attempts are digest-bound in the
+new record. The unit container retained base-image resolver sockets after
+Qdrant stopped, but Qdrant's listeners were gone and the container and its
+network namespace were removed. Historical fixtures and passing consistency
+tests alone do not fulfill the fresh-run requirement. The public
 records were written from each run's raw output by an evidence writer that is
 not part of this harness and that the records do not bind.
 
