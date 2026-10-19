@@ -274,6 +274,18 @@ if os.environ.get("CORRUPT_EVIDENCE"):
                 self.assertFalse((self.root / "run/private/secret.env").exists())
                 shutil.rmtree(self.root / "run")
 
+    def test_malformed_trailing_gzip_member_has_a_clean_diagnostic(self):
+        write_archive(self.wpkg, package_entries("web-ui"), "w:gz")
+        # Valid gzip header followed by the reserved DEFLATE block type.
+        malformed_member = bytes.fromhex("1f8b080000000000000307")
+        self.wpkg.write_bytes(self.wpkg.read_bytes() + malformed_member)
+        result = self.launch()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("browser payload:", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertFalse(self.record.exists())
+        self.assertFalse((self.root / "run/private/secret.env").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

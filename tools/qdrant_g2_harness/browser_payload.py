@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import zlib
 from contextlib import contextmanager, nullcontext
 from pathlib import Path, PurePosixPath
 
@@ -176,7 +177,7 @@ def main() -> int:
         stage_archive(qpkg, "qdrant", payload)
         stage_archive(wpkg, "web-ui", payload)
         write_manifests(payload, out)
-    except (EOFError, OSError, ValueError, lzma.LZMAError, tarfile.TarError) as error:
+    except (EOFError, OSError, ValueError, lzma.LZMAError, tarfile.TarError, zlib.error) as error:
         print(f"browser payload: {error}", file=sys.stderr)
         return 1
     return 0
