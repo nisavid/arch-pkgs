@@ -363,7 +363,7 @@ separately approves removal, keep:
 
 ## G2 Harness
 
-The committed harness in
+The original revision of the committed harness in
 [`tools/qdrant_g2_harness/`](../../tools/qdrant_g2_harness/) produced the
 accepted 1.19.1 G2 records. The G2 section of the frozen
 [`qdrant-migration-acceptance.md`](qdrant-migration-acceptance.md) runbook
@@ -414,8 +414,10 @@ The three changed browser scripts are retained as non-executable text fixtures
 under `tests/fixtures/qdrant-g2-accepted/`; `tests/test_qdrant_g2_harness.py`
 continues to check those historical bytes and the unchanged scripts against
 the original records. Those records do **not** attest to the revised browser
-harness. Its next candidate acceptance requires a fresh G2 run and new records;
-do not reuse the historical browser result as evidence for this revision. The public
+harness. Any change to the harness needs a fresh G2 run and new records. This
+requirement remains open for the revised browser harness; the historical
+fixtures and passing consistency tests do not fulfill it. Do not reuse the
+historical browser result as evidence for this revision. The public
 records were written from each run's raw output by an evidence writer that is
 not part of this harness and that the records do not bind.
 
