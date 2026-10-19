@@ -70,11 +70,16 @@ class Listener:
             def respond(self):
                 body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
                 outer.requests.append((self.command, self.path, dict(self.headers), body))
+                response_body = b'{"result":{"name":"test.snapshot"},"version":"1.19.1"}'
                 self.send_response(302 if redirect else 200)
                 if redirect:
                     self.send_header("Location", redirect)
+                # Frame the HTTP body explicitly; socket closure without TLS
+                # close_notify is not a reliable end-of-message delimiter.
+                self.send_header("Content-Length", str(len(response_body)))
+                self.send_header("Content-Type", "application/json")
                 self.end_headers()
-                self.wfile.write(b'{"result":{"name":"test.snapshot"},"version":"1.19.1"}')
+                self.wfile.write(response_body)
 
             do_GET = do_POST = do_PUT = do_DELETE = respond
 
