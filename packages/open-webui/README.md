@@ -625,6 +625,25 @@ points per request.
 
 ## Package Verification
 
+### Source review and candidate acceptance
+
+The [source-verification workflow](../../.github/workflows/open-webui-package.yml)
+runs Arch's `makepkg --verifysource` as an unprivileged user and compares
+`makepkg --printsrcinfo` with the committed metadata. It retains the source
+commit, package tree, toolchain inventory, recipe digests, and verification
+logs. Together with the repository consistency gate and code review, these
+checks validate a source correction; they do not build or accept a package.
+
+The TLS candidate remains deferred and publication-ineligible. Before calling
+the package update complete, the candidate-build work under
+[#88](https://github.com/nisavid/arch-pkgs/issues/88) must build the reviewed
+package tree, inspect the actual payload, pass the provider-boundary verifier
+against genuine system-provider metadata, and bind the resulting archive.
+The exact candidate then needs the integrated TLS-enabled restore/rollback
+trial under [#89](https://github.com/nisavid/arch-pkgs/issues/89) and promotion
+under [#90](https://github.com/nisavid/arch-pkgs/issues/90). Merging a deferred
+source correction does not advance those package or deployment gates.
+
 ### Private Python closure
 
 `open-webui-private-requirements.lock` is generated from the exact 0.11.4

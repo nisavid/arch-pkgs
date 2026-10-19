@@ -31,7 +31,7 @@ SPEC.loader.exec_module(TLS)
 CANARY = "synthetic-service-credential-canary"
 
 
-def certificate(root, name, san="IP:127.0.0.1"):
+def certificate(root, name, san="IP:127.0.0.1", *, expired=False):
     cert, key = root / f"{name}.pem", root / f"{name}.key"
     subprocess.run(
         ["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
@@ -39,11 +39,38 @@ def certificate(root, name, san="IP:127.0.0.1"):
          "-keyout", str(key), "-out", str(cert)],
         check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
     )
+    if expired:
+        # Recent OpenSSL rejects negative -days. Sign with explicit past dates
+        # so expiration remains an actual handshake failure on every version.
+        with tempfile.TemporaryDirectory(dir=root) as authority:
+            authority = Path(authority)
+            (authority / "index").touch()
+            (authority / "serial").write_text("01\n")
+            (authority / "ca.cnf").write_text(
+                "[ca]\ndefault_ca = test_ca\n[test_ca]\n"
+                "database = index\nserial = serial\nnew_certs_dir = .\n"
+                "default_md = sha256\npolicy = test_policy\n"
+                "[test_policy]\ncommonName = supplied\n"
+                "[test_extensions]\nbasicConstraints = critical,CA:true\n"
+                f"subjectAltName = {san}\n"
+            )
+            subprocess.run([
+                "openssl", "x509", "-x509toreq", "-in", str(cert),
+                "-signkey", str(key), "-out", str(authority / "request.pem"),
+            ], check=True, capture_output=True)
+            subprocess.run([
+                "openssl", "ca", "-batch", "-selfsign", "-config", "ca.cnf",
+                "-cert", str(cert), "-keyfile", str(key), "-in", "request.pem",
+                "-startdate", "20000101000000Z", "-enddate", "20000102000000Z",
+                "-extensions", "test_extensions", "-out", "expired.pem",
+            ], cwd=authority, check=True, capture_output=True)
+            cert.write_bytes((authority / "expired.pem").read_bytes())
     return cert, key
 
 
 def server_context(pair):
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.load_cert_chain(*map(str, pair))
     return context
 
@@ -130,12 +157,7 @@ class TLSFixtures:
         cls.legitimate = certificate(cls.root, "legitimate")
         cls.impostor = certificate(cls.root, "impostor")
         cls.wrong_name = certificate(cls.root, "wrong-name", "IP:127.0.0.2")
-        cls.expired = certificate(cls.root, "expired")
-        subprocess.run(
-            ["openssl", "x509", "-in", str(cls.expired[0]), "-signkey", str(cls.expired[1]),
-             "-days", "-1", "-out", str(cls.expired[0])],
-            check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-        )
+        cls.expired = certificate(cls.root, "expired", expired=True)
         (cls.root / "invalid.pem").write_text("not a certificate")
 
     @classmethod

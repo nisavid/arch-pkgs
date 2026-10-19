@@ -22,6 +22,12 @@ INSPECTION_RECEIPT = (
     / "open-webui-offline-package-inspection-2026-08-19.json"
 )
 INSPECTION_TOOL = PACKAGE_DIR / "inspect-open-webui-package.py"
+HISTORICAL_INSPECTION_TOOL = (
+    EVIDENCE.parent
+    / "source-snapshots"
+    / "5f21b1cb3870867401721acddeef7e919adfe656"
+    / "packages/open-webui/inspect-open-webui-package.py.txt"
+)
 MAINTAINER_NOTE = (
     REPO_ROOT
     / "docs"
@@ -140,7 +146,15 @@ class OpenWebUIOfflinePackageEvidenceTests(unittest.TestCase):
         self.assertEqual(
             binding["verifier"], "packages/open-webui/inspect-open-webui-package.py"
         )
-        self.assertEqual(binding["verifier_sha256"], sha256(INSPECTION_TOOL))
+        # The dated receipt binds the verifier that inspected 0.11.0-3. The
+        # current verifier requires an additional TLS helper in 0.11.4-3 and
+        # must be exercised on a newly built archive before promotion.
+        self.assertFalse(HISTORICAL_INSPECTION_TOOL.is_symlink())
+        self.assertEqual(HISTORICAL_INSPECTION_TOOL.stat().st_mode & 0o111, 0)
+        self.assertEqual(
+            binding["verifier_sha256"], sha256(HISTORICAL_INSPECTION_TOOL)
+        )
+        self.assertNotEqual(binding["verifier_sha256"], sha256(INSPECTION_TOOL))
         self.assertEqual(
             receipt["schema"], "arch-pkgs.open-webui.package-inspection.v1"
         )
