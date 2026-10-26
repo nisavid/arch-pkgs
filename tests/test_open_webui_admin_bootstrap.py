@@ -30,18 +30,22 @@ FIXTURE = (
     REPO_ROOT / "tools/fixtures/open-webui-household"
     / "open-webui-0.11.4-pristine-admin-bootstrap.tar.gz"
 )
-FIXTURE_SHA256 = "d8a969b3865d3437d1fc78ac3f313ccca1ef05025649bb99d594dbe717ce2549"
+FIXTURE_SHA256 = "bfc9b408144a5ba687bdead9c104a30962934c1605b4250bbea41baf0d7d8af5"
 OPEN_WEBUI_COMMIT = "8bd8b4fac5e059578ac0c74b3c18d11139f88b7d"
 OPEN_WEBUI_SDIST_SHA256 = (
     "1f1a31668a0dee733953c29d6183d78dd78984e696aa8eb0f2083f5796497be0"
 )
-# Supplemental fixture: these two byte-exact files come from the SHA256-verified
+# Supplemental fixture: these four byte-exact files come from the SHA256-verified
 # 0.11.4 sdist pinned by PKGBUILD above. The existing patch-preimages bundle is
 # retained unchanged. Regenerate this bundle using Python tarfile GNU_FORMAT:
 # sorted files and parent directories, uid/gid/mtime 0, empty uname/gname,
 # file mode 0644, directory mode 0755; gzip.GzipFile(filename='', mtime=0,
 # compresslevel=6). The hashes also independently bind each extracted file.
 SOURCE_HASHES = {
+    "backend/open_webui/models/users.py":
+        "95b114836c90096d70939df96aa93a4a372190be77abbb7b6a3713ced92e7bc5",
+    "backend/open_webui/internal/db.py":
+        "be9c668ef7931249d20ede563dc9fa0a646cfefa5c9f39ff557d64b78d28b284",
     "backend/open_webui/models/auths.py":
         "5248a142249bee1dc9e92b2e876e32a162fec3633c69ed210c7f806bc6176b1e",
     "backend/open_webui/routers/auths.py":

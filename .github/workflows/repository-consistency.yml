@@ -22,7 +22,7 @@ jobs:
         run: |
           set -euo pipefail
           for attempt in 1 2 3 4; do
-            if pacman -Syyu --noconfirm bubblewrap git jq npm python python-fastapi python-packaging python-requests python-typer python-yaml rsync uv uvicorn zsh; then
+            if pacman -Syyu --noconfirm bubblewrap git jq npm python python-fastapi python-sqlalchemy python-aiosqlite python-bcrypt python-packaging python-requests python-typer python-yaml rsync uv uvicorn zsh; then
               break
             fi
             if [[ "${attempt}" == 4 ]]; then
