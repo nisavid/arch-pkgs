@@ -957,9 +957,12 @@ class RepositoryConsistencyWorkflowTests(unittest.TestCase):
         self.assertEqual(
             arguments,
             [
-                "-Syyu --noconfirm bubblewrap git jq npm python python-fastapi "
-                "python-packaging python-requests python-typer python-yaml rsync uv "
-                "uvicorn zsh"
+                (
+                    "-Syyu --noconfirm bubblewrap git jq npm python python-fastapi "
+                    "python-sqlalchemy python-aiosqlite python-bcrypt python-packaging "
+                    "python-requests python-typer python-yaml rsync uv "
+                    "uvicorn zsh"
+                )
             ] * attempts,
         )
 
@@ -971,9 +974,12 @@ class RepositoryConsistencyWorkflowTests(unittest.TestCase):
         self.assertEqual(
             arguments,
             [
-                "-Syyu --noconfirm bubblewrap git jq npm python python-fastapi "
-                "python-packaging python-requests python-typer python-yaml rsync uv "
-                "uvicorn zsh"
+                (
+                    "-Syyu --noconfirm bubblewrap git jq npm python python-fastapi "
+                    "python-sqlalchemy python-aiosqlite python-bcrypt python-packaging "
+                    "python-requests python-typer python-yaml rsync uv "
+                    "uvicorn zsh"
+                )
             ] * attempts,
         )
 

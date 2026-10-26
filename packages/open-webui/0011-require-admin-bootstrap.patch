@@ -1,0 +1,67 @@
+From: Ivan D Vasin <ivan@nisavid.io>
+Subject: [PATCH] Require protected first-admin bootstrap and an administrator at startup
+X-Open-WebUI-Commit: 8bd8b4fac5e059578ac0c74b3c18d11139f88b7d
+X-Open-WebUI-Sdist-SHA256: 1f1a31668a0dee733953c29d6183d78dd78984e696aa8eb0f2083f5796497be0
+
+An empty restored database must not reopen remote first-administrator signup.
+Require an administrator before startup completes, and gate the shared auth
+insertion seam before it stages either row. Only credential-driven startup may
+opt into initial admin creation; existing users forbid that opt-in. Normal
+commissioned restarts and later household user creation remain unchanged.
+
+Apply after 0006: its authentication utility changes are disjoint from this
+patch's startup-only creation call. No database schema or migration changes.
+
+diff --git a/backend/open_webui/models/auths.py b/backend/open_webui/models/auths.py
+--- a/backend/open_webui/models/auths.py
++++ b/backend/open_webui/models/auths.py
+@@ -110,9 +110,20 @@
+         role: str = 'pending',
+         oauth: dict | None = None,
+         db: AsyncSession | None = None,
++        *,
++        initial_admin: bool = False,
+     ) -> UserModel | None:
+         """Create an Auth + User pair inside a single transaction."""
+         async with get_async_db_context(db) as session:
++            # Only credential-driven startup may create the first administrator.
++            # HTTP, LDAP, trusted-header, and OAuth callers all use this seam.
++            # Check before staging either row so denial has no write side effects.
++            if initial_admin:
++                if role != 'admin' or await Users.has_users(db=session):
++                    return None
++            elif await Users.get_super_admin_user(db=session) is None:
++                return None
++
+             log.info('insert_new_auth')
+ 
+             new_id = str(uuid.uuid4())
+diff --git a/backend/open_webui/utils/auth.py b/backend/open_webui/utils/auth.py
+--- a/backend/open_webui/utils/auth.py
++++ b/backend/open_webui/utils/auth.py
+@@ -653,6 +653,7 @@
+             password=hashed,
+             name=name,
+             role='admin',
++            initial_admin=True,
+         )
+         if user:
+             log.info('Admin account created successfully: %s', email)
+diff --git a/backend/open_webui/main.py b/backend/open_webui/main.py
+--- a/backend/open_webui/main.py
++++ b/backend/open_webui/main.py
+@@ -379,6 +379,14 @@
+             # Disable signup since we now have an admin
+             await Config.upsert({'ui.enable_signup': False})
+ 
++    # Refuse service readiness after database loss or an incomplete restore.
++    # A failed credential bootstrap must not expose first-user registration.
++    if await Users.get_super_admin_user() is None:
++        raise RuntimeError(
++            'Open WebUI requires an administrator: restore a commissioned database '
++            'or commission with protected credentials while the route is closed'
++        )
++
+     if SAFE_MODE:
+         await Functions.deactivate_all_functions()
+ 
