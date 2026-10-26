@@ -1,0 +1,82 @@
+{
+  "schema": "arch-pkgs.open-webui.admin-bootstrap-runtime.v1",
+  "source_commit": "5179ca5a15c1e912a4f42323642e79e2c88de48e",
+  "package": {
+    "filename": "open-webui-0.11.4-4-x86_64.pkg.tar.zst",
+    "sha256": "ef5c380f0dfd1fb743f0e5a3a4018114219ecb9e1827a59e4c91ddfda11f7c8d",
+    "size_bytes": 186426208
+  },
+  "runtime": {
+    "entrypoint": "packaged launcher -> Typer serve -> Uvicorn -> complete Open WebUI application",
+    "database": "temporary SQLite",
+    "transport": "Unix socket",
+    "peers": "disposable real Qdrant and Valkey with TLS and synthetic credentials",
+    "isolation": "disposable filesystem and network namespace",
+    "application_implementations_replaced": false,
+    "systemd_activation_tested": false,
+    "production_activated": false,
+    "live_inference_provider_qualified": false
+  },
+  "results": [
+    {
+      "case": "isolated TLS peers started",
+      "passed": true
+    },
+    {
+      "case": "empty database refuses readiness",
+      "passed": true,
+      "rows": [
+        0,
+        0
+      ]
+    },
+    {
+      "case": "ambient admin environment ignored",
+      "passed": true,
+      "rows": [
+        0,
+        0
+      ]
+    },
+    {
+      "case": "partial bootstrap credentials rejected",
+      "passed": true
+    },
+    {
+      "case": "empty bootstrap credential rejected",
+      "passed": true
+    },
+    {
+      "case": "protected commissioning and signin; signup closed",
+      "passed": true,
+      "rows": [
+        1,
+        1
+      ]
+    },
+    {
+      "case": "restart without bootstrap; later administrator-created user",
+      "passed": true,
+      "rows": [
+        2,
+        2
+      ]
+    },
+    {
+      "case": "live empty database signup refused without writes",
+      "passed": true,
+      "rows": [
+        0,
+        0
+      ]
+    },
+    {
+      "case": "empty restored restart refuses readiness",
+      "passed": true,
+      "rows": [
+        0,
+        0
+      ]
+    }
+  ]
+}

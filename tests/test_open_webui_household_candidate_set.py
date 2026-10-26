@@ -430,8 +430,8 @@ class OpenWebUIHouseholdCandidateSetTests(unittest.TestCase):
         self.assertIn("historical 0.11.4-2", open_webui[6])
         self.assertIn("do not rebuild it", open_webui[6])
         self.assertIn("do not cover these changes", open_webui[6])
-        self.assertIn("unbuilt candidate", open_webui[6])
-        self.assertIn("build and payload inspection for 0.11.4-4", open_webui[6])
+        self.assertIn("validated security-fix candidate", open_webui[6])
+        self.assertIn("open-webui-admin-bootstrap-validation-2026-10-26.md", open_webui[6])
 
     def test_maintainer_note_links_the_manifest_and_tickets(self):
         note = MAINTAINER_NOTE.read_text(encoding="utf-8")

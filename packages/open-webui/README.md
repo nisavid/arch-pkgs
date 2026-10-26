@@ -11,6 +11,11 @@ and the live-validated Lemonade provider. The dated measurement boundary
 remains in
 [`docs/maintainers/open-webui-household-envelope.md`](../../docs/maintainers/open-webui-household-envelope.md).
 
+The [2026-10-26 administrator-bootstrap validation](../../docs/maintainers/open-webui-admin-bootstrap-validation-2026-10-26.md)
+records a successful offline build, whole-archive inspection, and full packaged
+application checks for this candidate. These scoped checks do not replace the
+integrated acceptance and promotion gates above.
+
 ## Packaged Boundary
 
 - Open WebUI serves only on `/run/open-webui/open-webui.sock`. Members of the
