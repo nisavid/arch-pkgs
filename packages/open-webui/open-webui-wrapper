@@ -38,12 +38,15 @@ export WEBSOCKET_REDIS_URL=$REDIS_URL
 load_credential qdrant-runtime-api-key QDRANT_API_KEY
 
 # A deployment-only drop-in may expose the transient bootstrap inputs on the
-# first closed-socket start. A partial set fails rather than falling through to
-# the unauthenticated first-signup path.
+# first closed-socket start. Only this protected set may request initial admin
+# creation; inherited environment values are not a bootstrap credential source.
+unset WEBUI_ADMIN_EMAIL WEBUI_ADMIN_NAME WEBUI_ADMIN_PASSWORD
 admin_email_path=${credential_directory}/admin-email
 admin_name_path=${credential_directory}/admin-name
 admin_password_path=${credential_directory}/admin-bootstrap-password
-if [ -e "$admin_email_path" ] || [ -e "$admin_name_path" ] || [ -e "$admin_password_path" ]; then
+if [ -e "$admin_email_path" ] || [ -L "$admin_email_path" ] \
+  || [ -e "$admin_name_path" ] || [ -L "$admin_name_path" ] \
+  || [ -e "$admin_password_path" ] || [ -L "$admin_password_path" ]; then
   load_credential admin-email WEBUI_ADMIN_EMAIL
   load_credential admin-name WEBUI_ADMIN_NAME
   load_credential admin-bootstrap-password WEBUI_ADMIN_PASSWORD

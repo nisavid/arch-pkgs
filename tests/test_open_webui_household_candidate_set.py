@@ -425,13 +425,13 @@ class OpenWebUIHouseholdCandidateSetTests(unittest.TestCase):
                 self.assertEqual(row[3], "deferred")
                 self.assertEqual(row[7], "no")
         (open_webui,) = rows["open-webui"]
-        self.assertEqual(open_webui[2], "0.11.4-3")
+        self.assertEqual(open_webui[2], "0.11.4-4")
         self.assertIn("open-webui-household-candidate-set.md", open_webui[6])
         self.assertIn("historical 0.11.4-2", open_webui[6])
         self.assertIn("do not rebuild it", open_webui[6])
         self.assertIn("do not cover these changes", open_webui[6])
         self.assertIn("unbuilt candidate", open_webui[6])
-        self.assertIn("build and payload inspection for 0.11.4-3", open_webui[6])
+        self.assertIn("build and payload inspection for 0.11.4-4", open_webui[6])
 
     def test_maintainer_note_links_the_manifest_and_tickets(self):
         note = MAINTAINER_NOTE.read_text(encoding="utf-8")

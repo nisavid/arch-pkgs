@@ -1,6 +1,6 @@
 # open-webui
 
-Disposable Arch package candidate for Open WebUI 0.11.4 and the fresh household
+Disposable Arch package candidate for Open WebUI 0.11.4-4 and the fresh household
 native-RAG boundary.
 
 This candidate is not approved for production activation or publication. A
@@ -180,7 +180,7 @@ is limited to initial provisioning, deliberate rotation, or restore.
 
 ## Service Peer Authentication
 
-The 0.11.4-3 candidate requires authenticated TLS to both local dependencies.
+Since 0.11.4-3, the candidate requires authenticated TLS to both local dependencies.
 Loopback address restrictions alone do not authenticate the listener: another
 local user can bind a vacant service port during a restart. The wrapper validates
 the transport configuration before importing the application, and each new
@@ -281,6 +281,15 @@ failure; do not silently reset it.
 
 ## Closed-Route Administrator Commissioning
 
+The 0.11.4-4 candidate requires an administrator in the database before startup
+completes. An empty database, a restore without an administrator, or a failed
+bootstrap stops startup before the listener is ready, even when a tailnet route
+already exists. Ordinary account creation through password signup, trusted
+headers, LDAP, or OAuth also requires an existing administrator. Only the
+credential-driven startup path can create the initial administrator; it accepts
+that exception only for an empty users table. This invariant does not depend on
+a separate commissioning marker or on the persisted signup setting.
+
 The first start happens while no route is published: no tailnet serve
 configuration and no Caddy route. Complete [Tailnet Route](#tailnet-route)
 steps 1 to 3 before it. A temporary systemd drop-in
@@ -302,6 +311,22 @@ signs in with the final password. After it succeeds, consume and remove every bo
 and temporary drop-in, restart `open-webui.service` normally, repeat the
 postconditions, and only then publish the tailnet route
 ([Tailnet Route](#tailnet-route) step 4).
+
+The launcher clears inherited `WEBUI_ADMIN_EMAIL`, `WEBUI_ADMIN_NAME`, and
+`WEBUI_ADMIN_PASSWORD`; environment-file overrides cannot replace the protected
+credentials. A missing, empty, or partial bootstrap set cannot reopen remote
+first-user registration. Existing administrator accounts restart normally
+without any bootstrap credentials.
+
+If startup reports that an administrator is required, stop the retry loop with
+`sudo systemctl stop open-webui.service`. Keep the route closed while restoring
+a commissioned database, or repeat this commissioning procedure with a complete
+protected credential set for an intentionally new database. Then run
+`sudo systemctl start open-webui.service` and verify the administrator before
+publishing the route. Do not enable public signup as a recovery step. The
+existing sole-user role repair in a configured OAuth provider and SCIM's
+bearer-authorized provisioning are separate trusted workflows; this guard does
+not redefine those authorities.
 
 ## Tailnet Route
 
@@ -769,7 +794,7 @@ those verifier bytes immutable at their versioned snapshot path. The maintained
 `inspect-open-webui-package.py` now emits
 `arch-pkgs.open-webui.package-inspection.v2`: it additionally requires
 `open_webui_service_tls.py` in the private Python site-packages directory. Use
-that maintained v2 inspector for the `0.11.4-3` candidate. A changed receipt
+that maintained v2 inspector for the `0.11.4-4` candidate. A changed receipt
 contract requires a new schema; retain any previously bound helper at an
 immutable versioned path instead of rewriting its historical checkpoint.
 

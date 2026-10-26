@@ -612,6 +612,15 @@ evidence also records.
 
 ## P4: closed-route commissioning
 
+For the 0.11.4-4 candidate, normal startup requires an existing administrator.
+An empty or incomplete restored database fails startup rather than exposing
+first-user registration. The temporary protected credential set below is the
+only initial-administrator path; inherited `WEBUI_ADMIN_*` settings are cleared.
+After a refusal, stop retries with `sudo systemctl stop open-webui.service`,
+keep the route closed, and restore the commissioned database or deliberately
+repeat this section for a new one. Removing the temporary credentials after
+successful commissioning remains required.
+
 The tailnet route is not published yet, so nothing outside the host can
 reach the socket.
 
