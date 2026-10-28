@@ -84,7 +84,7 @@ jobs:
               qdrant = archive.read("open_webui/retrieval/vector/dbs/qdrant_multitenancy.py")
           assert b"def get_url_collection_name(user_id: str, url: str)" in utils
           assert b"get_url_collection_name(user.id, form_data.url)" in router
-          assert b"collection_name.startswith" in qdrant
+          assert b"elif collection_name.startswith(\x27url-\x27) or (" in qdrant
           print("Owner-scoped URL patch is present in the built wheel.")
           PY
             ' bash "${GITHUB_WORKSPACE}/packages/open-webui" \
