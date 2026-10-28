@@ -83,7 +83,7 @@ jobs:
               router = archive.read("open_webui/routers/retrieval.py")
               qdrant = archive.read("open_webui/retrieval/vector/dbs/qdrant_multitenancy.py")
           assert b"def get_url_collection_name(user_id: str, url: str)" in utils
-          assert b"get_url_collection_name(user.id, url)" in router
+          assert b"get_url_collection_name(user.id, form_data.url)" in router
           assert b"collection_name.startswith" in qdrant
           print("Owner-scoped URL patch is present in the built wheel.")
           PY
