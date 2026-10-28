@@ -1,4 +1,4 @@
-name: Open WebUI Package Build
+name: Open WebUI Wheel Build
 
 on:
   pull_request:
@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   build:
-    name: Build and inspect Open WebUI package
+    name: Build patched Open WebUI wheel
     runs-on: ubuntu-latest
     timeout-minutes: 60
     container:
@@ -52,7 +52,7 @@ jobs:
           install -d -o packagebuilder -g packagebuilder \
             "${RUNNER_TEMP}/open-webui-build-evidence"
 
-      - name: Build and inspect package
+      - name: Build patched wheel
         shell: bash
         run: |
           set -euo pipefail
@@ -63,13 +63,29 @@ jobs:
               pacman -Q >"$2/toolchain.txt"
               makepkg --verifysource --noconfirm 2>&1 \
                 | tee "$2/source-verification.log"
-              makepkg -f --nodeps --cleanbuild --noconfirm 2>&1 \
-                | tee "$2/build.log"
-              archives=(open-webui-0.11.4-5-*.pkg.tar.zst)
-              test "${#archives[@]}" -eq 1
-              sha256sum "${archives[0]}" >"$2/package-sha256.txt"
-              python inspect-open-webui-package.py "${archives[0]}" \
-                --output "$2/package-inspection.json"
+              # Prepare through makepkg, then invoke build() from the recipe.
+              # exactly. Full package() needs installed system providers.
+              makepkg --nobuild --nodeps --cleanbuild --noconfirm 2>&1 \
+                | tee "$2/prepare.log"
+              srcdir="$PWD/src"
+              source ./PKGBUILD
+              build 2>&1 | tee "$2/build.log"
+              wheels=(src/open_webui-0.11.4/dist/open_webui-0.11.4-*.whl)
+              test "${#wheels[@]}" -eq 1
+              sha256sum "${wheels[0]}" >"$2/wheel-sha256.txt"
+              python - "${wheels[0]}" >"$2/wheel-ownership-check.txt" <<"PY"
+          import sys
+          import zipfile
+
+          with zipfile.ZipFile(sys.argv[1]) as archive:
+              utils = archive.read("open_webui/retrieval/utils.py")
+              router = archive.read("open_webui/routers/retrieval.py")
+              qdrant = archive.read("open_webui/retrieval/vector/dbs/qdrant_multitenancy.py")
+          assert b"def get_url_collection_name(user_id: str, url: str)" in utils
+          assert b"get_url_collection_name(user.id, url)" in router
+          assert b"collection_name.startswith" in qdrant
+          print("Owner-scoped URL patch is present in the built wheel.")
+          PY
             ' bash "${GITHUB_WORKSPACE}/packages/open-webui" \
             "${RUNNER_TEMP}/open-webui-build-evidence"
 
