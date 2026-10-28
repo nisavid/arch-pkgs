@@ -425,7 +425,7 @@ class OpenWebUIHouseholdCandidateSetTests(unittest.TestCase):
                 self.assertEqual(row[3], "deferred")
                 self.assertEqual(row[7], "no")
         (open_webui,) = rows["open-webui"]
-        self.assertEqual(open_webui[2], "0.11.4-4")
+        self.assertEqual(open_webui[2], "0.11.4-5")
         self.assertIn("open-webui-household-candidate-set.md", open_webui[6])
         self.assertIn("historical 0.11.4-2", open_webui[6])
         self.assertIn("do not rebuild it", open_webui[6])

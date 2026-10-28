@@ -1,6 +1,6 @@
 # open-webui
 
-Disposable Arch package candidate for Open WebUI 0.11.4-4 and the fresh household
+Disposable Arch package candidate for Open WebUI 0.11.4-5 and the fresh household
 native-RAG boundary.
 
 This candidate is not approved for production activation or publication. A
@@ -115,6 +115,35 @@ integrated acceptance and promotion gates above.
   non-loopback IP egress are disabled by the packaged baseline. The household
   profile also turns off the calendar, evaluation arena models, and retrieval
   query generation.
+
+## URL Collection Ownership
+
+Patch `0012-bind-url-collections-to-owner.patch` binds automatically generated
+web and YouTube collections to the authenticated user's complete immutable ID.
+Names are `url-<32 hex owner digest>-<26 hex URL digest>` (63 characters):
+the owner scope has 128 bits and the URL component has 104 bits. Identical URLs
+remain stable for one owner and use separate tenants for different owners.
+Both generated and supplied names receive the existing write-authorization
+check before overwrite, append, or insertion. Owner metadata comes from the
+server, overriding metadata supplied by document loaders. Explicit authorized
+file and shared-knowledge targets, and administrator access, retain their
+existing permissions. The reserved `url-` namespace remains owner-scoped even
+when legacy unscoped collections are enabled.
+
+The new tenants use the existing Qdrant hash-based physical collection; no
+collection creation or runtime credential expansion is needed. Legacy URL-only
+hashes remain untouched because they contain no trustworthy ownership binding.
+Reprocess a URL under its actual owner to create the new collection, and
+reattach that result where a stored attachment still refers to a legacy hash.
+Do not assign legacy data to the first user who requests its URL. An operator
+must review any cleanup of legacy points separately.
+
+After the existing candidate acceptance and promotion gates pass, rebuild and
+install with `makepkg -si` in this directory and restart with
+`sudo systemctl restart open-webui.service`. The prior `0.11.4-4` build/runtime
+evidence does not validate this candidate's changed payload. See the
+[URL ownership validation record](../../docs/maintainers/open-webui-url-ownership-validation-2026-10-28.md)
+for scoped checks and remaining build/runtime gates.
 
 ## Household Profile
 
