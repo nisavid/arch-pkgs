@@ -69,8 +69,9 @@ jobs:
                 | tee "$2/prepare.log"
               srcdir="$PWD/src"
               source ./PKGBUILD
+              cd "$srcdir"
               build 2>&1 | tee "$2/build.log"
-              wheels=(src/open_webui-0.11.4/dist/open_webui-0.11.4-*.whl)
+              wheels=(open_webui-0.11.4/dist/open_webui-0.11.4-*.whl)
               test "${#wheels[@]}" -eq 1
               sha256sum "${wheels[0]}" >"$2/wheel-sha256.txt"
               python - "${wheels[0]}" >"$2/wheel-ownership-check.txt" <<"PY"
