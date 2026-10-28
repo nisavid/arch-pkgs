@@ -12,6 +12,7 @@ import unittest
 import uuid
 from pathlib import Path
 from types import SimpleNamespace as NS
+from urllib.parse import urlsplit
 from unittest.mock import AsyncMock
 
 from tests.open_webui_household_source_fixture import materialize_exact_open_webui_source
@@ -82,7 +83,7 @@ class Runtime:
             RecursiveCharacterTextSplitter=lambda **kw: NS(split_documents=lambda docs: docs),
             sanitize_text_for_db=lambda s: s, RAG_EMBEDDING_TIMEOUT=5,
             RAG_EMBEDDING_CONTENT_PREFIX='', get_embedding_function=lambda *a, **kw: self.embed,
-            is_youtube_url=lambda url: 'youtube.com' in url,
+            is_youtube_url=lambda url: urlsplit(url).hostname in {'youtube.com', 'www.youtube.com'},
             _fetch_url=AsyncMock(return_value={'kind': 'web'}),
         )
         utils_names = {'_is_safe_collection_name', 'filter_accessible_collections'}
