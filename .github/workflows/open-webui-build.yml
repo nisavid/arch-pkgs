@@ -1,0 +1,83 @@
+name: Open WebUI Package Build
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/open-webui-build.yml"
+      - "packages/open-webui/**"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/open-webui-build.yml"
+      - "packages/open-webui/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build and inspect Open WebUI package
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    container:
+      image: archlinux:base-devel
+    steps:
+      - name: Install build tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4; do
+            if pacman -Syyu --noconfirm git npm nodejs-lts-jod python-build python-hatchling python-packaging uv; then
+              break
+            fi
+            if [[ "${attempt}" == 4 ]]; then
+              exit 1
+            fi
+            sleep "$((attempt * 15))"
+          done
+
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      - name: Prepare unprivileged builder
+        shell: bash
+        run: |
+          set -euo pipefail
+          useradd --create-home --shell /bin/bash packagebuilder
+          chown -R packagebuilder:packagebuilder "${GITHUB_WORKSPACE}"
+          install -d -o packagebuilder -g packagebuilder \
+            "${RUNNER_TEMP}/open-webui-build-evidence"
+
+      - name: Build and inspect package
+        shell: bash
+        run: |
+          set -euo pipefail
+          runuser -u packagebuilder -- env HOME=/home/packagebuilder \
+            bash -euo pipefail -c '
+              cd "$1"
+              git rev-parse HEAD >"$2/source-commit.txt"
+              pacman -Q >"$2/toolchain.txt"
+              makepkg --verifysource --noconfirm 2>&1 \
+                | tee "$2/source-verification.log"
+              makepkg -f --nodeps --cleanbuild --noconfirm 2>&1 \
+                | tee "$2/build.log"
+              archives=(open-webui-0.11.4-5-*.pkg.tar.zst)
+              test "${#archives[@]}" -eq 1
+              sha256sum "${archives[0]}" >"$2/package-sha256.txt"
+              python inspect-open-webui-package.py "${archives[0]}" \
+                --output "$2/package-inspection.json"
+            ' bash "${GITHUB_WORKSPACE}/packages/open-webui" \
+            "${RUNNER_TEMP}/open-webui-build-evidence"
+
+      - name: Retain build evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: open-webui-build-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/open-webui-build-evidence/
+          if-no-files-found: warn
+          retention-days: 14
