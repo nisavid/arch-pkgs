@@ -1,0 +1,97 @@
+# Bind automatically generated URL/YouTube collections to their authenticated owner.
+# Open WebUI commit: 8bd8b4fac5e059578ac0c74b3c18d11139f88b7d
+# Open WebUI 0.11.4 sdist SHA-256: 1f1a31668a0dee733953c29d6183d78dd78984e696aa8eb0f2083f5796497be0
+# Apply after 0001-0009 and 0011; leave pristine evidence fixtures unchanged.
+diff --git a/backend/open_webui/retrieval/utils.py b/backend/open_webui/retrieval/utils.py
+--- a/backend/open_webui/retrieval/utils.py
++++ b/backend/open_webui/retrieval/utils.py
+@@ -1309,6 +1309,18 @@
+         return predict
+ 
+ 
++def _url_collection_owner_prefix(user_id: str) -> str:
++    # Fixed-width owner scope: never truncate the caller's identity to fit a name.
++    owner = hashlib.sha256(user_id.encode()).hexdigest()[:32]
++    return f'url-{owner}-'
++
++
++def get_url_collection_name(user_id: str, url: str) -> str:
++    # 63 characters for vector backends with a collection-name length limit.
++    digest = hashlib.sha256(url.encode()).hexdigest()[:26]
++    return f'{_url_collection_owner_prefix(user_id)}{digest}'
++
++
+ # UUIDs, SHA-256 digests, and prefixed variants thereof all fit [A-Za-z0-9_-].
+ # Anything else cannot be a real Open WebUI collection and could break out of
+ # a Milvus expression literal.
+@@ -1331,6 +1343,7 @@
+       - any name with characters outside [A-Za-z0-9_-] → rejected
+       - file-*          → validated via has_access_to_file
+       - user-memory-*   → must match user's own memory collection
++      - url-*           → generated URL collections, bound to the authenticated owner
+       - web-search-*    → ephemeral per-query collections, owner-bound to web-search-{user.id}-*
+       - knowledge-bases → always denied (system meta-collection)
+       - everything else → if the name matches a knowledge base, validated
+@@ -1364,6 +1377,14 @@
+                 validated.add(name)
+         elif name.startswith('user-memory-'):
+             if name == f'user-memory-{user.id}':
++                validated.add(name)
++        elif re.match(r'[-_]*url[-_]', name, re.IGNORECASE):
++            # Reserve aliases too: Milvus replaces hyphens with underscores;
++            # Weaviate also strips edge underscores and capitalizes the name.
++            if (
++                re.fullmatch(r'url-[0-9a-f]{32}-[0-9a-f]{26}', name)
++                and name.startswith(_url_collection_owner_prefix(user.id))
++            ):
+                 validated.add(name)
+         elif name.startswith('web-search-'):
+             # Ephemeral per-query collections, owner-bound: process_web_search mints
+diff --git a/backend/open_webui/routers/retrieval.py b/backend/open_webui/routers/retrieval.py
+--- a/backend/open_webui/routers/retrieval.py
++++ b/backend/open_webui/routers/retrieval.py
+@@ -71,6 +71,7 @@
+ from open_webui.retrieval.utils import (
+     build_loader_from_config,
+     get_loader_config,
++    get_url_collection_name,
+     filter_accessible_collections,
+     get_content_from_url,
+     get_embedding_function,
+@@ -2485,9 +2486,8 @@
+         if process:
+             collection_name = form_data.collection_name
+             if not collection_name:
+-                collection_name = calculate_sha256_string(form_data.url)[:63]
+-            else:
+-                await _validate_collection_access([collection_name], user, access_type='write')
++                collection_name = get_url_collection_name(user.id, form_data.url)
++            await _validate_collection_access([collection_name], user, access_type='write')
+ 
+             if not config.BYPASS_WEB_SEARCH_EMBEDDING_AND_RETRIEVAL:
+                 await run_in_threadpool(
+@@ -2496,6 +2496,7 @@
+                     docs,
+                     collection_name,
+                     config,
++                    metadata={'created_by': user.id},
+                     overwrite=overwrite,
+                     add=(not overwrite),
+                     user=user,
+diff --git a/backend/open_webui/retrieval/vector/dbs/qdrant_multitenancy.py b/backend/open_webui/retrieval/vector/dbs/qdrant_multitenancy.py
+--- a/backend/open_webui/retrieval/vector/dbs/qdrant_multitenancy.py
++++ b/backend/open_webui/retrieval/vector/dbs/qdrant_multitenancy.py
+@@ -138,8 +138,11 @@
+         elif collection_name.startswith('web-search-'):
+             return self.WEB_SEARCH_COLLECTION, tenant_id
+ 
+-        # Handle hash-based collections (YouTube and web URLs)
+-        elif len(collection_name) == 63 and all(c in '0123456789abcdef' for c in collection_name):
++        # Owner-bound URL collections and retained legacy URL hashes share the
++        # same physical collection; the complete logical name is the tenant ID.
++        elif collection_name.startswith('url-') or (
++            len(collection_name) == 63 and all(c in '0123456789abcdef' for c in collection_name)
++        ):
+             return self.HASH_BASED_COLLECTION, tenant_id
+ 
+         else:

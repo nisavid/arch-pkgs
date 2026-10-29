@@ -170,7 +170,7 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
         self.assertIn("open-webui-private-requirements.lock", recipe)
         self.assertIn('python "${srcdir}/verify-open-webui-private-lock.py"', recipe)
         self.assertNotIn("'SKIP'", recipe)
-        self.assertEqual(recipe.count("patch --fuzz=0"), 11)
+        self.assertEqual(recipe.count("patch --fuzz=0"), 12)
         for provenance_asset in (
             "open-webui-private-constraints.txt",
             "open-webui-system-providers.txt",
@@ -187,6 +187,7 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
             "0009-authenticate-service-peers.patch",
             "0010-isolate-explicit-redis-trust.patch",
             "0011-require-admin-bootstrap.patch",
+            "0012-bind-url-collections-to-owner.patch",
             "open-webui-service-tls.py",
             "open-webui-rag-gate.py",
             "open-webui-session-epoch-ledger.py",
@@ -272,7 +273,7 @@ class OpenWebUIPackageContractTests(unittest.TestCase):
             text=True,
         ).stdout
 
-        self.assertIn("pkgrel=4", recipe)
+        self.assertIn("pkgrel=5", recipe)
         self.assertIn(
             "_npm_closure_release=open-webui-0.11.4-offline-closures-v1", recipe
         )

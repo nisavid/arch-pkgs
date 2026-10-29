@@ -1,0 +1,113 @@
+name: Open WebUI Wheel Build
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/open-webui-build.yml"
+      - "packages/open-webui/**"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/open-webui-build.yml"
+      - "packages/open-webui/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build patched Open WebUI wheel
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    container:
+      image: archlinux:base-devel
+    steps:
+      - name: Install build tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4; do
+            if pacman -Syyu --noconfirm git npm nodejs-lts-jod python-build python-hatchling python-packaging uv; then
+              break
+            fi
+            if [[ "${attempt}" == 4 ]]; then
+              exit 1
+            fi
+            sleep "$((attempt * 15))"
+          done
+
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+
+      - name: Prepare unprivileged builder
+        shell: bash
+        run: |
+          set -euo pipefail
+          useradd --create-home --shell /bin/bash packagebuilder
+          chown -R packagebuilder:packagebuilder "${GITHUB_WORKSPACE}"
+          install -d -o packagebuilder -g packagebuilder \
+            "${RUNNER_TEMP}/open-webui-build-evidence"
+
+      - name: Build patched wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          runuser -u packagebuilder -- env HOME=/home/packagebuilder \
+            bash -euo pipefail -c '
+              cd "$1"
+              git rev-parse HEAD >"$2/source-commit.txt"
+              pacman -Q >"$2/toolchain.txt"
+              makepkg --verifysource --noconfirm 2>&1 \
+                | tee "$2/source-verification.log"
+              # Prepare through makepkg, then invoke build() from the recipe.
+              # exactly. Full package() needs installed system providers.
+              makepkg --nobuild --nodeps --cleanbuild --noconfirm 2>&1 \
+                | tee "$2/prepare.log"
+              srcdir="$PWD/src"
+              source ./PKGBUILD
+              cd "$srcdir"
+              build 2>&1 | tee "$2/build.log"
+              wheels=(open_webui-0.11.4/dist/open_webui-0.11.4-*.whl)
+              test "${#wheels[@]}" -eq 1
+              sha256sum "${wheels[0]}" >"$2/wheel-sha256.txt"
+              python - "${wheels[0]}" >"$2/wheel-ownership-check.txt" <<"PY"
+          import ast
+          import sys
+          import zipfile
+          from typing import Tuple
+
+          with zipfile.ZipFile(sys.argv[1]) as archive:
+              utils = archive.read("open_webui/retrieval/utils.py")
+              router = archive.read("open_webui/routers/retrieval.py")
+              qdrant = archive.read("open_webui/retrieval/vector/dbs/qdrant_multitenancy.py")
+          assert b"def get_url_collection_name(user_id: str, url: str)" in utils
+          assert b"get_url_collection_name(user.id, form_data.url)" in router
+          # Exercise the mapper from the wheel without importing Qdrant runtime dependencies.
+          mapper = next(
+              node for node in ast.walk(ast.parse(qdrant))
+              if isinstance(node, ast.FunctionDef)
+              and node.name == "_get_collection_and_tenant_id"
+          )
+          namespace = {"Tuple": Tuple}
+          exec(compile(ast.Module(body=[mapper], type_ignores=[]), "<qdrant-mapper>", "exec"), namespace)
+          class Probe:
+              HASH_BASED_COLLECTION = "hash-probe"
+          url_name = "url-" + "a" * 32 + "-" + "b" * 26
+          assert namespace[mapper.name](Probe(), url_name) == ("hash-probe", url_name)
+          print("Owner-scoped URL patch is present in the built wheel.")
+          PY
+            ' bash "${GITHUB_WORKSPACE}/packages/open-webui" \
+            "${RUNNER_TEMP}/open-webui-build-evidence"
+
+      - name: Retain build evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: open-webui-build-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/open-webui-build-evidence/
+          if-no-files-found: warn
+          retention-days: 14
