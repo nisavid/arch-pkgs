@@ -75,8 +75,10 @@ jobs:
               test "${#wheels[@]}" -eq 1
               sha256sum "${wheels[0]}" >"$2/wheel-sha256.txt"
               python - "${wheels[0]}" >"$2/wheel-ownership-check.txt" <<"PY"
+          import ast
           import sys
           import zipfile
+          from typing import Tuple
 
           with zipfile.ZipFile(sys.argv[1]) as archive:
               utils = archive.read("open_webui/retrieval/utils.py")
@@ -84,7 +86,18 @@ jobs:
               qdrant = archive.read("open_webui/retrieval/vector/dbs/qdrant_multitenancy.py")
           assert b"def get_url_collection_name(user_id: str, url: str)" in utils
           assert b"get_url_collection_name(user.id, form_data.url)" in router
-          assert b"elif collection_name.startswith(\x27url-\x27) or (" in qdrant
+          # Exercise the mapper from the wheel without importing Qdrant runtime dependencies.
+          mapper = next(
+              node for node in ast.walk(ast.parse(qdrant))
+              if isinstance(node, ast.FunctionDef)
+              and node.name == "_get_collection_and_tenant_id"
+          )
+          namespace = {"Tuple": Tuple}
+          exec(compile(ast.Module(body=[mapper], type_ignores=[]), "<qdrant-mapper>", "exec"), namespace)
+          class Probe:
+              HASH_BASED_COLLECTION = "hash-probe"
+          url_name = "url-" + "a" * 32 + "-" + "b" * 26
+          assert namespace[mapper.name](Probe(), url_name) == ("hash-probe", url_name)
           print("Owner-scoped URL patch is present in the built wheel.")
           PY
             ' bash "${GITHUB_WORKSPACE}/packages/open-webui" \
